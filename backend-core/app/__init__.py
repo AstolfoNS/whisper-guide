@@ -1,0 +1,1 @@
+"""Whisper Guide backend application."""
