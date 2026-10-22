@@ -28,29 +28,30 @@ export class Microphone {
     let processor: AudioWorkletNode | undefined
     let sink: GainNode | undefined
     try {
-      context = new AudioContext({ sampleRate: 16000, latencyHint: 'interactive' })
-      await context.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-capture.js`)
-      source = context.createMediaStreamSource(stream)
-      processor = new AudioWorkletNode(context, 'pcm-capture')
-      sink = context.createGain()
+      const audioContext = new AudioContext({ sampleRate: 16000, latencyHint: 'interactive' })
+      context = audioContext
+      await audioContext.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-capture.js`)
+      source = audioContext.createMediaStreamSource(stream)
+      processor = new AudioWorkletNode(audioContext, 'pcm-capture')
+      sink = audioContext.createGain()
       sink.gain.value = 0
       source.connect(processor)
       processor.connect(sink)
-      sink.connect(context.destination)
+      sink.connect(audioContext.destination)
       processor.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
         if (this.enabled) onFrame(event.data)
       }
       for (const track of stream.getAudioTracks()) track.onended = () => onFailure('麦克风已断开，请检查设备后继续。')
       context.onstatechange = () => {
-        if (this.enabled && context.state === 'suspended') onFailure('浏览器已暂停音频，请返回页面并继续会话。')
+        if (this.enabled && audioContext.state === 'suspended') onFailure('浏览器已暂停音频，请返回页面并继续会话。')
       }
-      await context.resume()
+      await audioContext.resume()
       if (operation !== this.operation) {
-        context.onstatechange = null
+        audioContext.onstatechange = null
         processor.disconnect()
         source.disconnect()
         sink.disconnect()
-        await context.close()
+        await audioContext.close()
         for (const track of stream.getTracks()) track.stop()
         return
       }
@@ -60,7 +61,7 @@ export class Microphone {
       this.processor = processor
       this.sink = sink
     } catch (error) {
-      context?.onstatechange = null
+      if (context) context.onstatechange = null
       processor?.disconnect()
       source?.disconnect()
       sink?.disconnect()
