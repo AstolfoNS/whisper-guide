@@ -38,6 +38,7 @@ class SessionRuntime:
         self.ready_generation = -1
         self.audio_queue: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(maxsize=50)
         self.audio_inflight = False
+        self.audio_pending = False
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self.session.snapshot()
@@ -70,6 +71,7 @@ class SessionRuntime:
         self.last_frame_ms = None
         self.last_text = ""
         self.audio_inflight = False
+        self.audio_pending = False
 
     def cancel_prompt(self) -> None:
         if self.synthesis and self.synthesis is not asyncio.current_task():
@@ -270,6 +272,7 @@ async def session_socket(socket: WebSocket) -> None:
                 await socket.send_json({"type": "error", "message": str(error)})
             finally:
                 current.audio_inflight = False
+                current.audio_pending = not current.audio_queue.empty()
 
     async def ticker() -> None:
         while True:
@@ -280,6 +283,7 @@ async def session_socket(socket: WebSocket) -> None:
                         runtime.audio_ready
                         and runtime.session.state == SessionState.LISTENING
                         and not runtime.audio_inflight
+                        and not runtime.audio_pending
                         and runtime.audio_queue.empty()
                     ):
                         if runtime.last_frame_ms and now_ms() - runtime.last_frame_ms > 5000:
@@ -306,10 +310,12 @@ async def session_socket(socket: WebSocket) -> None:
                 if "bytes" in message and message["bytes"] is not None:
                     if runtime and runtime.session.state == SessionState.LISTENING:
                         try:
+                            runtime.audio_pending = True
                             runtime.audio_queue.put_nowait(
                                 (runtime.session.generation, message["bytes"])
                             )
                         except asyncio.QueueFull:
+                            runtime.audio_pending = False
                             async with runtime.lock:
                                 await runtime.change(
                                     "service_fault",
