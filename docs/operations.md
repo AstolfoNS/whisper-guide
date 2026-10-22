@@ -1,0 +1,54 @@
+# 运维手册
+
+## 日常检查
+
+```bash
+curl -fsS http://localhost:8080/api/health
+curl -fsS http://localhost:8080/api/speech/status
+docker compose ps
+docker compose logs --tail=100 backend frontend
+```
+
+健康接口确认 Web 服务，语音状态接口确认模型和依赖。TTS 包已安装不代表网络永远可用，合成失败会暂停会话。
+
+## 启停与更新
+
+```bash
+docker compose up -d
+docker compose restart backend
+docker compose down
+docker compose build --pull
+docker compose up -d
+```
+
+更新前备份数据。不要执行 docker compose down -v，除非确实要永久删除数据库和模型卷。
+
+## 一致性备份
+
+```bash
+python scripts/backup.py backend-core/data/whisper-guide.db backups/whisper-guide-20261022.db
+```
+
+脚本使用 SQLite backup API 和 quick_check，不覆盖已存在的目标文件。容器部署可将脚本复制到容器或使用 SQLite backup API 在数据卷中执行，然后将备份复制到宿主机安全位置。备份中无用户录音。
+
+## 恢复
+
+1. 停止服务并保留当前数据库副本。
+2. 验证备份 quick_check 为 ok。
+3. 恢复数据目录中的 whisper-guide.db。
+4. 启动服务并读取 /api/scripts 检查正文，再检查语音服务。
+5. 用户重新准备会话。
+
+## 故障排查
+
+| 现象 | 检查项 |
+|---|---|
+| 页面打不开 | frontend 容器、8080 端口、Nginx 日志 |
+| API 502 | backend 健康检查、反代配置 |
+| WebSocket 断开 | Upgrade 头、/api/session、单 worker |
+| 上传失败 | 格式、2 MiB/10 份限制、SQLite 权限 |
+| 无法开始识别 | 模型目录、原生依赖、语音状态接口 |
+| 没有提示音 | edge-tts 网络、耳机输出、浏览器播放权限 |
+| 重启后进度丢失 | 活跃会话只在内存中，需重新准备 |
+
+应用日志不要输出音频帧、Base64 音频或完整用户录音。生产需要受信网络、HTTPS 和认证层。

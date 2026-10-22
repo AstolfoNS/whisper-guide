@@ -41,3 +41,6 @@ npm-debug.log*
 *.sqlite
 *.sqlite3
 *.log
+
+.uv-cache-test/
+/backups/

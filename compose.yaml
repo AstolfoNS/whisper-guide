@@ -1,0 +1,46 @@
+name: whisper-guide
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    environment:
+      WHISPER_GUIDE_ENVIRONMENT: production
+      WHISPER_GUIDE_CORS_ORIGINS: '["http://localhost:8080"]'
+    volumes:
+      - speech_data:/data
+      - speech_models:/models
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "/app/backend-core/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports: ["127.0.0.1:8080:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging: *logging
+volumes:
+  speech_data:
+  speech_models:

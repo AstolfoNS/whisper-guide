@@ -1,8 +1,16 @@
-"""SQLite connection setup; business tables will be added with their features."""
+"""SQLite connections and short-lived database sessions."""
 
+from collections.abc import Iterator
+
+from fastapi import Request
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.orm import DeclarativeBase, Session
 
 from app.config import Settings
+
+
+class Base(DeclarativeBase):
+    pass
 
 
 def create_database_engine(settings: Settings) -> Engine:
@@ -18,3 +26,8 @@ def create_database_engine(settings: Settings) -> Engine:
         engine.dispose()
         raise
     return engine
+
+
+def get_database_session(request: Request) -> Iterator[Session]:
+    with Session(request.app.state.database_engine) as session:
+        yield session

@@ -5,10 +5,16 @@ description = "Server-side speech tracking and prompting API for Whisper Guide"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "edge-tts>=7.2,<8.0",
     "fastapi>=0.115,<1.0",
+    "numpy>=2.0,<3.0",
     "pydantic-settings>=2.6,<3.0",
+    "python-multipart>=0.0.20,<1.0",
+    "sherpa-onnx>=1.12,<2.0",
+    "sherpa-onnx-core==1.13.8",
     "sqlalchemy>=2.0,<3.0",
     "uvicorn[standard]>=0.30,<1.0",
+    "webrtcvad-wheels>=2.0.14,<3.0",
 ]
 
 [dependency-groups]

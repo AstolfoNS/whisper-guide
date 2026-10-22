@@ -1,0 +1,16 @@
+.git
+.idea
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/dist
+**/data
+**/models
+**/.env
+**/.env.local
+**/*.db
+**/*.db-*
+**/*.log
+.uv-cache-test

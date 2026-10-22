@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchHealth } from './api/health'
+import ScriptLibrary from './components/ScriptLibrary.vue'
+import SessionPanel from './components/SessionPanel.vue'
+import type { ScriptDocument } from './api/scripts'
 
 type ConnectionState = 'checking' | 'connected' | 'unavailable'
 
 const connectionState = ref<ConnectionState>('checking')
 const connectionMessage = ref('正在检查后端服务…')
 const serviceVersion = ref('')
+const selectedScript = ref<ScriptDocument>()
+const sessionActive = ref(false)
 let healthRequest: AbortController | undefined
 let healthTimeout: ReturnType<typeof setTimeout> | undefined
 
@@ -62,7 +67,7 @@ onBeforeUnmount(() => {
     <header class="site-header">
       <span class="brand-mark" aria-hidden="true">声</span>
       <span class="brand-name">Whisper Guide</span>
-      <span class="version-badge">项目初始化 · v0.1</span>
+      <span class="version-badge">讲稿准备 · v0.1</span>
     </header>
 
     <main id="main-content" tabindex="-1">
@@ -99,6 +104,9 @@ onBeforeUnmount(() => {
         </button>
       </section>
 
+      <ScriptLibrary :locked="sessionActive" @selected="selectedScript = $event" />
+      <SessionPanel :script="selectedScript" :service-available="connectionState === 'connected'" @active="sessionActive = $event" />
+
       <section class="scope-card" aria-labelledby="scope-title">
         <div class="section-heading">
           <h2 id="scope-title">第一版工作流程</h2>
@@ -111,7 +119,7 @@ onBeforeUnmount(() => {
           </li>
         </ul>
         <p class="scope-note">
-          当前仅完成项目基础骨架与服务连接检查。讲稿管理、麦克风采集、语音识别和播报功能将在后续实现。
+            当前已支持讲稿上传、选择和预览，以及基本的会话控制。语音识别和语音合成由服务端提供。
         </p>
       </section>
     </main>

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -5,8 +6,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.scripts import router as scripts_router
+from app.api.session import router as session_router
 from app.config import Settings, get_settings
-from app.database import create_database_engine
+from app.database import Base, create_database_engine
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -17,8 +20,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_database_engine(configuration)
         application.state.database_engine = engine
         try:
+            Base.metadata.create_all(engine)
             yield
         finally:
+            pending = []
+            for runtime in getattr(application.state, "sessions", {}).values():
+                runtime.cancel_prompt()
+                runtime.release_stream()
+                if runtime.socket:
+                    pending.append(runtime.socket.close(code=1001))
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
             engine.dispose()
 
     application = FastAPI(
@@ -35,6 +47,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Content-Type"],
     )
     application.include_router(health_router, prefix="/api")
+    application.include_router(scripts_router, prefix="/api")
+    application.include_router(session_router, prefix="/api")
     return application
 
 

@@ -20,6 +20,13 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "development"
     data_dir: Path = BACKEND_ROOT / "data"
+    script_max_file_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
+    script_max_upload_files: int = Field(default=10, gt=0)
+    speech_model_dir: Path = (
+        BACKEND_ROOT / "models" / "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
+    )
+    speech_sample_rate: int = 16_000
+    tts_voice: str = "zh-CN-XiaoxiaoNeural"
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
@@ -33,6 +40,11 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         database_path = self.resolved_data_dir / "whisper-guide.db"
         return f"sqlite+pysqlite:///{database_path.as_posix()}"
+
+    @property
+    def resolved_speech_model_dir(self) -> Path:
+        path = self.speech_model_dir.expanduser()
+        return path if path.is_absolute() else BACKEND_ROOT / path
 
 
 @lru_cache
