@@ -37,6 +37,7 @@ class SessionRuntime:
         self.last_text = ""
         self.ready_generation = -1
         self.audio_queue: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(maxsize=50)
+        self.audio_inflight = False
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self.session.snapshot()
@@ -68,6 +69,7 @@ class SessionRuntime:
         self.last_voice_ms = None
         self.last_frame_ms = None
         self.last_text = ""
+        self.audio_inflight = False
 
     def cancel_prompt(self) -> None:
         if self.synthesis and self.synthesis is not asyncio.current_task():
@@ -254,20 +256,32 @@ async def session_socket(socket: WebSocket) -> None:
                 continue
             current = runtime
             generation, pcm = await current.audio_queue.get()
+            current.audio_inflight = True
             try:
                 await current.audio(pcm, generation)
             except (SpeechUnavailableError, RuntimeError):
                 async with current.lock:
-                    await current.change("service_fault", reason="识别服务失败，已暂停。")
+                    if (
+                        generation == current.session.generation
+                        and current.session.state == SessionState.LISTENING
+                    ):
+                        await current.change("service_fault", reason="识别服务失败，已暂停。")
             except SessionError as error:
                 await socket.send_json({"type": "error", "message": str(error)})
+            finally:
+                current.audio_inflight = False
 
     async def ticker() -> None:
         while True:
             await asyncio.sleep(0.05)
             if runtime and runtime.socket is socket:
                 async with runtime.lock:
-                    if runtime.audio_ready and runtime.session.state == SessionState.LISTENING:
+                    if (
+                        runtime.audio_ready
+                        and runtime.session.state == SessionState.LISTENING
+                        and not runtime.audio_inflight
+                        and runtime.audio_queue.empty()
+                    ):
                         if runtime.last_frame_ms and now_ms() - runtime.last_frame_ms > 5000:
                             await runtime.change("service_fault", reason="麦克风数据中断，已暂停。")
                         else:
