@@ -28,7 +28,16 @@ let captureGeneration = -1
 let captureAttempt = 0
 let lastFeedback = -1
 let expectedPrompt = ''
+let operation = 0
+let minimumGeneration = -1
+let pendingState: SessionSnapshot['state'] | undefined
 const client = new SessionClient(onEvent, disconnected)
+
+function beginOperation() { return ++operation }
+function invalidateOperations() { operation++ }
+function ensureOperation(current: number) {
+  if (current !== operation || destroyed) throw new Error('操作已取消。')
+}
 
 async function refreshSpeech() {
   try {
@@ -80,8 +89,13 @@ function onEvent(event: SessionServerEvent) {
   if (event.type === 'error') { error.value = event.message; return }
   if (event.type === 'snapshot') {
     const next = event.session
+    if (next.generation < minimumGeneration) return
+    if (pendingState && next.generation === minimumGeneration && next.state !== pendingState) return
     snapshot.value = next
-    localPaused.value = false
+    if (pendingState && next.state === pendingState && next.generation >= minimumGeneration) {
+      pendingState = undefined
+    }
+    localPaused.value = pendingState === 'PAUSED'
     timeout.value = next.silence_timeout_ms
     emit('active', next.state !== 'TERMINATED')
     if (next.feedback_id !== lastFeedback) {
@@ -121,30 +135,44 @@ function onEvent(event: SessionServerEvent) {
 async function start() {
   if (!canStart.value || !props.script) return
   if (!validTimeout.value) { error.value = '静音阈值必须为正整数。'; return }
+  const currentOperation = beginOperation()
   busy.value = true; error.value = ''
   try {
     await player.unlock()
+    ensureOperation(currentOperation)
     await microphone.open(frame => {
       if (state.value === 'LISTENING') client.sendAudio(frame)
     }, reason => pause(reason))
+    ensureOperation(currentOperation)
     if (!client.connected) await client.connect()
+    ensureOperation(currentOperation)
     if (!snapshot.value || snapshot.value.state === 'TERMINATED') {
+      minimumGeneration = -1
+      pendingState = undefined
       const ready = client.waitFor(s => s.state === 'READY')
       client.prepare(props.script.id, timeout.value)
       await ready
     } else {
       client.send({ type: 'configure', silence_timeout_ms: timeout.value })
     }
+    ensureOperation(currentOperation)
     const listening = client.waitFor(s => s.state === 'LISTENING')
     client.send({ type: 'start' })
     await listening
   } catch (reason) {
     stopCapture()
-    error.value = reason instanceof Error ? reason.message : '无法开始会话。'
+    if (currentOperation === operation && !destroyed) {
+      error.value = reason instanceof Error ? reason.message : '无法开始会话。'
+    }
   } finally { busy.value = false }
 }
 function pause(reason = '') {
   if (!['LISTENING', 'PROMPTING'].includes(state.value)) return
+  invalidateOperations()
+  if (snapshot.value) {
+    minimumGeneration = Math.max(minimumGeneration, snapshot.value.generation + 1)
+    pendingState = 'PAUSED'
+  }
   stopCapture(); stopPrompt()
   localPaused.value = true
   if (reason) error.value = reason
@@ -153,31 +181,48 @@ function pause(reason = '') {
 async function resume() {
   if (state.value !== 'PAUSED' || !snapshot.value || busy.value) return
   if (!validTimeout.value) { error.value = '静音阈值必须为正整数。'; return }
+  const currentOperation = beginOperation()
   busy.value = true; error.value = ''
   try {
     await player.unlock()
+    ensureOperation(currentOperation)
     await microphone.open(frame => {
       if (state.value === 'LISTENING') client.sendAudio(frame)
     }, reason => pause(reason))
+    ensureOperation(currentOperation)
     if (!client.connected) {
       await client.connect()
+      ensureOperation(currentOperation)
       const attached = client.waitFor(s => s.id === snapshot.value?.id)
       client.attach(snapshot.value.id)
       await attached
     }
+    ensureOperation(currentOperation)
     client.send({ type: 'configure', silence_timeout_ms: timeout.value })
     client.send({ type: 'resume' })
   } catch (reason) {
     stopCapture()
-    error.value = reason instanceof Error ? reason.message : '无法继续，请重新准备会话。'
+    if (currentOperation === operation && !destroyed) {
+      error.value = reason instanceof Error ? reason.message : '无法继续，请重新准备会话。'
+    }
   } finally { busy.value = false }
 }
 function interrupt() {
   if (state.value !== 'PROMPTING') return
+  invalidateOperations()
+  if (snapshot.value) {
+    minimumGeneration = Math.max(minimumGeneration, snapshot.value.generation + 1)
+    pendingState = 'LISTENING'
+  }
   stopPrompt()
   if (client.connected) client.send({ type: 'interrupt' })
 }
 function terminate() {
+  invalidateOperations()
+  if (snapshot.value) {
+    minimumGeneration = Math.max(minimumGeneration, snapshot.value.generation + 1)
+    pendingState = 'TERMINATED'
+  }
   stopCapture(); stopPrompt()
   if (client.connected) client.send({ type: 'terminate' })
   if (snapshot.value) snapshot.value = { ...snapshot.value, state: 'TERMINATED', prompt: null }
