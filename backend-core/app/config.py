@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     def model_settings_path(self) -> Path:
         return self.resolved_data_dir / ".model-settings.json"
 
+    @property
+    def model_configs_path(self) -> Path:
+        return self.resolved_data_dir / ".model-configs.json"
+
 
 def clone_model_settings(settings: Settings, updates: dict[str, Any]) -> Settings:
     """Validate a new settings instance without mutating the active instance."""
@@ -114,31 +118,35 @@ def clone_model_settings(settings: Settings, updates: dict[str, Any]) -> Setting
     return Settings(**values, _env_file=None)
 
 
-def persist_model_settings(settings: Settings) -> None:
-    """Atomically write owner-only model configuration next to the SQLite DB."""
-
-    directory = settings.resolved_data_dir
+def persist_private_bytes(destination: Path, data: bytes) -> None:
+    """Atomically replace an owner-only private settings file."""
+    directory = destination.parent
     directory.mkdir(parents=True, exist_ok=True)
-    destination = settings.model_settings_path
     if destination.is_symlink():
         raise OSError("Runtime model settings must be a regular file.")
-    values = {key: getattr(settings, key) for key in MODEL_SETTINGS_FIELDS}
     temporary: str | None = None
     try:
         descriptor, temporary = tempfile.mkstemp(
             prefix=".model-settings-", suffix=".tmp", dir=directory
         )
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        with os.fdopen(descriptor, "wb") as output:
             os.fchmod(output.fileno(), 0o600)
-            json.dump(values, output, ensure_ascii=False)
+            output.write(data)
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, destination)
         temporary = None
-        destination.chmod(0o600)
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)
+
+
+def persist_model_settings(settings: Settings) -> None:
+    """Atomically write owner-only model configuration next to the SQLite DB."""
+    values = {key: getattr(settings, key) for key in MODEL_SETTINGS_FIELDS}
+    persist_private_bytes(
+        settings.model_settings_path, json.dumps(values, ensure_ascii=False).encode("utf-8")
+    )
 
 
 def load_model_settings(settings: Settings) -> Settings:

@@ -50,3 +50,7 @@ release/
 *.bz2
 .model-settings.json
 .model-settings-*.tmp
+.model-configs.json
+.model-configs-*.tmp
+test-results/
+playwright-report/

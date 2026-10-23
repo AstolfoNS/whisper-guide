@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.config import clone_model_settings
 from app.domain.session import SessionError, SessionState, SpeechSession
 from app.infrastructure.llm import LLMSemanticRefiner
 from app.infrastructure.speech import ProviderSpeechServices, SpeechUnavailableError
@@ -30,11 +31,18 @@ class SessionRuntime:
         script_name: str,
         speech: Any,
         provider_name: str = "local",
+        *,
+        model_settings: Any | None = None,
+        model_config: dict[str, Any] | None = None,
     ) -> None:
         self.session = session
         self.script_name = script_name
         self.speech = speech
         self.provider_name = provider_name
+        self.model_settings = model_settings or getattr(speech, "settings", None)
+        self.model_config_id = (model_config or {}).get("id", "")
+        self.model_config_name = (model_config or {}).get("name", "")
+        self.model_config_revision = (model_config or {}).get("revision", 0)
         self.refinement: asyncio.Task[None] | None = None
         self.transcript_revision = 0
         self.last_filler_only = False
@@ -67,6 +75,9 @@ class SessionRuntime:
             aligned_transcript=self.session.aligned_transcript,
             notice=self.session.message,
             stt_provider=self.provider_name,
+            model_config_id=self.model_config_id,
+            model_config_name=self.model_config_name,
+            model_config_revision=self.model_config_revision,
             recognition_is_final=self.last_update_final,
             raw_transcript_is_final=(
                 self.last_update_final or (not self.last_text and bool(self.session.raw_transcript))
@@ -118,7 +129,7 @@ class SessionRuntime:
         window = self.session.aligner.script_window(anchor)
         self.session.handle("transcript", timestamp, text=text)
         self.settled_segment_id = self.last_segment_id
-        settings = getattr(self.speech, "settings", None)
+        settings = self.model_settings
         refiner = LLMSemanticRefiner(settings)
         if not refiner.enabled:
             return
@@ -491,18 +502,6 @@ async def session_socket(socket: WebSocket) -> None:
                         script = find_script(database, command.get("script_id"))
                         if script is None:
                             raise SessionError("请先选择一份有效讲稿。")
-                        provider_name = command.get(
-                            "stt_provider",
-                            getattr(socket.app.state.settings, "stt_provider", "local"),
-                        )
-                        options = (
-                            services.provider_options()
-                            if hasattr(services, "provider_options")
-                            else [{"id": "local", "available": True}]
-                        )
-                        known_providers = {item["id"] for item in options}
-                        if provider_name not in known_providers:
-                            raise SessionError("未配置或未授权该语音 Provider。")
                         engine = SpeechSession(
                             script.id,
                             script.content,
@@ -511,7 +510,31 @@ async def session_socket(socket: WebSocket) -> None:
                                 socket.app.state.settings.default_silence_timeout_ms,
                             ),
                         )
-                        runtime = SessionRuntime(engine, script.name, services, provider_name)
+                        # Capture configuration and register the new session as one
+                        # atomic operation with respect to profile activation.
+                        with socket.app.state.model_config_lock:
+                            profile = socket.app.state.model_configs.active_snapshot()
+                            settings = clone_model_settings(
+                                socket.app.state.settings, profile["settings"]
+                            )
+                            provider_name = command.get("stt_provider", settings.stt_provider)
+                            options = (
+                                services.provider_options()
+                                if hasattr(services, "provider_options")
+                                else [{"id": "local", "available": True}]
+                            )
+                            if provider_name not in {item["id"] for item in options}:
+                                raise SessionError("未配置或未授权该语音 Provider。")
+                            runtime = SessionRuntime(
+                                engine,
+                                script.name,
+                                services,
+                                provider_name,
+                                model_settings=settings,
+                                model_config=profile,
+                            )
+                            runtime.socket = socket
+                            registry[engine.id] = runtime
                     runtime.socket = socket
                     audio_task.cancel()
                     audio_task = asyncio.create_task(audio_worker())

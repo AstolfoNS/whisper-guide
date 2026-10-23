@@ -6,15 +6,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.recovery import router as recovery_router
 from app.api.scripts import router as scripts_router
 from app.api.session import router as session_router
 from app.api.settings import router as settings_router
-from app.config import Settings, get_settings, load_model_settings
+from app.config import Settings, clone_model_settings, get_settings, load_model_settings
 from app.database import Base, create_database_engine
+from app.repositories.model_configs import ModelConfigRepository
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     configuration = load_model_settings(settings if settings is not None else get_settings())
+    model_configs = ModelConfigRepository(configuration)
+    configuration = clone_model_settings(configuration, model_configs.active_snapshot()["settings"])
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -41,6 +45,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.state.settings = configuration
+    application.state.model_configs = model_configs
+    application.state.model_config_lock = model_configs.lock
     application.add_middleware(
         CORSMiddleware,
         allow_origins=configuration.cors_origins,
@@ -48,6 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Content-Type"],
     )
     application.include_router(health_router, prefix="/api")
+    application.include_router(recovery_router, prefix="/api")
     application.include_router(scripts_router, prefix="/api")
     application.include_router(session_router, prefix="/api")
     application.include_router(settings_router, prefix="/api")
