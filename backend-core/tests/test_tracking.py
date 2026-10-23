@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.tracking import ScriptTracker, content_units
+from app.domain.tracking import ScriptAligner, ScriptTracker, content_units
 
 
 def test_units_preserve_original_offsets_and_mixed_language() -> None:
@@ -84,3 +84,27 @@ def test_short_recognition_cannot_jump_to_far_away_occurrence() -> None:
 def test_script_must_have_content_units() -> None:
     with pytest.raises(ValueError):
         ScriptTracker("，？！   ")
+
+def test_repeated_streaming_prefix_is_collapsed_only_when_script_matches() -> None:
+    tracker = ScriptTracker("大家好。")
+    assert tracker.normalize_transcript("大大大大家好好好好", None) == "大家好"
+
+    other = ScriptTracker("大大大好。")
+    assert other.normalize_transcript("大大大好", None) == "大大大好"
+
+def test_script_aligner_corrects_homophone_to_script_text() -> None:
+    pytest.importorskip("pypinyin")
+    tracker = ScriptTracker("大家好，今天开始测试。")
+    result = ScriptAligner(tracker).align("大甲好", None)
+    assert result is not None
+    assert result.matched_text == "大家好"
+    assert result.confidence >= 0.68
+
+
+def test_script_aligner_prefers_nearby_duplicate_sentence() -> None:
+    pytest.importorskip("pypinyin")
+    text = "大家好。继续努力。大家好。"
+    tracker = ScriptTracker(text)
+    result = ScriptAligner(tracker).align("大家好", text.index("大家好", 1))
+    assert result is not None
+    assert result.position == text.rindex("好")

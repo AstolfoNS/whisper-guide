@@ -60,3 +60,40 @@ def test_duplicate_audio_ready_does_not_reset_silence_clock():
         runtime.release_stream()
 
     asyncio.run(scenario())
+
+class PartialFinalStream:
+    available = True
+
+    def __init__(self):
+        self.updates = iter(
+            [
+                RecognitionUpdate("欢迎大家", is_final=False, segment_id=0),
+                RecognitionUpdate("欢迎大家。", is_final=True, segment_id=0),
+            ]
+        )
+
+    def is_speech(self, pcm):
+        return True
+
+    def accept_pcm(self, pcm):
+        return next(self.updates)
+
+    def close(self):
+        pass
+
+
+def test_partial_does_not_commit_until_final():
+    async def scenario():
+        class Speech(FakeSpeech):
+            def create_stream(self):
+                return PartialFinalStream()
+
+        runtime = SessionRuntime(SpeechSession("script", "欢迎大家。"), "demo", Speech())
+        await runtime.control({"type": "start"})
+        await runtime.control({"type": "audio_ready"})
+        await runtime.audio(bytes(640))
+        assert runtime.session.reading_position is None
+        await runtime.audio(bytes(640))
+        assert runtime.session.reading_position is not None
+
+    asyncio.run(scenario())

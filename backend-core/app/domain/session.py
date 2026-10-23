@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from app.domain.tracking import ScriptTracker
+from app.domain.tracking import ScriptAligner, ScriptTracker
 
 
 class SessionState(StrEnum):
@@ -26,6 +26,23 @@ class SessionOptions(BaseModel):
 
 class SessionError(ValueError):
     """An explicit user command is not valid in the current state."""
+
+
+FILLER_UTTERANCES = frozenset(
+    {
+        "嗯",
+        "嗯嗯",
+        "呃",
+        "呃呃",
+        "啊",
+        "额",
+        "唔",
+        "诶",
+        "欸",
+        "那个",
+        "这个",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,9 +207,6 @@ class SpeechSession:
             if self.state == SessionState.LISTENING:
                 self.speaking = True
                 self.silence_since_ms = None
-                # A new utterance invalidates the previous automatic-prompt anchor
-                # until it is matched. Never guess from an old position if STT lags.
-                self.reliable = False
         elif event == "speech_end":
             if self.state == SessionState.LISTENING:
                 self.speaking = False
@@ -202,19 +216,25 @@ class SpeechSession:
                 text = payload.get("text", "")
                 if not isinstance(text, str):
                     raise SessionError("识别文本必须是字符串。")
+                self.raw_transcript = text
+                text = self.tracker.normalize_transcript(text, self.reading_position)
                 self.last_transcript = text
-                result = self.tracker.match(text, self.reading_position)
+                compact = "".join(text.split()).strip("，。！？!?；;,.、")
+                if compact.casefold() in FILLER_UTTERANCES:
+                    return self.snapshot()
+                result = self.aligner.align(text, self.reading_position)
                 if result is None and self.prompt_position != self.reading_position:
                     # After several automatically read segments the speaker may
                     # resume near the system's current prompt, outside the last
                     # confirmed user's local window. This is only a second anchor;
                     # it never changes reading_position without actual speech.
-                    result = self.tracker.match(text, self.prompt_position)
+                    result = self.aligner.align(text, self.prompt_position)
                 if result:
                     self.reading_position = result.position
                     self.prompt_position = result.position
                     self.reliable = True
                     self.match_confidence = result.confidence
+                    self.aligned_transcript = result.matched_text
                     self._location_warning_reported = False
                 elif text.strip():
                     if not self._location_warning_reported:

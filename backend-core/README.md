@@ -30,8 +30,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 - 支持 UTF-8（含 BOM）、带 BOM 的 UTF-16 和 GB18030。空白文件、包含二进制控制字符的内容及不支持的文件类型会返回 422。
 - 默认单文件最多 2 MiB、每批最多 10 份，分别由 `WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES` 和 `WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES` 配置。文件超限返回 413。
 - 整批校验后一次写入；一份无效则整批不保存。同名文件创建独立 ID，不覆盖已有讲稿。
-- SQLite 保存解码后的完整文本和元数据，不额外保存原始上传文件。当前不保存用户录音；未来实时音频只用于临时处理，不持久化。
-- 本次演讲选择由前端准备流程管理，尚未实现实际演讲会话绑定接口。
+- SQLite 保存解码后的完整文本和元数据，不额外保存原始上传文件。用户录音只用于实时处理，不持久化。
+- 本次演讲由前端准备流程选择讲稿，并通过 WebSocket `prepare` 将讲稿绑定到会话；会话开始前必须完成讲稿选择。
 
 ## 验证
 
@@ -49,17 +49,19 @@ uv run pytest
 uv run python scripts/download_asr_model.py
 ```
 
+脚本支持断点续传；下载中断后会保留 `models/.sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2.part`，下次运行会继续下载。网络受限时可通过 `--url` 或 `WHISPER_GUIDE_MODEL_URL` 指定可用镜像。脚本会在原子解压后严格检查 `tokens.txt` 及非空的 `encoder*.onnx`、`decoder*.onnx`、`joiner*.onnx`。
+
 模型放在 `models/`（已被 Git 忽略）。麦克风音频只在内存中处理；TTS
 通过 `edge-tts` 生成内存中的 MP3，不保存用户录音或临时提示音频。
 
-## 当前范围
+## 当前实现状态
 
-- 提供应用工厂、启动/关闭生命周期、开发环境 CORS 和健康检查接口。
+- 已提供应用工厂、启动/关闭生命周期、开发环境 CORS、健康检查和讲稿 API。
 - 启动时创建本地 `data/whisper-guide.db`、讲稿表并验证 SQLite 连接。
-- 定义五状态名称和正整数毫秒阈值契约，尚不实现状态转换。
-- 尚未接入 STT、VAD、TTS、WebSocket 音频传输，也不下载语音模型。
+- 已实现五状态会话、正整数毫秒阈值、WebSocket 音频控制、断线后 `attach` 和讲稿追踪。
+- 已接入 sherpa-onnx 流式 STT、WebRTC VAD 和 edge-tts。ASR 模型目录缺失时状态接口返回不可用，开始识别会明确失败；TTS 生成依赖服务器网络。
 
-后续实时会话由单个后端服务进程拥有；推理计算应与接收控制命令分开执行，避免阻塞暂停和打断。
+会话由单个后端进程拥有，因此必须使用一个 Uvicorn worker；推理计算在控制锁外执行，避免阻塞暂停和打断。真实 ASR 效果、麦克风、耳机、浏览器和读屏验收仍见[第一轮验收](../docs/acceptance-round-1.md)。
 
 ## 实时会话与语音
 
@@ -67,4 +69,8 @@ WebSocket 入口为 /api/session。先发送 prepare 绑定讲稿，再发送 st
 
 语音适配使用 sherpa-onnx 中英流式模型、WebRTC VAD 和 edge-tts。模型通过 scripts/download_asr_model.py 单独准备，语音状态入口为 GET /api/speech/status。TTS 只生成内存音频，麦克风原始数据不保存。模型不存在时不会假装识别成功。
 
-当前会话为进程内状态，部署单个 worker。数据仅持久保存讲稿，不提供用户录音存储。运行 pytest 会同时检查 HTTP、WebSocket、状态机和音频任务取消。
+当前会话为进程内状态，部署单个 worker；重启会丢失活跃会话，讲稿仍保存在 SQLite。系统不保存用户录音。当前接口没有用户认证或讲稿权限隔离，公网部署前必须增加 HTTPS、认证和访问控制。运行 pytest 会同时检查 HTTP、WebSocket、状态机和音频任务取消。
+
+## STT Provider
+
+默认使用 LocalSherpaProvider。通过 WHISPER_GUIDE_STT_PROVIDER 选择 local、hybrid 或服务端注册的任意 Provider ID；远程 Provider 由 WHISPER_GUIDE_STT_PROVIDER_CONFIGS 配置，建议使用 access_token_env 引用密钥，并通过 WHISPER_GUIDE_CLOUD_OPT_IN=true 明确授权。远程请求失败时回退到本地 Provider，所有游标仍由本地 ScriptAligner 更新。

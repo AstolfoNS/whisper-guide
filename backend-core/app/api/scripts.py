@@ -4,11 +4,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, field_validator
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_database_session
 from app.models.script import Script
+from app.repositories.scripts import (
+    add_scripts as persist_scripts,
+    get_script as find_script,
+    list_scripts as query_scripts,
+)
 
 router = APIRouter(prefix="/scripts", tags=["scripts"])
 DatabaseSession = Annotated[Session, Depends(get_database_session)]
@@ -68,8 +72,7 @@ def decode_text(data: bytes, name: str) -> str:
 
 @router.get("", response_model=list[ScriptSummary])
 def list_scripts(session: DatabaseSession) -> list[Script]:
-    statement = select(Script).order_by(Script.created_at.desc(), Script.id)
-    return list(session.scalars(statement))
+    return query_scripts(session)
 
 
 @router.post("/upload", response_model=list[ScriptRead], status_code=status.HTTP_201_CREATED)
@@ -110,16 +113,12 @@ def upload_scripts(
         scripts.append(Script(name=name, content=content, character_count=len(content)))
 
     # Validate the complete batch before writing, so invalid files save no partial batch.
-    session.add_all(scripts)
-    session.commit()
-    for script in scripts:
-        session.refresh(script)
-    return scripts
+    return persist_scripts(session, scripts)
 
 
 @router.get("/{script_id}", response_model=ScriptRead)
 def read_script(script_id: str, session: DatabaseSession) -> Script:
-    script = session.get(Script, script_id)
+    script = find_script(session, script_id)
     if script is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到该讲稿。")
     return script

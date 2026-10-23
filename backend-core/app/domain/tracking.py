@@ -9,6 +9,12 @@ import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+try:
+    from pypinyin import Style, lazy_pinyin
+except ImportError:  # pragma: no cover - optional during bootstrap
+    Style = None
+    lazy_pinyin = None
+
 BOUNDARIES = frozenset("，,。.？?！!；;")
 _WORD = re.compile(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*")
 _NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:[%％])?")
@@ -111,6 +117,14 @@ class ScriptTracker:
             next_position=self.snap_position(end),
         )
 
+    def normalize_transcript(self, transcript: str, reading_position: int | None) -> str:
+        """Collapse an obvious repeated-prefix artifact only when the script supports it."""
+        collapsed = re.sub(r"([^\W\d_])\1{2,}", r"\1", transcript)
+        if collapsed == transcript:
+            return transcript
+        raw_match = self.match(transcript, reading_position)
+        collapsed_match = self.match(collapsed, reading_position)
+        return collapsed if raw_match is None and collapsed_match is not None else transcript
     def match(self, transcript: str, reading_position: int | None) -> MatchResult | None:
         recognized = content_units(transcript)
         if not recognized:
@@ -160,3 +174,145 @@ class ScriptTracker:
         if len(needle) < 3 and (confidence < 1 or distance > 3):
             return None
         return MatchResult(self.units[index].start, index, confidence)
+
+@dataclass(frozen=True, slots=True)
+class AlignmentCandidate:
+    start_index: int
+    end_index: int
+    score: float
+    literal_score: float
+    phonetic_score: float
+    proximity_score: float
+    context_score: float
+    jump_penalty: float
+
+
+class ScriptAligner:
+    """Constrain final ASR text to the local script window.
+
+    The aligner treats the script as authoritative. Recognition text supplies
+    evidence through literal and pinyin similarity; it never becomes the
+    committed transcript itself.
+    """
+
+    def __init__(
+        self,
+        tracker: ScriptTracker,
+        *,
+        search_before: int = 40,
+        search_after: int = 80,
+        reliable_threshold: float = 0.68,
+    ) -> None:
+        self.tracker = tracker
+        self.search_before = search_before
+        self.search_after = search_after
+        self.reliable_threshold = reliable_threshold
+        self._script_pinyin = [_pinyin_key(unit.text) for unit in tracker.units]
+
+    def align(self, transcript: str, reading_position: int | None) -> MatchResult | None:
+        recognized = content_units(transcript)
+        if not recognized:
+            return None
+        needle = [unit.normalized for unit in recognized[-64:]]
+        needle_pinyin = [_pinyin_key(unit.text) for unit in recognized[-64:]]
+        anchor = 0 if reading_position is None else self.tracker.unit_index_at(reading_position)
+        left = max(0, anchor - max(self.search_before, len(needle) + 12))
+        right = min(
+            len(self.tracker.units),
+            anchor + max(self.search_after, len(needle) + 12),
+        )
+        candidates: list[AlignmentCandidate] = []
+        lengths = range(max(1, len(needle) - 2), len(needle) + 3)
+        for start in range(left, right):
+            for length in lengths:
+                end = start + length
+                if end > right:
+                    continue
+                literal = SequenceMatcher(
+                    None,
+                    needle,
+                    [unit.normalized for unit in self.tracker.units[start:end]],
+                    autojunk=False,
+                ).ratio()
+                phonetic = SequenceMatcher(
+                    None,
+                    needle_pinyin,
+                    self._script_pinyin[start:end],
+                    autojunk=False,
+                ).ratio()
+                end_index = end - 1
+                distance = abs(end_index - anchor)
+                proximity = max(0.0, 1.0 - min(distance, 80) / 80)
+                context = 1.0 if end_index >= anchor else max(0.0, 1.0 - distance / 24)
+                jump_penalty = min(0.25, max(0, distance - 8) / 80)
+                score = (
+                    0.35 * literal
+                    + 0.40 * phonetic
+                    + 0.18 * proximity
+                    + 0.07 * context
+                    - jump_penalty
+                )
+                candidates.append(
+                    AlignmentCandidate(
+                        start,
+                        end_index,
+                        score,
+                        literal,
+                        phonetic,
+                        proximity,
+                        context,
+                        jump_penalty,
+                    )
+                )
+        if not candidates:
+            return None
+        best = max(
+            candidates,
+            key=lambda candidate: (
+                candidate.score,
+                candidate.phonetic_score,
+                candidate.literal_score,
+                -abs(candidate.end_index - anchor),
+                candidate.end_index >= anchor,
+            ),
+        )
+        if best.score < self.reliable_threshold:
+            return None
+        if len(needle) < 3 and abs(best.end_index - anchor) > 3:
+            return None
+        unit = self.tracker.units[best.end_index]
+        start_unit = self.tracker.units[best.start_index]
+        return MatchResult(
+            position=unit.start,
+            unit_index=best.end_index,
+            confidence=max(0.0, min(1.0, best.score)),
+            matched_text=self.tracker.text[start_unit.start : unit.end],
+        )
+
+    def match(self, transcript: str, reading_position: int | None) -> MatchResult | None:
+        return self.align(transcript, reading_position)
+
+
+def _pinyin_key(text: str) -> tuple[str, ...]:
+    if lazy_pinyin is None or Style is None:
+        return tuple(character.casefold() for character in text)
+    try:
+        values = lazy_pinyin(text, style=Style.NORMAL, errors="default")
+    except Exception:
+        values = list(text)
+    return tuple(_fuzzy_syllable(value) for value in values)
+
+
+def _fuzzy_syllable(value: str) -> str:
+    value = value.casefold()
+    for source, target in (("zh", "z"), ("ch", "c"), ("sh", "s")):
+        if value.startswith(source):
+            value = target + value[len(source) :]
+            break
+    for source, target in (("ang", "an"), ("eng", "en"), ("ing", "in")):
+        if value.endswith(source):
+            value = value[: -len(source)] + target
+            break
+    if value.startswith("l"):
+        value = "n" + value[1:]
+    return value

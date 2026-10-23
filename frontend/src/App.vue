@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchHealth } from './api/health'
 import ScriptLibrary from './components/ScriptLibrary.vue'
 import SessionPanel from './components/SessionPanel.vue'
+import ProviderSettings from './components/ProviderSettings.vue'
 import type { ScriptDocument } from './api/scripts'
 
 type ConnectionState = 'checking' | 'connected' | 'unavailable'
@@ -12,6 +13,7 @@ const connectionMessage = ref('正在检查后端服务…')
 const serviceVersion = ref('')
 const selectedScript = ref<ScriptDocument>()
 const sessionActive = ref(false)
+const selectedProvider = ref('local')
 let healthRequest: AbortController | undefined
 let healthTimeout: ReturnType<typeof setTimeout> | undefined
 
@@ -105,7 +107,8 @@ onBeforeUnmount(() => {
       </section>
 
       <ScriptLibrary :locked="sessionActive" @selected="selectedScript = $event" />
-      <SessionPanel :script="selectedScript" :service-available="connectionState === 'connected'" @active="sessionActive = $event" />
+      <ProviderSettings v-model="selectedProvider" :disabled="sessionActive || connectionState !== 'connected'" />
+      <SessionPanel :script="selectedScript" :stt-provider="selectedProvider" :service-available="connectionState === 'connected'" @active="sessionActive = $event" />
 
       <section class="scope-card" aria-labelledby="scope-title">
         <div class="section-heading">

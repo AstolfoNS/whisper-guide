@@ -10,6 +10,7 @@ docker compose logs --tail=100 backend frontend
 ```
 
 健康接口确认 Web 服务，语音状态接口确认模型和依赖。TTS 包已安装不代表网络永远可用，合成失败会暂停会话。
+当 `/api/speech/status` 返回 `stt=unavailable` 时，讲稿上传、列表和预览仍可用，但不能开始识别会话。
 
 ## 启停与更新
 
@@ -26,7 +27,7 @@ docker compose up -d
 ## 一致性备份
 
 ```bash
-python scripts/backup.py backend-core/data/whisper-guide.db backups/whisper-guide-20261022.db
+python scripts/backup.py data/sqlite/whisper-guide.db data/backups/whisper-guide-20261022.db
 ```
 
 脚本使用 SQLite backup API 和 quick_check，不覆盖已存在的目标文件。容器部署可将脚本复制到容器或使用 SQLite backup API 在数据卷中执行，然后将备份复制到宿主机安全位置。备份中无用户录音。

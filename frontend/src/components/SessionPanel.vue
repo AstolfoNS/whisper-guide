@@ -5,7 +5,7 @@ import { SessionClient, type SessionSnapshot, type SessionServerEvent } from '..
 import { Microphone } from '../audio/microphone'
 import { PromptPlayer } from '../audio/player'
 
-const props = defineProps<{ script?: ScriptDocument; serviceAvailable: boolean }>()
+const props = defineProps<{ script?: ScriptDocument; serviceAvailable: boolean; sttProvider?: string }>()
 const emit = defineEmits<{ active: [value: boolean] }>()
 const snapshot = ref<SessionSnapshot>()
 const timeout = ref(3000)
@@ -13,11 +13,12 @@ const position = ref(0)
 const busy = ref(false)
 const error = ref('')
 const localPaused = ref(false)
-const speech = ref({ stt: 'unavailable', tts: 'unavailable', detail: '正在检查语音服务…' })
+const speech = ref({ stt: 'unavailable', tts: 'unavailable', provider: 'local', cloud_notice: false, detail: '正在检查语音服务…' })
 const microphone = new Microphone()
 const player = new PromptPlayer()
 const state = computed(() => localPaused.value ? 'PAUSED' : snapshot.value?.state ?? 'READY')
 const labels = { READY: '就绪', LISTENING: '识别', PROMPTING: '播报', PAUSED: '暂停', TERMINATED: '终止' }
+const selectedProvider = computed(() => props.sttProvider ?? 'local')
 const canConfigure = computed(() => ['READY', 'PAUSED'].includes(state.value))
 const validTimeout = computed(() => Number.isInteger(timeout.value) && timeout.value > 0)
 const canStart = computed(() => !busy.value && props.script && props.serviceAvailable &&
@@ -45,9 +46,9 @@ async function refreshSpeech() {
     const response = await fetch(base + '/api/speech/status', { signal: AbortSignal.timeout(5000) })
     if (!response.ok) throw new Error('无法获取语音服务状态')
     const result = await response.json()
-    speech.value = { stt: result.stt, tts: result.tts, detail: result.detail ?? '' }
+    speech.value = { stt: result.stt, tts: result.tts, provider: result.provider ?? selectedProvider.value, cloud_notice: result.cloud_notice === true, detail: result.detail ?? '' }
   } catch {
-    speech.value = { stt: 'unavailable', tts: 'unavailable', detail: '语音服务连接失败，请检查后重试。' }
+    speech.value = { stt: 'unavailable', tts: 'unavailable', provider: 'local', cloud_notice: false, detail: '语音服务连接失败，请检查后重试。' }
   }
 }
 
@@ -150,7 +151,7 @@ async function start() {
       minimumGeneration = -1
       pendingState = undefined
       const ready = client.waitFor(s => s.state === 'READY')
-      client.prepare(props.script.id, timeout.value)
+      client.prepare(props.script.id, timeout.value, selectedProvider.value)
       await ready
     } else {
       client.send({ type: 'configure', silence_timeout_ms: timeout.value })
@@ -284,8 +285,11 @@ onBeforeUnmount(() => {
       </select>
       <button type="button" @click="reposition">应用位置</button>
     </fieldset>
-    <p v-if="snapshot?.last_transcript">最近识别：{{ snapshot.last_transcript }}</p>
-    <p v-if="snapshot && !snapshot.reliable" role="status">正在重新定位，自动提示暂时停用。</p>
+    <div class="transcript-grid">
+      <p v-if="snapshot?.raw_transcript || snapshot?.last_transcript" class="transcript"><strong>实时语音识别</strong><br />{{ snapshot.raw_transcript || snapshot.last_transcript }}</p>
+      <p v-if="snapshot?.aligned_transcript" class="prompt-preview"><strong>已对齐讲稿位置</strong><br />{{ snapshot.aligned_transcript }}<span v-if="snapshot.match_confidence != null">（置信度 {{ Math.round(snapshot.match_confidence * 100) }}%）</span></p>
+    </div>
+    <p v-if="snapshot && !snapshot.reliable" class="session-alert session-alert--warning" role="status">暂时没有匹配到讲稿，自动提示已暂停；可以手动提示或重新定位。</p>
     <p v-if="snapshot?.prompt">当前提示：{{ snapshot.prompt.text }}</p>
     <p v-if="snapshot?.at_end" role="status">系统已提示到讲稿末尾，自动续播停止；仍可朗读、重新定位或结束。</p>
     <p class="input-help">Alt+Shift+P 暂停或继续，Alt+Shift+I 打断，Alt+Shift+E 结束，Alt+Shift+H 手动提示。

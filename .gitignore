@@ -44,3 +44,7 @@ npm-debug.log*
 
 .uv-cache-test/
 /backups/
+release/
+*.tar
+*.tar.gz
+*.bz2

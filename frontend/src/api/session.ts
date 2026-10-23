@@ -1,12 +1,20 @@
 export type SessionState = 'READY' | 'LISTENING' | 'PROMPTING' | 'PAUSED' | 'TERMINATED'
+export interface TransitionRecord {
+  from_state: SessionState | null
+  to_state: SessionState
+  trigger: string
+  timestamp: string
+}
 export interface ScriptUnit { text: string; start: number; end: number }
 export interface PromptSegment { id: string; text: string; start: number; end: number; next_position: number }
 export interface SessionSnapshot {
-  id: string; script_id: string; script_name: string; state: SessionState
+  id: string; script_id: string; script_name: string; stt_provider?: string; state: SessionState
   silence_timeout_ms: number; reading_position: number | null; prompt_position: number
   generation: number; prompt: PromptSegment | null; reliable: boolean; speaking: boolean
+  previous_state?: SessionState | null; transition_trigger?: string | null; transition_at?: string | null
+  transition_history?: TransitionRecord[]; allowed_transitions?: SessionState[]
   pause_reason: string | null; message: string | null; feedback_id: number
-  last_transcript: string; match_confidence: number | null; at_end: boolean; units: ScriptUnit[]
+  last_transcript: string; raw_transcript: string; aligned_transcript: string; match_confidence: number | null; at_end: boolean; units: ScriptUnit[]
 }
 export type SessionServerEvent =
   | { type: 'snapshot'; session: SessionSnapshot }
@@ -56,7 +64,8 @@ export class SessionClient {
   }
   send(command: Record<string, unknown>) { if (!this.connected) throw new Error('实时连接已断开，请连接后继续。'); this.socket!.send(JSON.stringify(command)) }
   sendAudio(frame: ArrayBuffer) { if (!this.connected) return; if (this.socket!.bufferedAmount > 320000) { this.close(); this.onClose(); return }; this.socket!.send(frame) }
-  prepare(scriptId: string, timeout: number) { this.send({ type: 'prepare', script_id: scriptId, silence_timeout_ms: timeout }) }
+  prepare(scriptId: string, timeout: number, sttProvider = 'local') { this.send({ type: 'prepare', script_id: scriptId, silence_timeout_ms: timeout, stt_provider: sttProvider }) }
   attach(sessionId: string) { this.send({ type: 'attach', session_id: sessionId }) }
   close() { for (const waiter of this.waiters) { clearTimeout(waiter.timer); waiter.reject(new Error('连接已关闭。')) }; this.waiters.clear(); const socket = this.socket; this.socket = undefined; if (socket) { socket.onmessage = null; socket.onclose = null; socket.close() } }
 }
+

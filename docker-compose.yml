@@ -1,0 +1,72 @@
+name: whisper-guide
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  backend:
+    image: whisper-guide-backend:0.1.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-runtime
+    environment:
+      WHISPER_GUIDE_ENVIRONMENT: ${WHISPER_GUIDE_ENVIRONMENT:-production}
+      WHISPER_GUIDE_CORS_ORIGINS: '${WHISPER_GUIDE_CORS_ORIGINS:-["http://localhost:8080"]}'
+      WHISPER_GUIDE_DATA_DIR: ${WHISPER_GUIDE_DATA_DIR:-/data}
+      WHISPER_GUIDE_BACKUP_DIR: ${WHISPER_GUIDE_BACKUP_DIR:-/backups}
+      WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS: ${WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS:-3000}
+      WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES: ${WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES:-2097152}
+      WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES: ${WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES:-10}
+      WHISPER_GUIDE_SPEECH_MODEL_DIR: ${WHISPER_GUIDE_SPEECH_MODEL_DIR:-/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20}
+      WHISPER_GUIDE_SPEECH_SAMPLE_RATE: ${WHISPER_GUIDE_SPEECH_SAMPLE_RATE:-16000}
+      WHISPER_GUIDE_TTS_VOICE: ${WHISPER_GUIDE_TTS_VOICE:-zh-CN-XiaoxiaoNeural}
+      WHISPER_GUIDE_SERVER_HOST: 0.0.0.0
+      WHISPER_GUIDE_SERVER_PORT: 8000
+      WHISPER_GUIDE_STT_PROVIDER: ${WHISPER_GUIDE_STT_PROVIDER:-local}
+      WHISPER_GUIDE_CLOUD_ENDPOINT: ${WHISPER_GUIDE_CLOUD_ENDPOINT:-}
+      WHISPER_GUIDE_CLOUD_APP_ID: ${WHISPER_GUIDE_CLOUD_APP_ID:-}
+      WHISPER_GUIDE_CLOUD_ACCESS_TOKEN: ${WHISPER_GUIDE_CLOUD_ACCESS_TOKEN:-}
+      WHISPER_GUIDE_CLOUD_OPT_IN: ${WHISPER_GUIDE_CLOUD_OPT_IN:-false}
+    volumes:
+      - ./data/sqlite:/data
+      - ./data/backups:/backups
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - /app/backend-core/.venv/bin/python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+
+  frontend:
+    image: whisper-guide-frontend:0.1.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend-runtime
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${WHISPER_GUIDE_HTTP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging: *logging
+
