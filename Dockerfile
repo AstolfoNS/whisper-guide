@@ -24,19 +24,25 @@ RUN apt-get update \
 WORKDIR /app/backend-core
 COPY --from=backend-deps /app/backend-core/.venv /app/backend-core/.venv
 # Keep the model layer before application code so code changes do not invalidate it.
-COPY backend-core/models/ /models/
+COPY --chown=appuser:appuser backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt \
+    backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.int8.onnx \
+    backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.int8.onnx \
+    backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.int8.onnx \
+    /models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/
 COPY backend-core/pyproject.toml backend-core/uv.lock ./
 COPY backend-core/app ./app
 COPY backend-core/main.py ./main.py
 COPY backend-core/scripts ./scripts
 RUN mkdir -p /data /backups \
-    && chown -R appuser:appuser /app /data /backups /models
+    && chown appuser:appuser /data /backups
 USER appuser
 ENV WHISPER_GUIDE_DATA_DIR=/data \
     WHISPER_GUIDE_BACKUP_DIR=/backups \
     WHISPER_GUIDE_SPEECH_MODEL_DIR=/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20 \
     WHISPER_GUIDE_SERVER_HOST=0.0.0.0 \
     WHISPER_GUIDE_SERVER_PORT=8000
+# Catch ignored Python packages and incomplete bundled models before tagging an image.
+RUN /app/backend-core/.venv/bin/python -c "from app.main import app; from app.config import get_settings; from app.infrastructure.speech import SpeechServices; assert SpeechServices(get_settings()).status()['stt'] == 'ready', 'Bundled STT model unavailable'"
 EXPOSE 8000
 CMD ["/app/backend-core/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
 

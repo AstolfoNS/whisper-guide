@@ -52,6 +52,8 @@ docker compose ps
 
 访问 http://localhost:8080。SQLite 目录挂载到 `./data/sqlite`，备份目录挂载到 `./data/backups`；模型不通过卷覆盖，直接使用镜像内置内容。
 
+模型忽略规则仅作用于 `backend-core/models/`；不得使用 `**/models/**`，它也会排除 Python 业务包 `backend-core/app/models/`。镜像显式复制 `tokens.txt` 和 encoder/decoder/joiner 的三份 int8 权重，不携带 fp32 权重或测试音频。构建末尾以运行用户导入 FastAPI 应用并校验 STT 资源；源码被误排除时会在构建期失败。
+
 ## 离线发布
 
 在 Docker daemon 可用的构建机执行：

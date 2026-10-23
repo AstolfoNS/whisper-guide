@@ -121,3 +121,12 @@
 - 前端整数校验、输入框 min、会话 prepare/configure 接口以及服务端默认环境配置统一约束为不小于 1000 ms。
 - 覆盖 999 ms 拒绝、1000 ms 接受、静音满一秒才触发、非法更新保留原配置的边界验证。
 - 回归：后端 152 项测试通过，Ruff 静态与格式检查通过；前端 14 项测试、类型检查与生产构建通过。
+
+## 2026-10-24 Docker 启动缺失模块修复
+
+- 实际容器日志为 `ModuleNotFoundError: No module named 'app.models.script'`。根因为 `.dockerignore` 的 `**/models/**` 同时排除了 Python 业务模型包。
+- 忽略规则限定到 `backend-core/models/`，保留完整应用源码；Dockerfile 显式复制 tokens 与 encoder/decoder/joiner int8 四个文件，并在运行用户下执行应用导入与 STT 就绪检查。
+- 移除对 `/app` 的递归 chown，避免重复依赖层；最终后端镜像为 827,524,723 字节，低于 1 GB。
+- 已实际重建后端镜像并重新启动 Compose；前后端均 healthy，页面 HTTP 200，健康接口 status=ok，STT/VAD/TTS 均 ready。数据目录继续使用原宿主机挂载，未删除讲稿或模型配置。
+- 本次验证为构建、导入和真实容器启动/HTTP 冒烟检查，未重复运行此前通过的 152 项后端与 14 项前端测试，也未再次执行真实音频或云端账号联调。
+- 日志：[构建](validation/2026-10-24-container-build.txt)、[启动](validation/2026-10-24-container-start.txt)、[检查](validation/2026-10-24-container-check.txt)。

@@ -46,6 +46,7 @@ python scripts/backup.py data/sqlite/whisper-guide.db data/backups/whisper-guide
 |---|---|
 | 页面打不开 | frontend 容器、8080 端口、Nginx 日志 |
 | API 502 | backend 健康检查、反代配置 |
+| 构建成功但后端 unhealthy / 持续重启 | 先查看 backend 日志；若报 `app.models.script` 缺失，检查 `.dockerignore` 是否误排除 `app/models` |
 | WebSocket 断开 | Upgrade 头、/api/session、单 worker |
 | 上传失败 | 格式、2 MiB/10 份限制、SQLite 权限 |
 | 无法开始识别 | 模型目录、原生依赖、语音状态接口 |
@@ -59,3 +60,23 @@ python scripts/backup.py data/sqlite/whisper-guide.db data/backups/whisper-guide
 前端保存的模型配置位于 `data/sqlite/.model-settings.json`，文件权限为 `0600`，包含后端 API Key 和 Token。SQLite 备份脚本只备份讲稿数据库，不包含该文件；需要迁移模型设置时，另行复制到受限位置，并保持文件所有者与 `0600` 权限。不要把配置文件放入日志、Git 或离线发布包。恢复后重启 backend，GET `/api/settings/models` 只返回脱敏状态。
 
 模型配置更新失败且返回 503 时，检查 `data/sqlite` 是否允许容器 UID `10001` 写入。连通性测试失败不会改写已保存或生效的配置，先核对 Base URL、模型名称、凭据和超时，再检查后端网络。
+
+
+## 镜像缺少 Python 模块
+
+`dependency failed to start: ... unhealthy` 是 Compose 等待后端启动失败的结果，根因应查看：
+
+```bash
+docker compose logs --tail=100 backend
+```
+
+若出现 `ModuleNotFoundError: No module named 'app.models.script'`，检查构建上下文是否把 Python `app/models` 当成声学模型目录排除了。排除规则应限定 `backend-core/models/`，并保留应用源码。修复后重建后端并等待实际健康检查：
+
+```bash
+docker compose build backend &&
+docker compose up -d --force-recreate --wait --wait-timeout 180
+curl -fsS http://localhost:8080/api/health
+curl -fsS http://localhost:8080/api/speech/status
+```
+
+构建期导入检查能验证源码和模型文件完整性；宿主机 SQLite 挂载权限仍需在容器启动后验证。
