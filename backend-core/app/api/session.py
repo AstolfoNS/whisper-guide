@@ -439,6 +439,29 @@ async def session_socket(socket: WebSocket) -> None:
     services = get_speech(socket.app)
     registry = runtimes(socket.app)
 
+    async def check_idle(current: SessionRuntime, expected_generation: int | None = None) -> None:
+        # The periodic task can repeatedly coincide with native inference even
+        # when a healthy 20 ms audio pipeline has brief idle gaps. Also check
+        # after a completed frame, without overtaking queued voice or controls.
+        async with current.lock:
+            if (
+                runtime is current
+                and current.socket is socket
+                and (
+                    expected_generation is None or expected_generation == current.session.generation
+                )
+                and current.audio_ready
+                and current.session.state == SessionState.LISTENING
+                and not current.audio_inflight
+                and not current.audio_pending
+                and current.audio_queue.empty()
+            ):
+                timestamp = now_ms()
+                if current.last_frame_ms and timestamp - current.last_frame_ms > 5000:
+                    await current.change("service_fault", reason="麦克风数据中断，已暂停。")
+                else:
+                    await current.tick(timestamp)
+
     async def audio_worker() -> None:
         while True:
             if runtime is None:
@@ -461,23 +484,14 @@ async def session_socket(socket: WebSocket) -> None:
             finally:
                 current.audio_inflight = False
                 current.audio_pending = not current.audio_queue.empty()
+            await check_idle(current, generation)
 
     async def ticker() -> None:
         while True:
             await asyncio.sleep(0.05)
-            if runtime and runtime.socket is socket:
-                async with runtime.lock:
-                    if (
-                        runtime.audio_ready
-                        and runtime.session.state == SessionState.LISTENING
-                        and not runtime.audio_inflight
-                        and not runtime.audio_pending
-                        and runtime.audio_queue.empty()
-                    ):
-                        if runtime.last_frame_ms and now_ms() - runtime.last_frame_ms > 5000:
-                            await runtime.change("service_fault", reason="麦克风数据中断，已暂停。")
-                        else:
-                            await runtime.tick(now_ms())
+            current = runtime
+            if current:
+                await check_idle(current)
 
     timer = asyncio.create_task(ticker())
     audio_task = asyncio.create_task(audio_worker())

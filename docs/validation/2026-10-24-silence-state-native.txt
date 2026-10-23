@@ -1,0 +1,4 @@
+Digital-silence native-model smoke test (no microphone recording, no TTS/cloud request)
+{'stt': 'ready', 'vad': 'ready', 'tts': 'ready'}
+frames=300; frame_ms=20; audio_ms=6000; voiced_frames=0; recognition_updates=2; meaningful_updates=0
+PASS: real sherpa-onnx / WebRTC VAD digital silence remains silence; audio kept in memory only.

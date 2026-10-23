@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import type { SessionSnapshot, SessionState, TransitionRecord } from '../../api/session'
 
 const props = defineProps<{ session?: SessionSnapshot }>()
@@ -12,28 +12,35 @@ const labels: Record<SessionState, string> = {
   TERMINATED: '终止',
 }
 const nodes: Array<{ state: SessionState; x: number; y: number }> = [
-  { state: 'READY', x: 70, y: 60 },
-  { state: 'LISTENING', x: 240, y: 60 },
-  { state: 'PROMPTING', x: 430, y: 60 },
-  { state: 'PAUSED', x: 240, y: 190 },
-  { state: 'TERMINATED', x: 430, y: 190 },
+  { state: 'READY', x: 75, y: 95 },
+  { state: 'LISTENING', x: 270, y: 95 },
+  { state: 'PROMPTING', x: 505, y: 95 },
+  { state: 'PAUSED', x: 390, y: 215 },
+  { state: 'TERMINATED', x: 390, y: 365 },
 ]
-const nodeByState = Object.fromEntries(nodes.map((node) => [node.state, node])) as Record<SessionState, { state: SessionState; x: number; y: number }>
-const edges: Array<{ from: SessionState; to: SessionState; curve?: boolean }> = [
-  { from: 'READY', to: 'LISTENING' },
-  { from: 'LISTENING', to: 'PROMPTING' },
-  { from: 'PROMPTING', to: 'LISTENING', curve: true },
-  { from: 'LISTENING', to: 'PAUSED' },
-  { from: 'PROMPTING', to: 'PAUSED' },
-  { from: 'PAUSED', to: 'LISTENING', curve: true },
-  { from: 'READY', to: 'TERMINATED', curve: true },
-  { from: 'LISTENING', to: 'TERMINATED', curve: true },
-  { from: 'PROMPTING', to: 'TERMINATED' },
-  { from: 'PAUSED', to: 'TERMINATED', curve: true },
+// Independent circle ports separate opposite directions. The outer READY route
+// leaves the inner K4 layout planar, so no two edges cross or share a segment.
+const edges: Array<{ from: SessionState; to: SessionState; points: string }> = [
+  { from: 'READY', to: 'LISTENING', points: '107,95 238,95' },
+  { from: 'LISTENING', to: 'PROMPTING', points: '300,87 475,87' },
+  { from: 'PROMPTING', to: 'LISTENING', points: '475,103 300,103' },
+  { from: 'LISTENING', to: 'PAUSED', points: '298,111 374,188' },
+  { from: 'PROMPTING', to: 'PAUSED', points: '478,113 415,194' },
+  { from: 'PAUSED', to: 'LISTENING', points: '362,200 286,123' },
+  { from: 'READY', to: 'TERMINATED', points: '75,127 75,365 358,365' },
+  { from: 'LISTENING', to: 'TERMINATED', points: '258,125 375,337' },
+  { from: 'PROMPTING', to: 'TERMINATED', points: '493,125 404,337' },
+  { from: 'PAUSED', to: 'TERMINATED', points: '390,247 390,333' },
 ]
+const graphId = useId()
+const graphTitleId = `state-graph-title-${graphId}`
+const graphDescriptionId = `state-graph-description-${graphId}`
+const arrowId = `state-arrow-${graphId}`
+const activeArrowId = `state-arrow-active-${graphId}`
 
 const currentState = computed<SessionState>(() => props.session?.current_state ?? props.session?.state ?? 'READY')
 const previousState = computed<SessionState | null>(() => props.session?.previous_state ?? null)
+const activeEdge = computed(() => edges.find((edge) => edge.from === previousState.value && edge.to === currentState.value))
 const transitionTrigger = computed(() => props.session?.transition_trigger || (props.session ? 'session_initialized' : ''))
 const transitionAt = computed(() => props.session?.transition_at || '')
 const history = computed<TransitionRecord[]>(() => {
@@ -45,23 +52,6 @@ const history = computed<TransitionRecord[]>(() => {
 function isCurrent(state: SessionState) { return currentState.value === state }
 function isActiveEdge(from: SessionState, to: SessionState) {
   return previousState.value === from && currentState.value === to
-}
-function edgePath(edge: { from: SessionState; to: SessionState; curve?: boolean }) {
-  const start = nodeByState[edge.from]
-  const end = nodeByState[edge.to]
-  const dx = end.x - start.x
-  const dy = end.y - start.y
-  const length = Math.hypot(dx, dy)
-  const radius = 31
-  const sx = start.x + dx / length * radius
-  const sy = start.y + dy / length * radius
-  const ex = end.x - dx / length * radius
-  const ey = end.y - dy / length * radius
-  if (!edge.curve) return `M ${sx} ${sy} L ${ex} ${ey}`
-  const bend = edge.from === 'READY' ? 34 : 24
-  const cx = (sx + ex) / 2 - dy / length * bend
-  const cy = (sy + ey) / 2 + dx / length * bend
-  return `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`
 }
 function formatTime(value: string | number | null | undefined) {
   if (!value) return '—'
@@ -111,25 +101,38 @@ function triggerLabel(value: string) {
     </div>
 
     <p v-if="props.session?.allowed_transitions?.length" class="input-help">允许切换：{{ props.session.allowed_transitions.map((state) => labels[state]).join("、") }}</p>
-    <div class="state-monitor__graph" role="img" aria-label="五状态机状态关系图">
-      <svg viewBox="0 0 510 250" focusable="false" aria-hidden="true">
+    <div class="state-monitor__graph">
+      <svg viewBox="0 0 570 420" role="img" :aria-labelledby="`${graphTitleId} ${graphDescriptionId}`" focusable="false">
+        <title :id="graphTitleId">五状态机状态关系图</title>
+        <desc :id="graphDescriptionId">
+          五个节点展示全部十条合法迁移，箭头表示迁移方向。当前状态：{{ labels[currentState] }}。
+          <template v-if="activeEdge">最近迁移：{{ labels[activeEdge.from] }}到{{ labels[activeEdge.to] }}，以高亮箭头表示。</template>
+          详细触发原因与流转时间见下方记录。
+        </desc>
         <defs>
-          <marker id="state-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+          <marker :id="arrowId" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="state-monitor__arrow" />
+          </marker>
+          <marker :id="activeArrowId" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="state-monitor__arrow state-monitor__arrow--active" />
           </marker>
         </defs>
-        <path
+        <polyline
           v-for="edge in edges"
           :key="`${edge.from}-${edge.to}`"
-          :d="edgePath(edge)"
+          :points="edge.points"
+          :data-from="edge.from"
+          :data-to="edge.to"
           class="state-monitor__edge"
           :class="{ 'state-monitor__edge--active': isActiveEdge(edge.from, edge.to) }"
-          marker-end="url(#state-arrow)"
-        />
-        <g v-for="node in nodes" :key="node.state" :transform="`translate(${node.x} ${node.y})`" class="state-monitor__node" :class="{ 'state-monitor__node--current': isCurrent(node.state) }">
+          :marker-end="`url(#${isActiveEdge(edge.from, edge.to) ? activeArrowId : arrowId})`"
+        >
+          <title>{{ labels[edge.from] }} → {{ labels[edge.to] }}</title>
+        </polyline>
+        <g v-for="node in nodes" :key="node.state" :data-state="node.state" :transform="`translate(${node.x} ${node.y})`" class="state-monitor__node" :class="{ 'state-monitor__node--current': isCurrent(node.state) }" aria-hidden="true">
           <circle r="26" />
           <circle v-if="isCurrent(node.state)" r="31" class="state-monitor__node-ring" />
-          <text y="5" text-anchor="middle">{{ labels[node.state] }}</text>
+          <text y="7" text-anchor="middle">{{ labels[node.state] }}</text>
         </g>
       </svg>
     </div>
@@ -150,5 +153,5 @@ function triggerLabel(value: string) {
 </template>
 
 <style scoped>
-.state-monitor__graph svg{width:100%;max-height:260px;color:var(--muted)}.section-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.section-heading h2{font-size:16px;margin:0}.state-monitor__transition{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 0;font-size:13px}.state-monitor__trigger{color:var(--muted)}.state-monitor__edge{fill:none;stroke:var(--line);stroke-width:1.5}.state-monitor__edge--active{stroke:var(--accent);stroke-width:3}.state-monitor__node circle{fill:var(--soft);stroke:var(--line);stroke-width:1.5}.state-monitor__node text{fill:var(--text);font-size:12px}.state-monitor__node--current circle{fill:var(--cursor-reading);stroke:var(--accent);stroke-width:2}.state-monitor__node .state-monitor__node-ring{fill:none;stroke:var(--accent);stroke-dasharray:4 4}.state-monitor__history h3{font-size:13px}.state-monitor__history ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}.state-monitor__history li{display:grid;grid-template-columns:30px 120px 1fr 80px;gap:8px;font-size:12px}.state-monitor__history-trigger,.state-monitor__history time,.input-help{color:var(--muted)}.input-help{font-size:12px}.state-monitor__current{padding:3px 10px;background:var(--soft);border-radius:6px;font-size:12px}@media(max-width:600px){.state-monitor__history li{grid-template-columns:25px 1fr}.state-monitor__history li time{grid-column:2}}
+.state-monitor__graph{max-width:570px;margin-inline:auto}.state-monitor__graph svg{display:block;width:100%;height:auto;color:var(--muted)}.section-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.section-heading h2{font-size:16px;margin:0}.state-monitor__transition{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 0;font-size:13px}.state-monitor__trigger{color:var(--muted)}.state-monitor__edge{fill:none;stroke:var(--muted);stroke-width:1.5;stroke-linejoin:miter}.state-monitor__arrow{fill:var(--muted)}.state-monitor__arrow--active{fill:var(--accent)}.state-monitor__edge--active{stroke:var(--accent);stroke-width:3}.state-monitor__node circle{fill:var(--soft);stroke:var(--line);stroke-width:1.5}.state-monitor__node text{fill:var(--text);font-size:20px;font-weight:600}.state-monitor__node--current circle{fill:var(--cursor-reading);stroke:var(--accent);stroke-width:2}.state-monitor__node .state-monitor__node-ring{fill:none;stroke:var(--accent);stroke-dasharray:4 4}.state-monitor__history h3{font-size:13px}.state-monitor__history ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}.state-monitor__history li{display:grid;grid-template-columns:30px 120px 1fr 80px;gap:8px;font-size:12px}.state-monitor__history-trigger,.state-monitor__history time,.input-help{color:var(--muted)}.input-help{font-size:12px}.state-monitor__current{padding:3px 10px;background:var(--soft);border-radius:6px;font-size:12px}@media(max-width:600px){.state-monitor__history li{grid-template-columns:25px 1fr}.state-monitor__history li time{grid-column:2}}
 </style>

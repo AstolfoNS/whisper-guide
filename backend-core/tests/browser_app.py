@@ -25,15 +25,16 @@ class BrowserStream:
     available = True
     effective_provider = "local"
 
-    def __init__(self):
+    def __init__(self, *, silent=False):
         self.frames = 0
+        self.silent = silent
 
     def is_speech(self, pcm):
-        return self.frames < 8
+        return not self.silent and self.frames < 8
 
     def accept_pcm(self, pcm):
         self.frames += 1
-        if self.frames == 3:
+        if not self.silent and self.frames == 3:
             return RecognitionUpdate("大家好", is_final=True, segment_id=0)
         return None
 
@@ -42,6 +43,8 @@ class BrowserStream:
 
 
 class BrowserSpeech(ProviderSpeechServices):
+    silent = False
+
     def _local_stt_ready(self):
         return True
 
@@ -51,7 +54,7 @@ class BrowserSpeech(ProviderSpeechServices):
         return result
 
     def create_stream(self, provider_name=None, turn_token=None):
-        local = BrowserStream()
+        local = BrowserStream(silent=self.silent)
         if (provider_name or self.provider_name) == "local":
             return local
         remote = self.registry.provider(provider_name or self.provider_name)
@@ -148,3 +151,9 @@ async def mock_asr(socket: WebSocket):
                 )
     except WebSocketDisconnect:
         return
+
+
+@app.post("/mock/silence")
+async def silence_mode(payload: dict[str, bool]):
+    app.state.speech_services.silent = payload.get("enabled") is True
+    return {"enabled": app.state.speech_services.silent}
