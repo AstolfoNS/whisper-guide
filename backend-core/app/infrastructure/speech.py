@@ -11,6 +11,7 @@ import math
 import os
 import re
 import threading
+from abc import ABC, abstractmethod
 from array import array
 from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -44,11 +45,17 @@ class SpeechStream:
         recognizer: Any | None = None,
         sample_rate: int = 16_000,
         vad: Any | None = None,
+        provider_name: str = "local",
     ) -> None:
+        self.provider_name = provider_name
         self.sample_rate = sample_rate
         self._recognizer = recognizer
         self._vad = vad
         self._closed = False
+
+    @property
+    def effective_provider(self) -> str:
+        return self.provider_name
 
     @property
     def available(self) -> bool:
@@ -374,6 +381,10 @@ class RemoteProviderConfig:
     model: str = ""
     timeout_seconds: float = 2.0
     kind: str = "http-json"
+    protocol: str = "http-json"
+    auth_mode: str = "api-key"
+    resource_id: str = ""
+    enable_nonstream: bool = True
     requires_opt_in: bool = True
     privacy: str = "音频片段加密发送到已配置的云端 Provider，不在本服务持久化"
 
@@ -399,7 +410,11 @@ class RemoteProviderConfig:
             app_id=str(value.get("app_id", "")),
             model=str(value.get("model", "")),
             timeout_seconds=timeout,
-            kind=str(value.get("kind", "http-json")),
+            kind=str(value.get("kind", value.get("protocol", "http-json"))),
+            protocol=str(value.get("protocol", value.get("kind", "http-json"))),
+            auth_mode=str(value.get("auth_mode", "api-key")),
+            resource_id=str(value.get("resource_id", "")),
+            enable_nonstream=bool(value.get("enable_nonstream", True)),
             requires_opt_in=bool(value.get("requires_opt_in", True)),
             privacy=str(
                 value.get(
@@ -426,8 +441,8 @@ def _secure_speech_endpoint(endpoint: str) -> bool:
         return False
 
 
-class HttpStreamingProvider:
-    """Generic remote STT adapter using a small HTTP JSON gateway contract."""
+class CloudSpeechProvider(ABC):
+    """Shared configuration and capabilities for remote transport strategies."""
 
     def __init__(self, config: RemoteProviderConfig, *, opt_in: bool, sample_rate: int) -> None:
         self.config = config
@@ -435,18 +450,16 @@ class HttpStreamingProvider:
         self.sample_rate = sample_rate
 
     @property
+    @abstractmethod
     def configured(self) -> bool:
-        return bool(
-            self.opt_in
-            and self.config.access_token
-            and _secure_speech_endpoint(self.config.endpoint)
-        )
+        pass
 
     def descriptor(self) -> dict[str, Any]:
         return {
             "id": self.config.id,
             "label": self.config.label,
-            "kind": self.config.kind,
+            "kind": self.config.protocol,
+            "protocol": self.config.protocol,
             "model": self.config.model,
             "available": self.configured,
             "configured": bool(self.config.endpoint and self.config.access_token),
@@ -455,6 +468,23 @@ class HttpStreamingProvider:
             "privacy": self.config.privacy,
         }
 
+    @abstractmethod
+    def create_stream(self, *, vad: Any | None, turn_token: int | None) -> SpeechStream:
+        pass
+
+
+class HttpStreamingProvider(CloudSpeechProvider):
+    """Small HTTP JSON gateway adapter retained for existing deployments."""
+
+    @property
+    def configured(self) -> bool:
+        return bool(
+            self.opt_in
+            and self.config.access_token
+            and self.config.protocol == "http-json"
+            and _secure_speech_endpoint(self.config.endpoint)
+        )
+
     def create_stream(self, *, vad: Any | None, turn_token: int | None) -> SpeechStream:
         if not self.configured:
             raise SpeechUnavailableError("云端识别未授权或未配置。")
@@ -462,6 +492,33 @@ class HttpStreamingProvider:
             recognizer=_HTTPStreamingRecognizer(self.config, self.sample_rate, turn_token),
             sample_rate=self.sample_rate,
             vad=vad,
+            provider_name=self.config.id,
+        )
+
+
+class WebSocketStreamingProvider(CloudSpeechProvider):
+    """Generic persistent transport; wire adapters own vendor-specific details."""
+
+    @property
+    def configured(self) -> bool:
+        from app.infrastructure.speech_websocket import websocket_configured
+
+        return self.opt_in and self.sample_rate == 16000 and websocket_configured(self.config)
+
+    def create_stream(self, *, vad: Any | None, turn_token: int | None) -> SpeechStream:
+        from app.infrastructure.speech_websocket import WebSocketStreamingRecognizer
+
+        if not self.configured:
+            raise SpeechUnavailableError("云端识别未授权或未配置。")
+        try:
+            recognizer = WebSocketStreamingRecognizer(self.config, self.sample_rate, turn_token)
+        except Exception:
+            raise SpeechUnavailableError("云端流式识别初始化失败。") from None
+        return SpeechStream(
+            recognizer=recognizer,
+            sample_rate=self.sample_rate,
+            vad=vad,
+            provider_name=self.config.id,
         )
 
 
@@ -470,10 +527,15 @@ class ProviderRegistry:
 
     def __init__(self, services: SpeechServices, settings: Any | None) -> None:
         self.local = LocalSherpaProvider(services)
-        self.remote: dict[str, HttpStreamingProvider] = {}
+        self.remote: dict[str, CloudSpeechProvider] = {}
         for config in self._configs(settings):
             if config.id not in self.remote:
-                self.remote[config.id] = HttpStreamingProvider(
+                factory = (
+                    WebSocketStreamingProvider
+                    if config.protocol != "http-json"
+                    else HttpStreamingProvider
+                )
+                self.remote[config.id] = factory(
                     config,
                     opt_in=bool(getattr(settings, "cloud_opt_in", False)),
                     sample_rate=services.sample_rate,
@@ -505,6 +567,11 @@ class ProviderRegistry:
                     "endpoint": cloud_endpoint,
                     "access_token": cloud_access_token,
                     "app_id": cloud_app_id,
+                    "protocol": getattr(settings, "cloud_stt_protocol", "http-json"),
+                    "auth_mode": getattr(settings, "cloud_stt_auth_mode", "api-key"),
+                    "resource_id": getattr(settings, "cloud_stt_resource_id", ""),
+                    "timeout_seconds": getattr(settings, "cloud_stt_timeout_ms", 5000) / 1000,
+                    "enable_nonstream": getattr(settings, "cloud_stt_enable_nonstream", True),
                 },
                 *(value for value in values if value.get("id") != "cloud"),
             ]
@@ -515,14 +582,14 @@ class ProviderRegistry:
                 result.append(config)
         return result
 
-    def provider(self, provider_id: str) -> LocalSherpaProvider | HttpStreamingProvider | None:
+    def provider(self, provider_id: str) -> LocalSherpaProvider | CloudSpeechProvider | None:
         if provider_id == "local":
             return self.local
         if provider_id == "cloud" and provider_id not in self.remote:
             return next(iter(self.remote.values()), None)
         return self.remote.get(provider_id)
 
-    def first_remote(self) -> HttpStreamingProvider | None:
+    def first_remote(self) -> CloudSpeechProvider | None:
         return next(iter(self.remote.values()), None)
 
     def descriptors(self) -> list[dict[str, Any]]:
@@ -558,6 +625,19 @@ class FallbackSpeechStream:
         self._segment_offset = 0
         self._needs_remap = False
         self._latest_local: RecognitionUpdate | None = None
+        self._frame_count = 0
+        self._latest_local_frame = -1
+        self._last_cloud_final_frame = -1
+
+    @property
+    def effective_provider(self) -> str:
+        return getattr(
+            self.active, "effective_provider", "local" if self.active is self.local else "cloud"
+        )
+
+    @property
+    def fallback_active(self) -> bool:
+        return self.active is self.local
 
     def is_speech(self, pcm: bytes) -> bool:
         return self.local.is_speech(pcm)
@@ -565,6 +645,8 @@ class FallbackSpeechStream:
     def accept_pcm(self, pcm: bytes) -> RecognitionUpdate | None:
         if self._closed:
             return None
+        self._frame_count += 1
+        frame = self._frame_count
         try:
             local_update = self.local.accept_pcm(pcm)
         except SpeechUnavailableError:
@@ -575,10 +657,14 @@ class FallbackSpeechStream:
             return None
         if local_update is not None:
             self._latest_local = local_update
+            self._latest_local_frame = frame
         if self.active is self.local:
             return self._map_update(local_update)
         try:
-            return self._map_update(self.remote.accept_pcm(pcm))
+            remote_update = self.remote.accept_pcm(pcm)
+            if remote_update is not None and remote_update.is_final:
+                self._last_cloud_final_frame = frame
+            return self._map_update(remote_update)
         except SpeechUnavailableError:
             if self._closed:
                 return None
@@ -587,7 +673,16 @@ class FallbackSpeechStream:
             self.remote.close()
             self.active = self.local
             self._needs_remap = True
-            return self._map_update(self._latest_local)
+            # A warmed local final may lag behind cloud commits. Replaying it
+            # with a new segment ID would look like an intentional readback.
+            # Only reuse local hypotheses observed after the latest cloud final;
+            # a fresh result on this failing frame remains immediately usable.
+            fresh_local = (
+                self._latest_local
+                if self._latest_local_frame > self._last_cloud_final_frame
+                else None
+            )
+            return self._map_update(fresh_local)
 
     def _map_update(self, update: RecognitionUpdate | None) -> RecognitionUpdate | None:
         if self._closed or update is None:
@@ -609,6 +704,7 @@ class FallbackSpeechStream:
 
     def close(self) -> None:
         self._closed = True
+        self._latest_local = None
         self.remote.close()
         self.local.close()
         self.active = self.local
@@ -636,7 +732,7 @@ class ProviderSpeechServices(SpeechServices):
             remote = self.registry.first_remote()
             return remote.config.id if remote and remote.configured else "local"
         provider = self.registry.provider(requested)
-        if isinstance(provider, HttpStreamingProvider) and provider.configured:
+        if isinstance(provider, CloudSpeechProvider) and provider.configured:
             return provider.config.id
         return "local"
 
@@ -645,7 +741,7 @@ class ProviderSpeechServices(SpeechServices):
         local = super().status()
         effective = self._effective_provider(requested)
         remote = self.registry.provider(effective)
-        remote_enabled = isinstance(remote, HttpStreamingProvider) and remote.configured
+        remote_enabled = isinstance(remote, CloudSpeechProvider) and remote.configured
         local.update(
             {
                 "provider": effective,
@@ -681,7 +777,7 @@ class ProviderSpeechServices(SpeechServices):
             if requested == "hybrid"
             else self.registry.provider(requested)
         )
-        if not isinstance(remote, HttpStreamingProvider) or not remote.configured:
+        if not isinstance(remote, CloudSpeechProvider) or not remote.configured:
             return local
         try:
             remote_stream = remote.create_stream(

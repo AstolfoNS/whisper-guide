@@ -69,7 +69,7 @@ docker compose logs --tail=100 backend frontend
 
 1. 在概览进入工作台，选择或上传讲稿，再开始演讲。
 2. 在模型配置页面新建方案，独立选择 STT 与语义校准参数。
-3. “测试连通性”按当前表单测试 STT 或 LLM，不保存也不激活；STT 本地测试只检查模型能力，云端测试检查网关响应协议，不代表识别准确率。
+3. “测试连通性”按当前表单测试 STT 或 LLM，不保存也不激活；STT 本地测试只检查模型能力；云端按所选 HTTP/WebSocket 协议检查鉴权及终止响应，不代表识别准确率。
 4. “保存修改”生成方案新修订。结束全部会话后再“设为生效配置”；READY/PAUSED 同样属于未结束会话。
 5. 切离工作台会立即停止采集和播放并暂停会话；返回后点击继续。刷新遗留会话可从恢复入口继续或明确结束，不能直接用配置激活绕过会话保护。
 
@@ -98,8 +98,13 @@ docker compose logs --tail=100 backend frontend
 |---|---|
 | `WHISPER_GUIDE_STT_PROVIDER` | 默认 `local`；界面支持 `cloud` |
 | `WHISPER_GUIDE_CLOUD_OPT_IN` | 默认 `false`，云端音频需授权 |
-| `WHISPER_GUIDE_CLOUD_STT_ENDPOINT` | 通用 HTTP 语音网关，公网音频要求 HTTPS |
-| `WHISPER_GUIDE_CLOUD_STT_APP_ID` / `WHISPER_GUIDE_CLOUD_STT_ACCESS_TOKEN` | 后端应用 ID / 令牌 |
+| `WHISPER_GUIDE_CLOUD_STT_PROTOCOL` | 默认 `http-json`；原生火山流式 ASR 选择 `volcengine-ws` |
+| `WHISPER_GUIDE_CLOUD_STT_ENDPOINT` | HTTP 网关 HTTPS；原生推荐 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` |
+| `WHISPER_GUIDE_CLOUD_STT_AUTH_MODE` | 默认 `api-key`，旧接口可选 `app-token` |
+| `WHISPER_GUIDE_CLOUD_STT_RESOURCE_ID` | 默认 `volc.seedasr.sauc.duration`（ASR 2.0 小时版），与已开通资源一致 |
+| `WHISPER_GUIDE_CLOUD_STT_TIMEOUT_MS` | 默认 5000，严格整数 `200–30000`，独立于 LLM 超时 |
+| `WHISPER_GUIDE_CLOUD_STT_ENABLE_NONSTREAM` | 默认 `true`；仅 `bigmodel_async` 启用二次识别 |
+| `WHISPER_GUIDE_CLOUD_STT_APP_ID` / `WHISPER_GUIDE_CLOUD_STT_ACCESS_TOKEN` | 新模式仅填语音 API Key 到 ACCESS_TOKEN；旧模式填 App ID 与语音 Access Token |
 | `WHISPER_GUIDE_LLM_ALIGN_MODE` | `off` / `fallback` / `hybrid` |
 | `WHISPER_GUIDE_LLM_PROVIDER_PRESET` | `custom` / `deepseek` / `qwen` / `doubao` / `openai` / `ollama` |
 | `WHISPER_GUIDE_LLM_BASE_URL` | OpenAI 兼容聊天接口基址 |
@@ -107,7 +112,15 @@ docker compose logs --tail=100 backend frontend
 | `WHISPER_GUIDE_LLM_API_KEY` | 后端密钥 |
 | `WHISPER_GUIDE_LLM_TIMEOUT_MS` | 默认 1500，正整数毫秒 |
 
-环境兼容注册表 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 继续可用，详见 [协议](speech-provider-interface.md)。云端语音网关与聊天模型 Base URL 不是同一协议。容器中的 localhost 指向当前容器；Ollama 等外部服务应填写后端容器可访问的地址。预设只是可修改示例，不证明账号已开通。
+环境兼容注册表 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 继续可用，详见 [协议](speech-provider-interface.md)。云端语音与聊天模型 Base URL 不是同一协议；语音 API Key 不会自动复用方舟文本 API Key。容器中的 localhost 指向当前容器；Ollama 等外部服务应填写后端容器可访问的地址。预设只是可修改示例，不证明账号已开通。
+
+## 同时启用云端 ASR 与文本校准
+
+在模型配置页选择云端 STT、`volcengine-ws`、`bigmodel_async` 地址、已开通语音资源和独立语音 API Key，勾选音频云端授权；`api-key` 模式不需要 App ID。文本校准独立填方舟 Base URL、文本 API Key 和“获取模型列表”返回的实际模型 ID，模式选择 `hybrid`。分别测试、保存，再结束全部会话并激活。已有私有方案优先于环境默认值，改 `.env` 不会覆盖已激活方案。
+
+STT 为 16 kHz 单声道 PCM16，按 200 ms 分块，分句尾部静音 600 ms；语音连接、缓冲与任务仍受轮次取消和本地回退保护。普通健康状态不代表已完成云端网络探测。短静音测试若提示“空音频”，仅确认鉴权与协议可达，仍需在工作台朗读、暂停、继续及提示播放验收。本轮只完成本地模拟服务验证，尚未使用真实火山语音凭据或完成真实云端识别验收。
+
+后端需要访问配置的 WSS 语音服务、HTTPS 文本接口及 edge-tts 服务；不跟随语音重定向，不能将聊天模型地址填进 STT 栏。完整协议、安全边界和受控失败说明见 [Provider 接口](speech-provider-interface.md#原生-websocket-流式-asr)。
 
 ## 语音诊断
 

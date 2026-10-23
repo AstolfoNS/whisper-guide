@@ -75,6 +75,15 @@ class SessionRuntime:
             aligned_transcript=self.session.aligned_transcript,
             notice=self.session.message,
             stt_provider=self.provider_name,
+            stt_provider_active=getattr(self.stream, "effective_provider", self.provider_name),
+            stt_fallback=bool(
+                getattr(self.stream, "fallback_active", False)
+                or (
+                    self.stream is not None
+                    and self.provider_name != "local"
+                    and getattr(self.stream, "effective_provider", None) == "local"
+                )
+            ),
             model_config_id=self.model_config_id,
             model_config_name=self.model_config_name,
             model_config_revision=self.model_config_revision,
@@ -352,6 +361,7 @@ class SessionRuntime:
                 await self.publish()
         # Native inference must not hold the control lock: pause and terminate stay
         # responsive. Results are accepted only for the generation that requested them.
+        provider_before = getattr(stream, "effective_provider", self.provider_name)
         update = await asyncio.to_thread(stream.accept_pcm, pcm)
         async with self.lock:
             if (
@@ -359,6 +369,8 @@ class SessionRuntime:
                 or self.session.state != SessionState.LISTENING
             ):
                 return
+            if provider_before != getattr(stream, "effective_provider", self.provider_name):
+                await self.publish()
             if not update:
                 return
             if update.segment_id < self.last_segment_id:

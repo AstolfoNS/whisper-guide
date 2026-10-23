@@ -109,6 +109,28 @@ docker compose up -d --wait --wait-timeout 180
 
 回归记录：[后端](validation/2026-10-24-llm-diagnostics-backend.txt)、[前端](validation/2026-10-24-llm-diagnostics-frontend.txt)。后端 232 项、前端 13 项 Node + 23 项 Vitest 全通过，Ruff 静态/格式检查及类型检查、生产构建通过。未再次运行浏览器端到端或重建镜像。
 
+## 原生流式语音配置与诊断
+
+语音 STT 和方舟文本 LLM 是两条独立链路。原生语音选择 `volcengine-ws`，推荐地址为 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`，ASR 2.0 小时版资源为 `volc.seedasr.sauc.duration`，请确认账号已开通。新 `api-key` 模式不填 App ID，凭据栏填写**语音服务 API Key**；旧 `app-token` 模式填写 App ID 和语音 Access Token。不能假定创建方舟文本 Key 后就有语音权限，后端不会自动借用文本密钥。
+
+语音请求超时默认 `5000 ms`，范围 `200–30000 ms`，与 LLM 的 `llm_timeout_ms` 独立。二次识别开关只作用于 `bigmodel_async`，普通 `bigmodel` 不启用该功能。先分别测试语音、文本，再保存并激活；暂停状态仍阻止激活。
+
+| 语音测试结果 | 处理 |
+|---|---|
+| `CLOUD_OPT_IN_REQUIRED` | 明确勾选音频云端授权后再测试 |
+| `CONFIG_INCOMPLETE` | 核对协议、WSS 地址、资源 ID、语音凭据及旧模式 App ID |
+| `HTTP_ERROR` | 检查握手 HTTP 状态、资源开通、鉴权模式和账号权限 |
+| `PROVIDER_ERROR` | 按受控数字业务码核对语音资源、账户与请求格式；不输出原始正文 |
+| `TIMEOUT` / `NETWORK_ERROR` | 检查服务端 WSS 网络、DNS、证书和代理，必要时调整独立语音超时 |
+| `INVALID_RESPONSE` | 确认是火山 ASR v3 二进制协议端点，非方舟 Chat Completions |
+| `probe_empty_audio=true` | 静音探测收到已知 `45000002` 空音频结果，只证明鉴权/协议可达；转到工作台真实朗读 |
+
+探测必须等音频结束后的最终包，只有握手或初始化 ACK 不算成功。生产识别若断网、超时或超出有界缓冲会回退本地；工作台显示的当前识别源可能因此与所选云端方案不同。不要将云端配置存在、本地模型 ready 或静音协议探测成功记录为云端识别准确率通过。
+
+传输每 200 ms 发送 16 kHz 单声道 PCM16，音频缓冲最多 1 秒、结果最多 32 项、WebSocket 传输最多 4 个活跃线程。暂停/终止会取消连接和丢弃迟到结果，服务不会持久化录音。公网必须 WSS，禁止 URL 凭据/查询/片段及重定向。语音服务数据保留政策由服务商决定，应用的“不录音落盘”不等于云端不处理数据。
+
+本轮只用本地 WebSocket 模拟服务完成自动化验证，尚无真实 ASR Key、真实语音网络调用或真实中文准确率验收。补齐凭据后应验证正常朗读、回读、填充词、网络回退与提示音，分别记录实际结果。
+
 ## 从接口选择模型
 
 在模型配置页填写 Base URL 和 API Key，点击“获取模型列表”，按名称或 ID 筛选后从下拉列表选择。已有方案的密钥可留空复用；没有密钥要求的本地服务可留空。未开启语义对齐、尚未填写模型名和新建未保存方案也可以获取列表。

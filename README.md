@@ -30,7 +30,7 @@
 
 - 同一分段 partial 覆盖显示，final 才正常提交位置；静音截止前结算未定稿文本，填充词不触发失配。
 - `ScriptAligner` 结合字面、拼音/近音、游标邻近与上下文，保持英文单词及数字边界。
-- STT 默认本地 `sherpa-onnx`。云端 STT 与文本 LLM 独立配置，厂商预设仅帮助填表；它们不能直接指定游标偏移。
+- STT 默认本地 `sherpa-onnx`；云端可选 HTTP JSON 网关或通用 WebSocket 传输配合火山流式 ASR 协议适配器。云端 STT 与文本 LLM 独立配置，厂商预设仅帮助填表；它们不能直接指定游标偏移。
 - 活跃会话、PCM 有界队列与提示音频仅在内存；讲稿保存在 SQLite。后端必须单个 Uvicorn worker。
 
 ## 目录
@@ -40,7 +40,7 @@ whisper-guide/
 ├── backend-core/
 │   ├── app/api/                 # HTTP、WebSocket、模型管理、断线会话恢复
 │   ├── app/domain/              # 五状态机、双游标、ScriptAligner
-│   ├── app/infrastructure/      # speech.py / llm.py
+│   ├── app/infrastructure/      # speech / speech_websocket / speech_protocols / llm
 │   ├── app/repositories/        # SQLite 讲稿、私有版本化模型方案
 │   ├── app/config.py            # 环境默认值与兼容配置迁移
 │   ├── scripts/                 # 模型下载与语音验证
@@ -94,6 +94,14 @@ pnpm dev
 
 填写 Base URL 与 API Key 后，点击**获取模型列表**，使用“筛选模型”和“从模型列表选择”填入真实模型 ID；已有密钥可留空复用。获取列表不要求先填写模型名称或开启对齐模式，不保存、不激活配置。选中后仍需测试调用权限；服务不提供列表时可以手动填写。操作与验收见 [模型发现记录](docs/model-discovery-2026-10-24.md)。
 
+### 豆包流式 ASR + 方舟文本模型
+
+同一方案可以同时配置两个云端环节：STT 选择 `cloud`、协议选择 `volcengine-ws`，填写 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`、语音资源 ID `volc.seedasr.sauc.duration`（ASR 2.0 小时版）及独立语音凭据，并开启音频云端授权。新 `api-key` 鉴权只需**语音服务 API Key**，无需 App ID；旧 `app-token` 模式仍需 App ID 与 Access Token。方舟文本 API Key 不会自动用于语音接口。
+
+语义校准独立选择 `hybrid`，Base URL 填 `https://ark.cn-beijing.volces.com/api/v3`，通过“获取模型列表”选择账号实际可用的 Seed 模型，填写**方舟文本 API Key**。分别测试两个接口，通过后保存、结束已有会话并激活。语音超时独立于 LLM，默认 `5000 ms`，范围 `200–30000 ms`；二次识别 `enable_nonstream` 仅用于 `bigmodel_async`。
+
+语音测试只发送内存短静音，等待最终协议响应；若返回已知空音频码 `45000002`，仅说明鉴权与协议可达，仍需在工作台真实朗读。本轮使用本地 WebSocket 模拟服务验证，未提供真实 ASR 凭据，尚未完成真实火山语音识别验收。
+
 完整接口见 [Provider 与模型方案协议](docs/speech-provider-interface.md)。模型方案与生效快照原子保存于 `WHISPER_GUIDE_DATA_DIR/.model-configs.json`，权限 `0600`。旧 `.model-settings.json` 自动迁移为“现有配置”；新仓储存在后，以其生效快照为准。两种文件都含后端凭据，不能进入 Git、日志或发布包。浏览器不持久化密钥。
 
 云端 STT 接收音频片段，语义 LLM 接收讲稿窗口和识别文本。本服务不保存录音；云端服务的数据处理政策需另行确认。预设不代表账号、配额或真实模型已经可用，需提供有效凭据后测试。
@@ -138,3 +146,5 @@ pnpm test:e2e
 - [离线部署](DEPLOY.md)
 
 当前没有用户认证和讲稿权限隔离，默认监听 localhost；公开配置接口前需设置 HTTPS、认证和访问控制。
+
+原生流式语音与双云配置、协议边界、最新测试日志见[实现与验收记录](docs/cloud-asr-2026-10-24.md)。

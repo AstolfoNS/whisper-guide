@@ -12,6 +12,7 @@ import asyncio
 import base64
 import time
 from contextlib import contextmanager
+from ipaddress import ip_address
 from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -51,6 +52,8 @@ router = APIRouter(prefix="/settings", tags=["settings"], route_class=PrivateSet
 PresetName = Literal["custom", "deepseek", "qwen", "doubao", "openai", "ollama"]
 AlignMode = Literal["off", "fallback", "hybrid"]
 SpeechSource = Literal["local", "cloud"]
+SpeechProtocol = Literal["http-json", "volcengine-ws"]
+SpeechAuthMode = Literal["api-key", "app-token"]
 
 
 class LLMUpdate(BaseModel):
@@ -74,19 +77,29 @@ class STTUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     provider: SpeechSource | None = None
+    protocol: SpeechProtocol | None = None
+    auth_mode: SpeechAuthMode | None = None
+    resource_id: str | None = Field(default=None, max_length=200)
+    timeout_ms: int | None = Field(default=None, ge=200, le=30000, strict=True)
+    enable_nonstream: bool | None = Field(default=None, strict=True)
     cloud_opt_in: bool | None = None
     cloud_endpoint: str | None = None
     cloud_app_id: str | None = None
     access_token: str | None = None
     clear_access_token: bool = False
     cloud_stt_endpoint: str | None = None
+    cloud_stt_protocol: SpeechProtocol | None = None
+    cloud_stt_auth_mode: SpeechAuthMode | None = None
+    cloud_stt_resource_id: str | None = Field(default=None, max_length=200)
+    cloud_stt_timeout_ms: int | None = Field(default=None, ge=200, le=30000, strict=True)
+    cloud_stt_enable_nonstream: bool | None = Field(default=None, strict=True)
     cloud_stt_app_id: str | None = None
     cloud_stt_access_token: str | None = None
 
     @field_validator("cloud_endpoint", "cloud_stt_endpoint")
     @classmethod
     def validate_url(cls, value: str | None) -> str | None:
-        return _validate_endpoint(value)
+        return _validate_stt_endpoint(value)
 
 
 class ModelSettingsUpdate(BaseModel):
@@ -114,13 +127,23 @@ class ModelSettingsUpdate(BaseModel):
     access_token: str | None = None
     clear_access_token: bool = False
     cloud_stt_endpoint: str | None = None
+    cloud_stt_protocol: SpeechProtocol | None = None
+    cloud_stt_auth_mode: SpeechAuthMode | None = None
+    cloud_stt_resource_id: str | None = Field(default=None, max_length=200)
+    cloud_stt_timeout_ms: int | None = Field(default=None, ge=200, le=30000, strict=True)
+    cloud_stt_enable_nonstream: bool | None = Field(default=None, strict=True)
     cloud_stt_app_id: str | None = None
     cloud_stt_access_token: str | None = None
 
-    @field_validator("llm_base_url", "cloud_endpoint", "cloud_stt_endpoint")
+    @field_validator("llm_base_url")
     @classmethod
     def validate_url(cls, value: str | None) -> str | None:
         return _validate_endpoint(value)
+
+    @field_validator("cloud_endpoint", "cloud_stt_endpoint")
+    @classmethod
+    def validate_speech_url(cls, value: str | None) -> str | None:
+        return _validate_stt_endpoint(value)
 
 
 def _validate_endpoint(value: str | None) -> str | None:
@@ -140,24 +163,58 @@ def _validate_endpoint(value: str | None) -> str | None:
     return endpoint
 
 
+def _validate_stt_endpoint(value: str | None) -> str | None:
+    """Speech accepts encrypted endpoints and loopback-only development URLs."""
+    if value is None or not value.strip():
+        return value
+    endpoint = value.strip()
+    try:
+        parts = urlsplit(endpoint)
+        host = parts.hostname or ""
+        local = host.lower() == "localhost"
+        if not local:
+            try:
+                local = ip_address(host).is_loopback
+            except ValueError:
+                local = False
+        valid = (
+            parts.scheme in {"https", "wss", "http", "ws"}
+            and bool(host)
+            and not parts.username
+            and not parts.password
+            and not parts.query
+            and not parts.fragment
+            and (parts.scheme in {"https", "wss"} or local)
+        )
+        # Accessing port also validates malformed/out-of-range ports.
+        _ = parts.port
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError(
+            "语音地址必须为 HTTPS/WSS，或仅本机开发使用的 HTTP/WS，且不能含凭据、查询或片段。"
+        )
+    return endpoint
+
+
 def redact_secret(value: Any) -> str:
     """Never expose any part of a credential, including short credentials."""
 
     return "****" if value else ""
 
 
-def _public_endpoint(value: str) -> str:
+def _public_endpoint(value: str, *, speech: bool = False) -> str:
     # Environment/legacy files predate URL validation: never expose embedded
     # authentication through an otherwise masked public settings payload.
     try:
-        return _validate_endpoint(value) or ""
+        return (_validate_stt_endpoint(value) if speech else _validate_endpoint(value)) or ""
     except ValueError:
         return ""
 
 
 def _model_payload(settings: Settings) -> dict[str, Any]:
     token = settings.cloud_stt_access_token or settings.cloud_access_token
-    endpoint = _public_endpoint(settings.cloud_stt_endpoint or settings.cloud_endpoint)
+    endpoint = _public_endpoint(settings.cloud_stt_endpoint or settings.cloud_endpoint, speech=True)
     app_id = settings.cloud_stt_app_id or settings.cloud_app_id
     key = settings.llm_api_key
     key_hint = redact_secret(key)
@@ -174,6 +231,11 @@ def _model_payload(settings: Settings) -> dict[str, Any]:
         "enabled": LLMSemanticRefiner.from_settings(settings).enabled,
     }
     stt = {
+        "protocol": settings.cloud_stt_protocol,
+        "auth_mode": settings.cloud_stt_auth_mode,
+        "resource_id": settings.cloud_stt_resource_id,
+        "timeout_ms": settings.cloud_stt_timeout_ms,
+        "enable_nonstream": settings.cloud_stt_enable_nonstream,
         "provider": settings.stt_provider,
         "cloud_opt_in": settings.cloud_opt_in,
         "cloud_endpoint": endpoint,
@@ -189,6 +251,11 @@ def _model_payload(settings: Settings) -> dict[str, Any]:
         "stt_provider": settings.stt_provider,
         "cloud_opt_in": settings.cloud_opt_in,
         "cloud_stt_endpoint": endpoint,
+        "cloud_stt_protocol": settings.cloud_stt_protocol,
+        "cloud_stt_auth_mode": settings.cloud_stt_auth_mode,
+        "cloud_stt_resource_id": settings.cloud_stt_resource_id,
+        "cloud_stt_timeout_ms": settings.cloud_stt_timeout_ms,
+        "cloud_stt_enable_nonstream": settings.cloud_stt_enable_nonstream,
         "cloud_stt_app_id": app_id,
         "cloud_stt_token_configured": bool(token),
         "cloud_stt_token_hint": token_hint,
@@ -220,6 +287,16 @@ def _updates(payload: ModelSettingsUpdate) -> dict[str, Any]:
     if payload.stt:
         mapping = {
             "provider": "stt_provider",
+            "protocol": "cloud_stt_protocol",
+            "auth_mode": "cloud_stt_auth_mode",
+            "resource_id": "cloud_stt_resource_id",
+            "timeout_ms": "cloud_stt_timeout_ms",
+            "enable_nonstream": "cloud_stt_enable_nonstream",
+            "cloud_stt_protocol": "cloud_stt_protocol",
+            "cloud_stt_auth_mode": "cloud_stt_auth_mode",
+            "cloud_stt_resource_id": "cloud_stt_resource_id",
+            "cloud_stt_timeout_ms": "cloud_stt_timeout_ms",
+            "cloud_stt_enable_nonstream": "cloud_stt_enable_nonstream",
             "cloud_opt_in": "cloud_opt_in",
             "cloud_endpoint": "cloud_stt_endpoint",
             "cloud_stt_endpoint": "cloud_stt_endpoint",
@@ -561,6 +638,13 @@ async def discover_model_config(request: Request, payload: ProfileDiscovery) -> 
 async def test_model_config(request: Request, payload: ProfileTest) -> dict[str, Any]:
     candidate = _profile_candidate(request, payload)
     if payload.target == "stt":
+        repository = request.app.state.model_configs
+        with _repository_errors(), repository.lock:
+            requested = repository.get(payload.id or "local-default")["settings"]["stt_provider"]
+        if payload.settings:
+            requested = _updates(payload.settings).get("stt_provider", requested)
+        if requested == "cloud" and not candidate.cloud_opt_in:
+            return _public_speech_test_result({"ok": False, "error_code": "CLOUD_OPT_IN_REQUIRED"})
         return await _test_speech_config(request, candidate)
     try:
         result = await LLMSemanticRefiner.from_settings(candidate).test_connection()
@@ -607,8 +691,26 @@ async def _test_speech_config(request: Request, candidate: Settings) -> dict[str
                 endpoint=candidate.cloud_stt_endpoint,
                 app_id=candidate.cloud_stt_app_id,
                 access_token=candidate.cloud_stt_access_token,
-                timeout_seconds=candidate.llm_timeout_ms / 1000,
+                timeout_seconds=candidate.cloud_stt_timeout_ms / 1000,
+                protocol=candidate.cloud_stt_protocol,
+                auth_mode=candidate.cloud_stt_auth_mode,
+                resource_id=candidate.cloud_stt_resource_id,
+                enable_nonstream=candidate.cloud_stt_enable_nonstream,
             )
+            if config.protocol == "volcengine-ws":
+                if not candidate.cloud_opt_in:
+                    result = {"ok": False, "error_code": "CLOUD_OPT_IN_REQUIRED"}
+                elif (
+                    not config.access_token.strip()
+                    or not config.resource_id.strip()
+                    or (config.auth_mode == "app-token" and not config.app_id.strip())
+                ):
+                    result = {"ok": False, "error_code": "CONFIG_INCOMPLETE"}
+                else:
+                    from app.infrastructure.speech_websocket import probe_websocket
+
+                    result = await probe_websocket(config)
+                return _public_speech_test_result(result)
             provider = HttpStreamingProvider(
                 config, opt_in=candidate.cloud_opt_in, sample_rate=candidate.speech_sample_rate
             )
@@ -649,6 +751,49 @@ async def _test_speech_config(request: Request, candidate: Settings) -> dict[str
         "message": message,
         "latency_ms": int((time.perf_counter() - started) * 1000),
     }
+
+
+def _public_speech_test_result(result: Any) -> dict[str, Any]:
+    """Only controlled speech diagnostics cross the backend credential boundary."""
+    values = result if isinstance(result, dict) else {}
+    ok = values.get("ok") is True
+    latency = values.get("latency_ms", 0)
+    public = {
+        "target": "stt",
+        "ok": ok,
+        "verified": "network" if ok else "none",
+        "latency_ms": latency if type(latency) is int and latency >= 0 else 0,
+        "message": "流式语音握手与协议响应验证成功；未验证识别准确率。",
+    }
+    if ok:
+        if values.get("probe_empty_audio") is True:
+            public["probe_empty_audio"] = True
+            public["message"] = (
+                "语音服务鉴权与协议可达；静音探测返回空音频，实际识别效果请在工作台朗读验证。"
+            )
+        return public
+    messages = {
+        "CONFIG_INCOMPLETE": "语音配置不完整，请检查地址、资源 ID、语音凭据；旧版还需要 App ID。",
+        "CLOUD_OPT_IN_REQUIRED": "请先明确授权发送语音片段到云端。",
+        "TIMEOUT": "语音接口请求超时，请检查网络或适当增大语音超时。",
+        "NETWORK_ERROR": "无法连接语音服务，请检查服务端网络、DNS、代理与证书。",
+        "HTTP_ERROR": "语音服务拒绝 WebSocket 握手，请检查地址、鉴权、资源开通与账户状态。",
+        "INVALID_RESPONSE": "语音接口协议响应不兼容，请检查所选协议与接口地址。",
+        "PROVIDER_ERROR": "语音服务返回错误，请检查独立语音凭据、资源开通、配额与账户状态。",
+        "UNKNOWN_ERROR": "语音接口验证失败，请检查配置或服务端运行环境。",
+    }
+    code = values.get("error_code")
+    if not isinstance(code, str) or code not in messages:
+        code = "UNKNOWN_ERROR"
+    public["error_code"] = code
+    public["message"] = messages[code]
+    status = values.get("http_status")
+    if code == "HTTP_ERROR" and type(status) is int and 100 <= status <= 599:
+        public["http_status"] = status
+    provider_code = values.get("provider_error_code")
+    if code == "PROVIDER_ERROR" and type(provider_code) is int and 0 <= provider_code <= 99999999:
+        public["provider_error_code"] = provider_code
+    return public
 
 
 @router.get("/model-configs/{identifier}")

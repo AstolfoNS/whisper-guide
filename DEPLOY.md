@@ -59,6 +59,14 @@ docker compose -f docker-compose.yml start backend
 
 模型配置更新失败且返回 503 时，检查 `data/sqlite` 是否允许容器 UID `10001` 写入。连通性测试失败不会改写已保存或生效的配置，先核对 Base URL、模型名称、凭据和超时，再检查后端网络。
 
+## 可选云端语音与方舟文本模型
+
+离线包内置本地 sherpa 模型，但云端 STT、文本 LLM 和 edge-tts 仍需服务器网络。原生火山流式 STT 选择 `volcengine-ws`，推荐 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`，资源 ID 填已开通的 `volc.seedasr.sauc.duration`（ASR 2.0 小时版）。新 `api-key` 模式只填独立**语音 API Key**，无需 App ID；旧 `app-token` 支持 App ID 与语音 Access Token。方舟文本模型另填自己的 Base URL、模型 ID 和 API Key，语义对齐可选 `hybrid`；两类凭据不会自动复用。
+
+`WHISPER_GUIDE_CLOUD_STT_TIMEOUT_MS` 默认 5000，允许 `200–30000 ms`；`WHISPER_GUIDE_CLOUD_STT_ENABLE_NONSTREAM=true` 仅作用于 `bigmodel_async`。`.env.example` 提供首次默认值，已有私有方案优先；通常直接在模型页编辑、分别测试语音与文本，保存后结束当前会话再激活。
+
+短静音探测等待最终协议响应；若提示空音频 `45000002`，只证明鉴权与协议可达，不能证明真实识别正确。本轮只有本地 WebSocket 模拟验证，真实语音账号和识别效果仍待部署者在工作台朗读验收。语音公网要求 WSS，禁止重定向；断网/超时继续使用本地识别保护会话。升级后需重新构建并打包镜像，旧发布包不自动包含该适配器。
+
 ## 更新后的界面与会话
 
 访问 `/` 概览、`/studio` 工作台、`/settings/models` 模型方案管理。离开工作台会停止采集和播放并请求暂停，返回后手动继续。刷新遗留的断线会话可以恢复或明确结束；暂停仍阻止模型激活。

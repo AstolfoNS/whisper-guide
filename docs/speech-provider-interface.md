@@ -3,7 +3,7 @@
 语音识别与大模型语义校准独立配置。两者均不能直接修改 `reading_position` 或 `prompt_position`；本地 `ScriptAligner` 是游标提交入口。
 
 ```text
-PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider
+PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreamingProvider
                          ↓ RecognitionUpdate(partial/final)
                      ScriptAligner → 双游标 / 五状态机
                          ↑ 经本地验证的讲稿原文
@@ -21,7 +21,7 @@ class RecognitionUpdate:
     is_filler_only: bool
 ```
 
-同一 `segment_id` 的 partial 覆盖前次假设；final 后重置流并递增分段号。填充词不提交讲稿位置。默认 `local` 使用 `sherpa-onnx`；`cloud` 需配置通用网关与 `cloud_opt_in=true`，未授权时锁定本地。
+同一 `segment_id` 的 partial 覆盖前次假设，final 才正常提交位置。填充词不提交讲稿位置。本地 sherpa 端点后重置流并递增分段号；WebSocket 云端分句定稿只递增分段号，保留同一连接。默认 `local` 使用 `sherpa-onnx`；`cloud` 需选择语音协议、独立凭据与 `cloud_opt_in=true`，未授权时锁定本地。
 
 通用 HTTP 语音网关接收：
 
@@ -29,9 +29,37 @@ class RecognitionUpdate:
 {"audio":"<base64 PCM16>","sample_rate":16000,"segment_id":0,"turn_token":3}
 ```
 
-返回 `text` / `transcript`、`is_final` / `final`，可选 `segment_id`。这不是任一厂商的原生协议；需要 WebSocket 或专用鉴权的厂商可通过网关或独立适配器转换。不得将凭据放进 URL 查询参数。
+返回 `text` / `transcript`、`is_final` / `final`，可选 `segment_id`。此 `http-json` 网关契约与厂商原生协议分开；公网地址要求 HTTPS，本机开发可用环回 HTTP。不得将凭据放进 URL 查询参数。
 
 兼容保留 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 注册表；主要工作台使用 `local` / `cloud` 及模型设置 API。`GET /api/speech/providers` 返回能力与隐私信息，不包含密钥。请求失败、超时或断网时回退本地，返回仍经过本地讲稿对齐和轮次校验。
+
+## 原生 WebSocket 流式 ASR
+
+`WebSocketStreamingProvider` 管理通用有界传输，`VolcengineSpeechProtocol` 只负责火山 ASR v3 的二进制帧、鉴权头和转写事件。新增厂商协议可扩展适配器注册表，无需把语音源绑定到某个文本模型或让云端直接操作领域游标。网络实现使用轻量 `websockets`，不引入厂商 SDK。
+
+推荐配置：
+
+| 配置字段 | 值或规则 |
+|---|---|
+| `stt_provider` / `cloud_opt_in` | `cloud` / `true` |
+| `cloud_stt_protocol` | `volcengine-ws`；旧网关使用默认 `http-json` |
+| `cloud_stt_endpoint` | `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` |
+| `cloud_stt_auth_mode` | 新 `api-key`，或旧 `app-token` |
+| `cloud_stt_access_token` | 新模式填独立语音 API Key；旧模式填语音 Access Token |
+| `cloud_stt_app_id` | 仅旧 `app-token` 模式必需 |
+| `cloud_stt_resource_id` | `volc.seedasr.sauc.duration`，ASR 2.0 小时版；须与已开通资源一致 |
+| `cloud_stt_timeout_ms` | 独立语音超时，默认 5000，严格整数 `200–30000` |
+| `cloud_stt_enable_nonstream` | 默认 `true`，仅 `bigmodel_async` 启用二次识别；其他端点忽略此开关 |
+
+`api-key` 模式发 `X-Api-Key`；旧模式发 `X-Api-App-Key` 和 `X-Api-Access-Key`。两者都携带资源 ID 与请求标识。语音凭据与方舟文本 `llm_api_key` 独立，后端不自动借用或回传明文；创建/复制/测试仍遵守方案凭据隔离规则。
+
+音频为 16 kHz、单声道、PCM16，每 200 ms 发送一块。分句尾部静音窗口为 600 ms，早于至少 1000 ms 的本地提示等待。请求 `result_type=single`，同一句每次返回的完整修订假设覆盖原 partial；只有 `utterances[].definite=true` 或服务端最终包定稿，绝不把修订文本当增量拼接。云端结果统一转为 `RecognitionUpdate`，继续经过填充词/异常叠字处理、本地 `ScriptAligner` 与可选文本 LLM `hybrid` 校准；最终游标由本地提交。
+
+每条连接的音频缓冲最多 1 秒、结果队列最多 32 项，WebSocket 传输最多 4 个活跃线程。超时、断网或有界队列溢出触发本地 sherpa 回退；暂停、终止及轮次切换立即失效旧连接与队列，迟到结果不能推进游标。不落盘录音、音频帧、识别内容或密钥。公网只允许 WSS，本机开发允许环回 WS；禁止 URL 凭据、查询参数、片段及重定向，避免自定义鉴权头转发到其他地址。
+
+`target=stt` 的测试使用当前草稿和独立语音超时，建立真实协议连接、发送短静音与结束包，并等到服务端最终包；初始 ACK 不能单独判定成功。已知空音频业务码 `45000002` 可返回 `ok=true, verified=network, probe_empty_audio=true`，固定提示只确认鉴权和协议可达。其他错误仍失败并以受控类别/数字状态码展示，绝不透传上游正文。测试不保存、不激活，也不允许本地回退伪装成云端通过。
+
+本轮自动化验证使用本地 WebSocket 模拟服务，覆盖帧协议、partial/final、回退、取消与配置安全；本轮未使用真实语音 API Key，**未完成真实火山 ASR 准确率和生产账号验收**。本地 sherpa 此前真实识别结果不替代云端验收。
 
 ## 通用语义校准
 
@@ -87,13 +115,13 @@ class RecognitionUpdate:
 {"id":"<profile-id>","target":"llm","settings":{"llm_model":"unsaved-model"}}
 ```
 
-返回 `ok`、`latency_ms`、安全消息和 `verified`：`network` 表示完成真实协议请求；`capability` 仅表示本地模型能力可用；`none` 表示未通过。本地 STT 测试不验证识别准确率；云端 STT 测试向网关发送短静音 PCM 并验证响应，不等价于真实朗读验收。
+返回 `ok`、`latency_ms`、安全消息和 `verified`：`network` 表示完成真实协议请求；`capability` 仅表示本地模型能力可用；`none` 表示未通过。本地 STT 测试不验证识别准确率；云端 STT 按所选 HTTP/WebSocket 协议发送短静音 PCM 并验证响应，不等价于真实朗读验收。WebSocket 的空音频结果说明见上文。
 
 LLM 测试失败时额外返回受控 `error_code`：`CONFIG_INCOMPLETE`、`TIMEOUT`、`HTTP_ERROR`、`NETWORK_ERROR`、`INVALID_RESPONSE` 或 `UNKNOWN_ERROR`。`HTTP_ERROR` 可包含 `http_status`；`message` 由本服务的固定诊断文案生成，不透传上游正文、异常或凭据。`verified=none` 表示未通过本次验证，界面明确显示失败。实际排查见 [运维手册](operations.md#大模型连通性测试失败)。
 
 更新必须携带当前 `revision`，冲突为 `409 REVISION_CONFLICT`。激活遇到 READY/LISTENING/PROMPTING/PAUSED 为 `409 SESSION_ACTIVE`，不能通过暂停绕过；同一锁保护会话准备与激活。默认本地方案只读；当前生效方案不可删除。选中、保存、测试、激活四种动作互不隐式替代。
 
-API 接受平面模型字段，也兼容嵌套 `stt`/`llm`；显式平面字段优先。云端 STT 使用 `cloud_stt_endpoint`、`cloud_stt_app_id`、`cloud_stt_access_token`，与语义 `llm_*` 分开。API Key 与 Token 只单向提交，GET 不回传明文。空白或 `****` 保留旧值；`clear_llm_api_key=true` / `clear_cloud_stt_access_token=true` 才清除。不得把掩码当作密码输入的实际值。
+API 接受平面模型字段，也兼容嵌套 `stt`/`llm`；显式平面字段优先。云端 STT 使用 `cloud_stt_endpoint`、`cloud_stt_protocol`、`cloud_stt_auth_mode`、`cloud_stt_resource_id`、`cloud_stt_timeout_ms`、`cloud_stt_enable_nonstream` 及独立凭据，与语义 `llm_*` 分开。嵌套 `stt` 对应短字段为 `protocol`、`auth_mode`、`resource_id`、`timeout_ms`、`enable_nonstream`。API Key 与 Token 只单向提交，GET 不回传明文。空白或 `****` 保留旧值；`clear_llm_api_key=true` / `clear_cloud_stt_access_token=true` 才清除。不得把掩码当作密码输入的实际值。
 
 ## 模型发现
 

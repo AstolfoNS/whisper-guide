@@ -17,6 +17,11 @@ MODEL_SETTINGS_FIELDS = (
     "stt_provider",
     "cloud_opt_in",
     "cloud_stt_endpoint",
+    "cloud_stt_protocol",
+    "cloud_stt_auth_mode",
+    "cloud_stt_resource_id",
+    "cloud_stt_timeout_ms",
+    "cloud_stt_enable_nonstream",
     "cloud_stt_app_id",
     "cloud_stt_access_token",
     "llm_align_mode",
@@ -57,6 +62,11 @@ class Settings(BaseSettings):
     cloud_access_token: str = ""
     cloud_opt_in: bool = False
     cloud_stt_endpoint: str = ""
+    cloud_stt_protocol: Literal["http-json", "volcengine-ws"] = "http-json"
+    cloud_stt_auth_mode: Literal["api-key", "app-token"] = "api-key"
+    cloud_stt_resource_id: str = "volc.seedasr.sauc.duration"
+    cloud_stt_timeout_ms: int = Field(default=5000, ge=200, le=30000)
+    cloud_stt_enable_nonstream: bool = True
     cloud_stt_app_id: str = ""
     cloud_stt_access_token: str = ""
     llm_align_mode: Literal["off", "fallback", "hybrid"] = "off"

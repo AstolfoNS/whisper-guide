@@ -1,6 +1,11 @@
 /** Runtime model configuration shared by the settings panel and the API. */
 
 export type LlmAlignMode = 'off' | 'fallback' | 'hybrid'
+export type CloudSttProtocol = 'http-json' | 'volcengine-ws'
+export type CloudSttAuthMode = 'api-key' | 'app-token'
+
+export const VOLCENGINE_STT_ENDPOINT = 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async'
+export const DEFAULT_STT_RESOURCE_ID = 'volc.seedasr.sauc.duration'
 
 export interface LlmPreset {
   id: string
@@ -14,6 +19,11 @@ export interface ModelSettings {
   stt_provider: string
   cloud_opt_in: boolean
   cloud_stt_endpoint: string
+  cloud_stt_protocol: CloudSttProtocol
+  cloud_stt_auth_mode: CloudSttAuthMode
+  cloud_stt_resource_id: string
+  cloud_stt_timeout_ms: number
+  cloud_stt_enable_nonstream: boolean
   cloud_stt_app_id: string
   cloud_stt_token_configured: boolean
   cloud_stt_token_hint: string
@@ -31,6 +41,11 @@ export interface ModelSettingsInput {
   stt_provider: string
   cloud_opt_in: boolean
   cloud_stt_endpoint: string
+  cloud_stt_protocol: CloudSttProtocol
+  cloud_stt_auth_mode: CloudSttAuthMode
+  cloud_stt_resource_id: string
+  cloud_stt_timeout_ms: number
+  cloud_stt_enable_nonstream: boolean
   cloud_stt_app_id: string
   /** Empty values are omitted before sending so an existing secret is retained. */
   cloud_stt_access_token?: string
@@ -107,6 +122,11 @@ export function normalizeModelSettings(payload: unknown): ModelSettings {
     cloud_opt_in: booleanValue(root.cloud_opt_in ?? stt.opt_in),
     cloud_stt_endpoint: stringValue(root.cloud_stt_endpoint ?? root.cloud_endpoint ?? stt.endpoint),
     cloud_stt_app_id: stringValue(root.cloud_stt_app_id ?? root.cloud_app_id ?? stt.app_id),
+    cloud_stt_protocol: (root.cloud_stt_protocol ?? stt.protocol) === 'volcengine-ws' ? 'volcengine-ws' : 'http-json',
+    cloud_stt_auth_mode: (root.cloud_stt_auth_mode ?? stt.auth_mode) === 'app-token' ? 'app-token' : 'api-key',
+    cloud_stt_resource_id: stringValue(root.cloud_stt_resource_id ?? stt.resource_id, DEFAULT_STT_RESOURCE_ID),
+    cloud_stt_timeout_ms: positiveInteger(root.cloud_stt_timeout_ms ?? stt.timeout_ms, 5000),
+    cloud_stt_enable_nonstream: booleanValue(root.cloud_stt_enable_nonstream ?? stt.enable_nonstream, true),
     cloud_stt_token_configured: booleanValue(root.cloud_stt_token_configured ?? root.has_cloud_stt_access_token ?? root.has_access_token ?? stt.token_configured ?? stt.has_access_token) || Boolean(tokenHint),
     cloud_stt_token_hint: tokenHint,
     llm_align_mode: alignMode(root.llm_align_mode ?? llm.align_mode),

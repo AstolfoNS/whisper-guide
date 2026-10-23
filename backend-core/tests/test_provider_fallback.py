@@ -305,3 +305,59 @@ def test_closed_fallback_does_not_decode_or_send_audio():
     stream.close()
     assert stream.accept_pcm(b"pcm") is None
     assert local.frames == remote.frames == []
+
+
+@pytest.mark.parametrize("local_final_frame", [0, 1])
+def test_fallback_does_not_replay_cached_local_final_before_latest_cloud_commit(local_final_frame):
+    old = RecognitionUpdate("大家好", is_final=True, segment_id=0)
+    local_updates = [None, None, None, None, RecognitionUpdate("接下来", segment_id=1)]
+    local_updates[local_final_frame] = old
+    local = FakeStream(local_updates)
+    remote = FakeStream(
+        [
+            RecognitionUpdate("大家好", is_final=True, segment_id=8),
+            RecognitionUpdate("今天开始", is_final=True, segment_id=9),
+            None,
+            SpeechUnavailableError("offline"),
+        ]
+    )
+    stream = FallbackSpeechStream(remote, local)
+    assert stream.accept_pcm(b"one").segment_id == 8
+    assert stream.accept_pcm(b"two").segment_id == 9
+    assert stream.accept_pcm(b"three") is None
+    assert stream.accept_pcm(b"four") is None
+    assert stream.fallback_active
+    assert remote.closed
+    # No stale final was invented; remapping waits for new local speech.
+    recovered = stream.accept_pcm(b"five")
+    assert recovered == RecognitionUpdate("接下来", segment_id=10)
+
+
+def test_fallback_can_reuse_local_update_newer_than_last_cloud_commit():
+    local = FakeStream([None, RecognitionUpdate("新的句子", is_final=True, segment_id=1), None])
+    remote = FakeStream(
+        [
+            RecognitionUpdate("之前的句子", is_final=True, segment_id=3),
+            None,
+            SpeechUnavailableError("offline"),
+        ]
+    )
+    stream = FallbackSpeechStream(remote, local)
+    assert stream.accept_pcm(b"one").segment_id == 3
+    assert stream.accept_pcm(b"two") is None
+    assert stream.accept_pcm(b"three") == RecognitionUpdate("新的句子", is_final=True, segment_id=4)
+
+
+def test_fallback_does_not_reuse_old_partial_before_cloud_final():
+    local = FakeStream([RecognitionUpdate("大家", segment_id=0), None, None])
+    remote = FakeStream(
+        [
+            None,
+            RecognitionUpdate("大家好", is_final=True, segment_id=7),
+            SpeechUnavailableError("offline"),
+        ]
+    )
+    stream = FallbackSpeechStream(remote, local)
+    assert stream.accept_pcm(b"one") is None
+    assert stream.accept_pcm(b"two").is_final
+    assert stream.accept_pcm(b"three") is None

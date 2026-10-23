@@ -1,9 +1,11 @@
 import { beforeEach, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import TeleprompterView from '../../src/components/studio/TeleprompterView.vue'
 import StateMachineMonitor from '../../src/components/studio/StateMachineMonitor.vue'
 import SessionControls from '../../src/components/studio/SessionControls.vue'
+import ServiceHealthBar from '../../src/components/health/ServiceHealthBar.vue'
+import { useHealthStore } from '../../src/stores/health'
 import { useSessionStore } from '../../src/stores/session'
 import type { SessionSnapshot } from '../../src/api/session'
 
@@ -40,5 +42,31 @@ it('enforces accessible minimum 1000ms silence configuration', async () => {
   store.silenceTimeout = 999
   await wrapper.vm.$nextTick()
   expect(wrapper.findAll('button').find(button => button.text() === '应用')?.attributes('disabled')).toBeDefined()
+  wrapper.unmount()
+})
+
+it('distinguishes the configured cloud capability from actual session fallback', async () => {
+  const session = useSessionStore()
+  const health = useHealthStore()
+  health.provider = 'cloud'
+  health.stt = 'ready'
+  health.cloud = true
+  session.snapshot = { state: 'LISTENING', stt_provider: 'cloud', stt_provider_active: 'cloud', stt_fallback: false } as SessionSnapshot
+  const wrapper = mount(ServiceHealthBar, { attachTo: document.body })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(document.body.textContent).toContain('云端识别')
+  expect(document.body.textContent).not.toContain('云端识别已回退本地')
+  session.snapshot = { ...session.snapshot, stt_provider_active: 'local', stt_fallback: true }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.get('button').text()).toContain('识别已回退本地')
+  expect(document.body.textContent).toContain('云端识别已回退本地')
+  expect(document.body.textContent).toContain('本地 sherpa-onnx（云端回退）')
+  expect(health.provider).toBe('cloud')
+  expect(health.stt).toBe('ready')
+  session.snapshot = { ...session.snapshot, stt_provider: 'local', stt_provider_active: 'local', stt_fallback: false }
+  await wrapper.vm.$nextTick()
+  expect(document.body.textContent).not.toContain('云端识别已回退本地')
+  expect(wrapper.get('button').text()).not.toContain('已回退')
   wrapper.unmount()
 })

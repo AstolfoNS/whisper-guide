@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton } from 'naive-ui'
-import type { LlmPreset } from '../../api/models.ts'
+import { DEFAULT_STT_RESOURCE_ID, VOLCENGINE_STT_ENDPOINT, type LlmPreset } from '../../api/models.ts'
 import type { ModelConfig, ModelDiscoveryResult } from '../../api/modelConfigs.ts'
 import type { ModelConfigDraft } from './modelConfigForm.ts'
 
@@ -16,6 +16,23 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ save: []; discover: [] }>()
 const modelSearch = ref('')
+const websocketStt = computed(() => draft.value.settings.cloud_stt_protocol === 'volcengine-ws')
+const apiKeyAuth = computed(() => websocketStt.value && draft.value.settings.cloud_stt_auth_mode === 'api-key')
+const optimizedEndpoint = computed(() => {
+  try { return new URL(draft.value.settings.cloud_stt_endpoint).pathname.replace(/\/+$/, '').endsWith('/bigmodel_async') }
+  catch { return false }
+})
+watch(() => draft.value.settings.cloud_stt_protocol, (protocol) => {
+  if (protocol === 'volcengine-ws' && !draft.value.settings.cloud_stt_endpoint.trim()) draft.value.settings.cloud_stt_endpoint = VOLCENGINE_STT_ENDPOINT
+})
+
+function fillSttDefaults() {
+  draft.value.settings.cloud_stt_endpoint = VOLCENGINE_STT_ENDPOINT
+  draft.value.settings.cloud_stt_auth_mode = 'api-key'
+  draft.value.settings.cloud_stt_resource_id = DEFAULT_STT_RESOURCE_ID
+  draft.value.settings.cloud_stt_timeout_ms = 5000
+  draft.value.settings.cloud_stt_enable_nonstream = true
+}
 const filteredModels = computed(() => {
   const query = modelSearch.value.trim().toLocaleLowerCase()
   return (props.discoveryResult?.models ?? []).filter((model) => `${model.id} ${model.name ?? ''}`.toLocaleLowerCase().includes(query))
@@ -68,14 +85,34 @@ function clearSecret(kind: 'llm' | 'stt') {
       <select id="profile-stt-provider" v-model="draft.settings.stt_provider"><option value="local">本地 sherpa-onnx</option><option value="cloud">云端语音接口</option></select>
       <p v-if="draft.settings.stt_provider === 'local'" class="field-help">麦克风音频在本机识别；本服务不保存录音。</p>
       <template v-else>
-        <label for="profile-stt-endpoint">语音网关 Endpoint</label>
-        <input id="profile-stt-endpoint" v-model="draft.settings.cloud_stt_endpoint" type="url" autocomplete="url" placeholder="https://gateway.example/stt" />
-        <p class="field-help">使用兼容项目语音协议的接口；聊天模型 Base URL 不能用于此处。</p>
-        <label for="profile-stt-app-id">App ID <span class="optional">依服务商要求填写</span></label>
-        <input id="profile-stt-app-id" v-model="draft.settings.cloud_stt_app_id" autocomplete="off" />
-        <div class="secret-label"><label for="profile-stt-token">Access Token</label><NButton v-if="profile?.settings.cloud_stt_token_configured" text size="small" :type="draft.settings.clear_cloud_stt_access_token ? 'default' : 'error'" @click="clearSecret('stt')">{{ draft.settings.clear_cloud_stt_access_token ? '撤销清除' : '清除凭据' }}</NButton></div>
+        <label for="profile-stt-protocol">语音接口协议</label>
+        <select id="profile-stt-protocol" v-model="draft.settings.cloud_stt_protocol"><option value="http-json">通用 HTTP JSON 网关</option><option value="volcengine-ws">火山语音 WebSocket</option></select>
+        <div v-if="websocketStt" class="stt-preset"><NButton size="small" @click="fillSttDefaults">填入推荐设置</NButton><span class="field-help">流式识别 2.0 · 小时制资源</span></div>
+        <label for="profile-stt-endpoint">{{ websocketStt ? '语音 WebSocket Endpoint' : '语音网关 Endpoint' }}</label>
+        <input id="profile-stt-endpoint" v-model="draft.settings.cloud_stt_endpoint" type="url" autocomplete="url" :placeholder="websocketStt ? VOLCENGINE_STT_ENDPOINT : 'https://gateway.example/stt'" />
+        <p class="field-help">{{ websocketStt ? '直接连接火山语音流式识别；推荐使用 wss:// 加密连接。' : '使用兼容项目语音协议的接口。' }} 聊天模型 Base URL 不能用于此处。</p>
+        <template v-if="websocketStt">
+          <label for="profile-stt-resource">语音服务 Resource ID</label>
+          <input id="profile-stt-resource" v-model="draft.settings.cloud_stt_resource_id" list="profile-stt-resources" autocomplete="off" :placeholder="DEFAULT_STT_RESOURCE_ID" />
+          <datalist id="profile-stt-resources"><option value="volc.seedasr.sauc.duration">流式识别 2.0 · 小时制</option><option value="volc.seedasr.sauc.concurrent">流式识别 2.0 · 并发制</option><option value="volc.bigasr.sauc.duration">流式识别 1.0 · 小时制</option><option value="volc.bigasr.sauc.concurrent">流式识别 1.0 · 并发制</option></datalist>
+          <p class="field-help">请选择语音控制台已开通的资源，支持手动填写。</p>
+          <label for="profile-stt-auth">语音鉴权方式</label>
+          <select id="profile-stt-auth" v-model="draft.settings.cloud_stt_auth_mode"><option value="api-key">新版语音 API Key</option><option value="app-token">旧版 App ID + Access Token</option></select>
+        </template>
+        <template v-if="!apiKeyAuth">
+          <label for="profile-stt-app-id">App ID <span class="optional">{{ websocketStt ? '必填，来自语音控制台' : '依服务商要求填写' }}</span></label>
+          <input id="profile-stt-app-id" v-model="draft.settings.cloud_stt_app_id" :required="websocketStt" autocomplete="off" />
+        </template>
+        <div class="secret-label"><label for="profile-stt-token">{{ apiKeyAuth ? '语音服务 API Key' : 'Access Token' }}</label><NButton v-if="profile?.settings.cloud_stt_token_configured" text size="small" :type="draft.settings.clear_cloud_stt_access_token ? 'default' : 'error'" @click="clearSecret('stt')">{{ draft.settings.clear_cloud_stt_access_token ? '撤销清除' : '清除凭据' }}</NButton></div>
         <input id="profile-stt-token" v-model="draft.settings.cloud_stt_access_token" type="password" autocomplete="new-password" :disabled="draft.settings.clear_cloud_stt_access_token" :placeholder="profile?.settings.cloud_stt_token_configured ? '已保存，留空保留' : '尚未配置'" aria-describedby="stt-token-help" />
-        <p id="stt-token-help" class="field-help">{{ draft.settings.clear_cloud_stt_access_token ? '保存后将删除已存 Token。' : '凭据仅保存于后端，页面不会读取原始值。' }}</p>
+        <p id="stt-token-help" class="field-help">{{ draft.settings.clear_cloud_stt_access_token ? '保存后将删除已存语音凭据。' : '凭据仅保存于后端，留空保留已存值。' }} 语音服务与下方火山方舟文本模型使用各自的凭据，不会自动复用。</p>
+        <label for="profile-stt-timeout">语音请求超时 (ms)</label>
+        <input id="profile-stt-timeout" v-model.number="draft.settings.cloud_stt_timeout_ms" type="number" min="200" max="30000" step="1" required class="timeout-input" />
+        <p class="field-help">范围 200–30000 ms；与大模型语义对齐超时独立。</p>
+        <template v-if="websocketStt">
+          <label class="check-field"><input id="profile-stt-nonstream" v-model="draft.settings.cloud_stt_enable_nonstream" type="checkbox" :disabled="!optimizedEndpoint" /><span>启用二遍复核（仅优化版 bigmodel_async 接口有效）</span></label>
+          <p v-if="!optimizedEndpoint" class="field-help">当前 Endpoint 不支持此项，服务端将忽略二遍复核设置。</p>
+        </template>
         <label class="check-field"><input v-model="draft.settings.cloud_opt_in" type="checkbox" /><span>我同意将麦克风音频片段加密发送至所配置云端处理；本服务不保存录音。云端留存规则以服务商政策为准。</span></label>
       </template>
     </fieldset>
@@ -135,6 +172,7 @@ input:not([type='checkbox']),select { display:block; width:100%; min-height:40px
 input:disabled,select:disabled { opacity:.6; }
 .optional { color:var(--muted); font-size:12px; font-weight:400; margin-left:6px; }
 .field-help { font-size:12px; line-height:1.7; color:var(--muted); margin:7px 0 0; }
+.stt-preset { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
 .profile-form__columns { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
 .profile-form__columns + label { margin-top:16px; }
 .secret-label { display:flex; justify-content:space-between; align-items:center; margin:16px 0 7px; }

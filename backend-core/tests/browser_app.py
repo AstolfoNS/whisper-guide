@@ -1,21 +1,29 @@
 """Isolated browser-test server: deterministic speech doubles, no external requests."""
 
+import gzip
 import io
+import json
 import os
+import struct
 import tempfile
 import wave
 from pathlib import Path
 
-from fastapi import Request
+from fastapi import Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.config import Settings
-from app.infrastructure.speech import RecognitionUpdate
+from app.infrastructure.speech import (
+    FallbackSpeechStream,
+    ProviderSpeechServices,
+    RecognitionUpdate,
+)
 from app.main import create_app
 
 
 class BrowserStream:
     available = True
+    effective_provider = "local"
 
     def __init__(self):
         self.frames = 0
@@ -33,21 +41,23 @@ class BrowserStream:
         pass
 
 
-class BrowserSpeech:
+class BrowserSpeech(ProviderSpeechServices):
+    def _local_stt_ready(self):
+        return True
+
     def status(self, provider_name=None):
-        return {
-            "stt": "ready",
-            "vad": "ready",
-            "tts": "ready",
-            "provider": "local",
-            "providers": self.provider_options(),
-        }
+        result = super().status(provider_name)
+        result.update(stt="ready", vad="ready", tts="ready", detail="")
+        return result
 
-    def provider_options(self):
-        return [{"id": "local", "label": "本地", "available": True}]
-
-    def create_stream(self, **kwargs):
-        return BrowserStream()
+    def create_stream(self, provider_name=None, turn_token=None):
+        local = BrowserStream()
+        if (provider_name or self.provider_name) == "local":
+            return local
+        remote = self.registry.provider(provider_name or self.provider_name)
+        if remote is None or not remote.configured:
+            return local
+        return FallbackSpeechStream(remote.create_stream(vad=None, turn_token=turn_token), local)
 
     async def synthesize(self, text):
         output = io.BytesIO()
@@ -66,12 +76,16 @@ temporary_data = (
 )
 data_dir = Path(temporary_data.name if temporary_data else os.environ["WHISPER_GUIDE_BROWSER_DATA"])
 app = create_app(Settings(environment="test", data_dir=data_dir, _env_file=None))
-app.state.speech_services = BrowserSpeech()
+app.state.speech_services = BrowserSpeech(app.state.settings)
 
 
 @app.post("/mock/chat/completions")
-async def mock_llm():
-    return {"choices": [{"message": {"content": "OK"}}]}
+async def mock_llm(request: Request):
+    payload = await request.json()
+    text = "OK"
+    if payload.get("messages", [{}])[0].get("role") == "system":
+        text = json.dumps({"matched_quote": "大家好", "confidence": 0.99})
+    return {"choices": [{"message": {"content": text}}]}
 
 
 @app.get("/mock/models")
@@ -88,3 +102,49 @@ async def mock_models(request: Request):
             {"id": "synthetic-browser-discovery-key"},
         ]
     }
+
+
+def mock_asr_frame(payload, final=False):
+    body = gzip.compress(json.dumps(payload).encode(), mtime=0)
+    return (
+        bytes((0x11, 0x93 if final else 0x91, 0x11, 0))
+        + struct.pack(">iI", -1 if final else 1, len(body))
+        + body
+    )
+
+
+@app.websocket("/mock/asr/bigmodel_async")
+async def mock_asr(socket: WebSocket):
+    if socket.headers.get("x-api-key") != "synthetic-browser-asr-key":
+        await socket.close(code=1008)
+        return
+    await socket.accept()
+    packets = 0
+    try:
+        await socket.receive_bytes()
+        await socket.send_bytes(mock_asr_frame({}))
+        while True:
+            frame = await socket.receive_bytes()
+            if frame[1] & 2:
+                await socket.send_bytes(mock_asr_frame({}, final=True))
+                return
+            packets += 1
+            if packets <= 2:
+                await socket.send_bytes(
+                    mock_asr_frame(
+                        {
+                            "result": {
+                                "utterances": [
+                                    {
+                                        "text": "大甲" if packets == 1 else "大甲好",
+                                        "start_time": 0,
+                                        "end_time": 600,
+                                        "definite": packets == 2,
+                                    }
+                                ]
+                            }
+                        }
+                    )
+                )
+    except WebSocketDisconnect:
+        return

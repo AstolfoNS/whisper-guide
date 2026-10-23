@@ -21,3 +21,25 @@ test('model presets include generic providers and custom fallback', () => {
   assert.deepEqual(presets.map((preset) => preset.id), ['custom', 'deepseek', 'qwen', 'doubao', 'openai', 'ollama'])
   assert.equal(presets.find((preset) => preset.id === 'custom')?.base_url, '')
 })
+
+
+test('cloud ASR protocol options normalize flat, nested and older settings with independent timeout', () => {
+  const defaults = normalizeModelSettings({})
+  assert.equal(defaults.cloud_stt_protocol, 'http-json')
+  assert.equal(defaults.cloud_stt_auth_mode, 'api-key')
+  assert.equal(defaults.cloud_stt_resource_id, 'volc.seedasr.sauc.duration')
+  assert.equal(defaults.cloud_stt_timeout_ms, 5000)
+  assert.equal(defaults.cloud_stt_enable_nonstream, true)
+  for (const payload of [
+    { cloud_stt_protocol: 'volcengine-ws', cloud_stt_auth_mode: 'app-token', cloud_stt_resource_id: 'custom-resource', cloud_stt_timeout_ms: 7200, cloud_stt_enable_nonstream: false, llm_timeout_ms: 1500 },
+    { stt: { protocol: 'volcengine-ws', auth_mode: 'app-token', resource_id: 'custom-resource', timeout_ms: 7200, enable_nonstream: false }, llm: { timeout_ms: 1500 } },
+  ]) {
+    const settings = normalizeModelSettings(payload)
+    assert.equal(settings.cloud_stt_protocol, 'volcengine-ws')
+    assert.equal(settings.cloud_stt_auth_mode, 'app-token')
+    assert.equal(settings.cloud_stt_resource_id, 'custom-resource')
+    assert.equal(settings.cloud_stt_timeout_ms, 7200)
+    assert.equal(settings.cloud_stt_enable_nonstream, false)
+    assert.equal(settings.llm_timeout_ms, 1500)
+  }
+})

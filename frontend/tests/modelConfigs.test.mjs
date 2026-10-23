@@ -5,7 +5,7 @@ import {
   duplicateModelConfig, activateModelConfig, deleteModelConfig,
   testModelConfig, discoverModels, ModelConfigError,
 } from '../src/api/modelConfigs.ts'
-import { modelConfigDraft, validateModelConfigDraft } from '../src/components/models/modelConfigForm.ts'
+import { modelConfigDraft, validateCloudSttDraft, validateModelConfigDraft } from '../src/components/models/modelConfigForm.ts'
 
 function profile() {
   return normalizeModelConfig({ id: 'a', name: '演讲配置', revision: 3, is_active: true, active_revision: 2, pending_activation: true, settings: { stt_provider: 'local', llm_align_mode: 'fallback', llm_model: 'test', llm_base_url: 'https://example.test/v1', has_llm_api_key: true, llm_api_key: 'sk-****' } })
@@ -43,6 +43,7 @@ test('cloud drafts require explicit microphone authorization and model drafts re
   draft.settings.cloud_stt_endpoint = 'https://stt.example.test'
   assert.match(validateModelConfigDraft(draft), /授权/)
   draft.settings.cloud_opt_in = true
+  draft.settings.cloud_stt_access_token = 'test-voice-credential'
   draft.settings.llm_align_mode = 'hybrid'
   assert.match(validateModelConfigDraft(draft), /Base URL/)
   draft.settings.llm_base_url = 'http://localhost:11434/v1'
@@ -114,5 +115,100 @@ test('model discovery uses the draft without requiring a model, preserving saved
     await discoverModels(draft, 'a')
     assert.equal(calls[2].data.settings.clear_llm_api_key, true)
     assert.equal('llm_api_key' in calls[2].data.settings, false)
+  } finally { globalThis.fetch = original }
+})
+
+
+function cloudDraft() {
+  const draft = modelConfigDraft()
+  Object.assign(draft.settings, {
+    stt_provider: 'cloud', cloud_opt_in: true, cloud_stt_protocol: 'volcengine-ws',
+    cloud_stt_auth_mode: 'api-key', cloud_stt_endpoint: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async',
+    cloud_stt_access_token: 'voice-only-key',
+  })
+  return draft
+}
+
+test('native ASR API Key does not require App ID, while old authentication does', () => {
+  const draft = cloudDraft()
+  assert.equal(draft.name, '')
+  assert.equal(validateCloudSttDraft(draft), '')
+  draft.settings.cloud_stt_auth_mode = 'app-token'
+  assert.match(validateCloudSttDraft(draft), /App ID/)
+  draft.settings.cloud_stt_app_id = 'voice-app'
+  assert.equal(validateCloudSttDraft(draft), '')
+  draft.settings.cloud_stt_resource_id = ''
+  assert.match(validateCloudSttDraft(draft), /Resource ID/)
+})
+
+test('ASR retains only its own saved credential and explicit clear blocks testing', () => {
+  const saved = normalizeModelConfig({ id: 'voice', settings: { cloud_stt_token_configured: true } })
+  const draft = cloudDraft()
+  draft.settings.cloud_stt_access_token = ''
+  draft.settings.llm_api_key = 'separate-text-model-key'
+  assert.match(validateCloudSttDraft(draft), /语音服务 API Key/)
+  assert.equal(validateCloudSttDraft(draft, saved), '')
+  assert.equal('cloud_stt_access_token' in sanitizeModelConfigInput(draft).settings, false)
+  draft.settings.clear_cloud_stt_access_token = true
+  assert.match(validateCloudSttDraft(draft, saved), /语音服务 API Key/)
+  draft.settings.clear_cloud_stt_access_token = false
+  draft.settings.cloud_stt_access_token = 'sk-****'
+  assert.match(validateCloudSttDraft(draft), /语音服务 API Key/)
+})
+
+test('native ASR validates encrypted protocol, consent and independent timeout', () => {
+  const draft = cloudDraft()
+  draft.settings.cloud_opt_in = false
+  assert.match(validateCloudSttDraft(draft), /授权/)
+  draft.settings.cloud_opt_in = true
+  for (const url of ['https://voice.example.test', 'ws://voice.example.test', 'wss://user:password@voice.example.test', 'wss://voice.example.test/asr?token=private', 'wss://voice.example.test/asr#private']) {
+    draft.settings.cloud_stt_endpoint = url
+    assert.notEqual(validateCloudSttDraft(draft), '')
+  }
+  for (const url of ['wss://voice.example.test', 'ws://127.0.0.1:8010/stt', 'ws://[::1]:8010/stt']) {
+    draft.settings.cloud_stt_endpoint = url
+    assert.equal(validateCloudSttDraft(draft), '')
+  }
+  for (const timeout of [199, 30001, 500.5]) {
+    draft.settings.cloud_stt_timeout_ms = timeout
+    assert.match(validateCloudSttDraft(draft), /200 至 30000/)
+  }
+  for (const timeout of [200, 30000]) {
+    draft.settings.cloud_stt_timeout_ms = timeout
+    draft.settings.llm_timeout_ms = 1
+    assert.equal(validateCloudSttDraft(draft), '')
+  }
+  draft.settings.cloud_stt_protocol = 'http-json'
+  assert.match(validateCloudSttDraft(draft), /HTTP JSON/)
+  draft.settings.cloud_stt_endpoint = 'https://gateway.example.test/stt'
+  draft.settings.cloud_stt_resource_id = ''
+  assert.equal(validateCloudSttDraft(draft), '')
+})
+
+test('unsaved native ASR tests send all protocol fields without saving or borrowing an LLM key', async () => {
+  const original = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, data: JSON.parse(init.body) })
+    return Response.json({ ok: true, target: 'stt', verified: 'network', message: '已连接', latency_ms: 20 })
+  }
+  try {
+    const draft = cloudDraft()
+    draft.settings.llm_api_key = 'text-only-key'
+    draft.settings.cloud_stt_timeout_ms = 8000
+    draft.settings.llm_timeout_ms = 1500
+    draft.settings.cloud_stt_enable_nonstream = false
+    await testModelConfig(draft, 'stt')
+    assert.equal(calls.length, 1)
+    assert.match(calls[0].url, /\/test$/)
+    assert.equal(calls[0].data.id, undefined)
+    assert.equal(calls[0].data.settings.cloud_stt_protocol, 'volcengine-ws')
+    assert.equal(calls[0].data.settings.cloud_stt_auth_mode, 'api-key')
+    assert.equal(calls[0].data.settings.cloud_stt_resource_id, 'volc.seedasr.sauc.duration')
+    assert.equal(calls[0].data.settings.cloud_stt_timeout_ms, 8000)
+    assert.equal(calls[0].data.settings.llm_timeout_ms, 1500)
+    assert.equal(calls[0].data.settings.cloud_stt_enable_nonstream, false)
+    assert.equal(calls[0].data.settings.cloud_stt_access_token, 'voice-only-key')
+    assert.equal(calls[0].data.settings.llm_api_key, 'text-only-key')
   } finally { globalThis.fetch = original }
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { NButton, NTag, NDrawer, NDrawerContent } from 'naive-ui'
 import { useHealthStore } from '../../stores/health'
 import { useSessionStore } from '../../stores/session'
@@ -8,11 +8,19 @@ import { getSessionController } from '../../services/sessionController'
 const health = useHealthStore()
 const session = useSessionStore()
 const open = ref(false)
+const sessionProvider = computed(() => {
+  const snapshot = session.snapshot
+  if (!snapshot) return '未创建会话'
+  if (snapshot.stt_fallback) return '本地 sherpa-onnx（云端回退）'
+  const active = snapshot.stt_provider_active ?? snapshot.stt_provider
+  if (!active) return '未读取'
+  return active === 'local' ? '本地 sherpa-onnx' : active === 'cloud' ? '云端识别' : active
+})
 const labels: Record<string, string> = { ready: '就绪', unavailable: '不可用', unknown: '待检查', fallback: '降级' }
 </script>
 <template>
   <NButton size="small" secondary aria-label="打开服务诊断" @click="open = true">
-    服务 <span class="health-summary">STT {{ labels[health.stt] }} · VAD {{ labels[health.vad] }} · TTS {{ health.tts === 'ready' ? '已安装' : labels[health.tts] }}</span>
+    {{ session.snapshot?.stt_fallback ? '识别已回退本地' : '服务' }} <span class="health-summary">STT {{ session.snapshot?.stt_fallback ? '本地降级' : labels[health.stt] }} · VAD {{ labels[health.vad] }} · TTS {{ health.tts === 'ready' ? '已安装' : labels[health.tts] }}</span>
   </NButton>
   <NDrawer v-model:show="open" :width="420" placement="right" :auto-focus="true">
     <NDrawerContent title="服务与连接诊断" closable>
@@ -20,7 +28,8 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
         <div><dt>后端 HTTP</dt><dd>{{ labels[health.backend] }}</dd></div>
         <div><dt>会话 WebSocket</dt><dd>{{ { disconnected: '未连接', connecting: '连接中', connected: '已连接' }[session.connection] }}</dd></div>
         <div><dt>麦克风</dt><dd>{{ { idle: '未采集', requesting: '等待授权', active: '采集中', error: '不可用' }[session.microphone] }}</dd></div>
-        <div><dt>STT</dt><dd>{{ health.provider }} · {{ labels[health.stt] }}</dd></div>
+        <div><dt>STT 服务能力</dt><dd>{{ health.provider }} · {{ labels[health.stt] }}</dd></div>
+        <div><dt>当前会话 STT</dt><dd>{{ sessionProvider }}</dd></div>
         <div><dt>VAD</dt><dd>{{ labels[health.vad] }}</dd></div>
         <div><dt>TTS 依赖</dt><dd>{{ health.tts === 'ready' ? '已安装，合成时检查网络' : labels[health.tts] }}</dd></div>
         <div><dt>最近播放</dt><dd>{{ { unknown: '尚未播放', success: '播放完成', failed: '播放失败' }[health.playback] }}</dd></div>
@@ -30,7 +39,8 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
         <div><dt>检查时间</dt><dd>{{ health.checkedAt ? new Date(health.checkedAt).toLocaleTimeString() : '未检查' }}</dd></div>
       </dl>
       <p v-if="health.detail" role="status">{{ health.detail }}</p>
-      <NTag v-if="health.cloud" type="warning">音频将发送至云端，本服务不保存录音</NTag>
+      <NTag v-if="session.snapshot?.stt_fallback" type="warning" role="status">云端识别已回退本地</NTag>
+      <NTag v-if="health.cloud" type="warning">当前配置允许音频发送至云端，本服务不保存录音</NTag>
       <div class="health-actions">
         <NButton :loading="health.checking" @click="refreshHealth">刷新检查</NButton>
         <NButton :disabled="['LISTENING', 'PROMPTING'].includes(session.state)" @click="getSessionController().reconnect()">重连会话</NButton>

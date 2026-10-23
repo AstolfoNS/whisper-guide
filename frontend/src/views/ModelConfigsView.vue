@@ -4,7 +4,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { NAlert, NButton, NModal, NPopconfirm, NTag } from 'naive-ui'
 import ModelConfigList from '../components/models/ModelConfigList.vue'
 import ModelConfigForm from '../components/models/ModelConfigForm.vue'
-import { modelConfigDraft, validateModelConfigDraft } from '../components/models/modelConfigForm.ts'
+import { modelConfigDraft, validateCloudSttDraft, validateModelConfigDraft } from '../components/models/modelConfigForm.ts'
 import {
   activateModelConfig, createModelConfig, deleteModelConfig, duplicateModelConfig,
   discoverModels, fetchModelConfig, ModelConfigError, testModelConfig, updateModelConfig,
@@ -105,7 +105,7 @@ async function refresh() {
 
 async function save() {
   if (locked.value || !store.storeAvailable || selected.value?.is_default) return
-  error.value = validateModelConfigDraft(draft.value)
+  error.value = validateModelConfigDraft(draft.value, selected.value)
   if (error.value) return
   cancelDiscovery()
   busy.value = true
@@ -170,9 +170,9 @@ async function testConnection(target: 'stt' | 'llm') {
     error.value = '请启用语义对齐，并填写 Base URL 和模型名称后再测试。'
     return
   }
-  if (target === 'stt' && input.settings.stt_provider === 'cloud' && !input.settings.cloud_opt_in) {
-    error.value = '请先授权发送音频片段，再测试云端语音接口。'
-    return
+  if (target === 'stt') {
+    error.value = validateCloudSttDraft(input, selected.value)
+    if (error.value) return
   }
   cancelDiscovery()
   testingTarget.value = target
