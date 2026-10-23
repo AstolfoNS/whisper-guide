@@ -42,7 +42,7 @@ TRANSITION_TARGETS: dict[SessionState, tuple[SessionState, ...]] = {
 class SessionOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    silence_timeout_ms: StrictInt = Field(default=3000, gt=0)
+    silence_timeout_ms: StrictInt = Field(default=3000, ge=1000)
 
 
 class SessionError(ValueError):

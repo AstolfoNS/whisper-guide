@@ -54,4 +54,6 @@ test('session workspace keeps plain text script preview and both cursor labels',
   assert.match(html, /讲稿双游标视图/)
   assert.match(html, /大家好，今天开始。/)
   assert.match(html, /Alt\+Shift\+P/)
+  assert.match(html, /id="silence-timeout"[^>]*min="1000"[^>]*step="1"[^>]*aria-describedby="silence-timeout-help"/)
+  assert.match(html, /最短 1000 毫秒（1 秒）/)
 })

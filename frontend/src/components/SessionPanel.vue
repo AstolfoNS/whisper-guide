@@ -47,7 +47,7 @@ const scriptTokens = computed(() => {
 })
 const rawIsFinal = computed(() => snapshot.value?.raw_transcript_is_final ?? Boolean(snapshot.value?.aligned_transcript && snapshot.value?.raw_transcript === snapshot.value?.last_transcript))
 const canConfigure = computed(() => ['READY', 'PAUSED'].includes(state.value))
-const validTimeout = computed(() => Number.isInteger(timeout.value) && timeout.value > 0)
+const validTimeout = computed(() => Number.isInteger(timeout.value) && timeout.value >= 1000)
 const canStart = computed(() => !busy.value && props.script && props.serviceAvailable &&
   speech.value.stt === 'ready' && speech.value.tts === 'ready' &&
   ['READY', 'TERMINATED'].includes(state.value))
@@ -162,7 +162,7 @@ function onEvent(event: SessionServerEvent) {
 }
 async function start() {
   if (!canStart.value || !props.script) return
-  if (!validTimeout.value) { error.value = '静音阈值必须为正整数。'; return }
+  if (!validTimeout.value) { error.value = '静音等待时间必须为不小于 1000 毫秒的整数。'; return }
   const currentOperation = beginOperation()
   busy.value = true; error.value = ''
   try {
@@ -208,7 +208,7 @@ function pause(reason = '') {
 }
 async function resume() {
   if (state.value !== 'PAUSED' || !snapshot.value || busy.value) return
-  if (!validTimeout.value) { error.value = '静音阈值必须为正整数。'; return }
+  if (!validTimeout.value) { error.value = '静音等待时间必须为不小于 1000 毫秒的整数。'; return }
   const currentOperation = beginOperation()
   busy.value = true; error.value = ''
   try {
@@ -258,7 +258,7 @@ function terminate() {
   emit('active', false)
 }
 function configure() {
-  if (!validTimeout.value) { error.value = '静音阈值必须为正整数。'; return }
+  if (!validTimeout.value) { error.value = '静音等待时间必须为不小于 1000 毫秒的整数。'; return }
   if (snapshot.value && client.connected) client.send({ type: 'configure', silence_timeout_ms: timeout.value })
 }
 function reposition() {
@@ -295,8 +295,9 @@ onBeforeUnmount(() => {
     <button type="button" @click="refreshSpeech">检查语音服务</button>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     <div class="session-controls">
-      <label for="silence-timeout">静音阈值（毫秒）</label>
-      <input id="silence-timeout" v-model.number="timeout" type="number" min="1" step="1" :disabled="!canConfigure" />
+      <label for="silence-timeout">静音等待时间（毫秒）</label>
+      <input id="silence-timeout" v-model.number="timeout" type="number" min="1000" step="1" aria-describedby="silence-timeout-help" :disabled="!canConfigure" />
+      <span id="silence-timeout-help" class="input-help">最短 1000 毫秒（1 秒）</span>
       <button type="button" :disabled="!canConfigure || !validTimeout" @click="configure">应用阈值</button>
       <button type="button" :disabled="!canStart || !validTimeout" @click="start">{{ state === 'TERMINATED' ? '开始新演讲' : '开始演讲' }}</button>
       <button type="button" :disabled="!['LISTENING','PROMPTING'].includes(state)" @click="() => pause()">暂停</button>

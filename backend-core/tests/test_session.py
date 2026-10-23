@@ -87,20 +87,21 @@ def test_pause_while_prompting_restarts_in_listening_and_retains_segment(session
 
 
 def test_options_only_change_ready_or_paused_and_remain_strict(session) -> None:
-    session.handle("update_options", 0, silence_timeout_ms=500)
+    session.handle("update_options", 0, silence_timeout_ms=1000)
     session.handle("start", 0)
     with pytest.raises(SessionError):
-        session.handle("update_options", 10, silence_timeout_ms=1000)
-    session.handle("tick", 500)
+        session.handle("update_options", 10, silence_timeout_ms=1500)
+    session.handle("tick", 1000)
     with pytest.raises(SessionError):
-        session.handle("update_options", 501, silence_timeout_ms=1000)
-    session.handle("pause", 600)
+        session.handle("update_options", 1001, silence_timeout_ms=1500)
+    session.handle("pause", 1100)
     with pytest.raises(ValidationError):
-        session.handle("update_options", 601, silence_timeout_ms=True)
-    assert session.options.silence_timeout_ms == 500
-    session.handle("update_options", 602, silence_timeout_ms=1000)
+        session.handle("update_options", 1101, silence_timeout_ms=True)
+    assert session.options.silence_timeout_ms == 1000
+    session.handle("update_options", 1102, silence_timeout_ms=1500)
     session.handle("resume", 10000)
-    assert session.handle("tick", 11000)["state"] == "PROMPTING"
+    assert session.handle("tick", 11499)["state"] == "LISTENING"
+    assert session.handle("tick", 11500)["state"] == "PROMPTING"
 
 
 def test_location_loss_warns_once_and_disables_automatic_prompt(session) -> None:

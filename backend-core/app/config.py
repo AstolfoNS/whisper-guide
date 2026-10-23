@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     backup_dir: Path = BACKEND_ROOT / "backups"
     script_max_file_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
     script_max_upload_files: int = Field(default=10, gt=0)
-    default_silence_timeout_ms: int = Field(default=3000, gt=0)
+    default_silence_timeout_ms: int = Field(default=3000, ge=1000)
     speech_model_dir: Path = (
         BACKEND_ROOT / "models" / "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
     )

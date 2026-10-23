@@ -46,7 +46,7 @@ def test_prepare_start_pause_configure_resume_end(tmp_path):
     with TestClient(setup(tmp_path)) as client:
         script_id = upload(client)
         with client.websocket_connect("/api/session") as ws:
-            ws.send_json({"type": "prepare", "script_id": script_id, "silence_timeout_ms": 20})
+            ws.send_json({"type": "prepare", "script_id": script_id, "silence_timeout_ms": 1000})
             ready = receive_state(ws, "READY")
             ws.send_json({"type": "start"})
             receive_state(ws, "LISTENING")
@@ -169,8 +169,8 @@ def test_invalid_audio_ready_before_start_does_not_trigger_prompt(tmp_path):
             ws.send_json({"type": "prepare", "script_id": script_id})
             receive_state(ws, "READY")
             ws.send_json({"type": "audio_ready"})
-            ws.send_json({"type": "configure", "silence_timeout_ms": 2})
-            assert receive_state(ws, "READY")["silence_timeout_ms"] == 2
+            ws.send_json({"type": "configure", "silence_timeout_ms": 1000})
+            assert receive_state(ws, "READY")["silence_timeout_ms"] == 1000
 
 
 def test_new_session_after_termination_uses_new_script_queue(tmp_path):
@@ -190,3 +190,20 @@ def test_new_session_after_termination_uses_new_script_queue(tmp_path):
             ws.send_json({"type": "manual_prompt"})
             receive_state(ws, "PROMPTING")
             assert ws.receive_json()["type"] == "audio"
+
+
+def test_prepare_and_configure_reject_below_minimum_and_preserve_session(tmp_path):
+    with TestClient(setup(tmp_path)) as client:
+        script_id = upload(client)
+        with client.websocket_connect("/api/session") as ws:
+            ws.send_json({"type": "prepare", "script_id": script_id, "silence_timeout_ms": 999})
+            assert ws.receive_json()["type"] == "error"
+            ws.send_json({"type": "prepare", "script_id": script_id, "silence_timeout_ms": 1000})
+            ready = receive_state(ws, "READY")
+            assert ready["silence_timeout_ms"] == 1000
+            ws.send_json({"type": "configure", "silence_timeout_ms": 999})
+            assert ws.receive_json()["type"] == "error"
+            ws.send_json({"type": "reposition", "unit_index": 0})
+            unchanged = receive_state(ws, "READY")
+            assert unchanged["id"] == ready["id"]
+            assert unchanged["silence_timeout_ms"] == 1000
