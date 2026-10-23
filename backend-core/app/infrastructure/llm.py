@@ -194,7 +194,12 @@ class LLMSemanticRefiner:
 
     async def test_connection(self) -> dict[str, Any]:
         if not self.base_url or not self.model:
-            return {"ok": False, "latency_ms": 0, "message": "LLM 配置不完整。"}
+            return {
+                "ok": False,
+                "latency_ms": 0,
+                "message": "LLM 配置不完整。",
+                "error_code": "CONFIG_INCOMPLETE",
+            }
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -215,7 +220,15 @@ class LLMSemanticRefiner:
                         raise ValueError("Invalid response")
         except Exception as error:
             elapsed = int((time.perf_counter() - started) * 1000)
-            return {"ok": False, "latency_ms": elapsed, "message": _safe_error(error)}
+            result = {
+                "ok": False,
+                "latency_ms": elapsed,
+                "message": _safe_error(error),
+                "error_code": _test_error_code(error),
+            }
+            if isinstance(error, httpx.HTTPStatusError):
+                result["http_status"] = error.response.status_code
+            return result
         elapsed = int((time.perf_counter() - started) * 1000)
         return {"ok": True, "latency_ms": elapsed, "message": "连接成功。"}
 
@@ -266,6 +279,20 @@ def _parse_json_object(content: str) -> Mapping[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, Mapping) else None
+
+
+def _test_error_code(error: Exception) -> str:
+    """Classify failures without returning exception text or response content."""
+
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+        return "TIMEOUT"
+    if isinstance(error, httpx.HTTPStatusError):
+        return "HTTP_ERROR"
+    if isinstance(error, httpx.RequestError):
+        return "NETWORK_ERROR"
+    if isinstance(error, ValueError):
+        return "INVALID_RESPONSE"
+    return "UNKNOWN_ERROR"
 
 
 def _safe_error(error: Exception) -> str:

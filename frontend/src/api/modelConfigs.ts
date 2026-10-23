@@ -39,6 +39,8 @@ export interface ModelConfigTestResult {
   message: string
   target: 'stt' | 'llm'
   verified: 'network' | 'capability' | 'none'
+  error_code?: 'CONFIG_INCOMPLETE' | 'TIMEOUT' | 'HTTP_ERROR' | 'NETWORK_ERROR' | 'INVALID_RESPONSE' | 'UNKNOWN_ERROR'
+  http_status?: number
 }
 
 export class ModelConfigError extends Error {

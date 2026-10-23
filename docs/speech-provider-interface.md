@@ -88,6 +88,8 @@ class RecognitionUpdate:
 
 返回 `ok`、`latency_ms`、安全消息和 `verified`：`network` 表示完成真实协议请求；`capability` 仅表示本地模型能力可用；`none` 表示未通过。本地 STT 测试不验证识别准确率；云端 STT 测试向网关发送短静音 PCM 并验证响应，不等价于真实朗读验收。
 
+LLM 测试失败时额外返回受控 `error_code`：`CONFIG_INCOMPLETE`、`TIMEOUT`、`HTTP_ERROR`、`NETWORK_ERROR`、`INVALID_RESPONSE` 或 `UNKNOWN_ERROR`。`HTTP_ERROR` 可包含 `http_status`；`message` 由本服务的固定诊断文案生成，不透传上游正文、异常或凭据。`verified=none` 表示未通过本次验证，界面明确显示失败。实际排查见 [运维手册](operations.md#大模型连通性测试失败)。
+
 更新必须携带当前 `revision`，冲突为 `409 REVISION_CONFLICT`。激活遇到 READY/LISTENING/PROMPTING/PAUSED 为 `409 SESSION_ACTIVE`，不能通过暂停绕过；同一锁保护会话准备与激活。默认本地方案只读；当前生效方案不可删除。选中、保存、测试、激活四种动作互不隐式替代。
 
 API 接受平面模型字段，也兼容嵌套 `stt`/`llm`；显式平面字段优先。云端 STT 使用 `cloud_stt_endpoint`、`cloud_stt_app_id`、`cloud_stt_access_token`，与语义 `llm_*` 分开。API Key 与 Token 只单向提交，GET 不回传明文。空白或 `****` 保留旧值；`clear_llm_api_key=true` / `clear_cloud_stt_access_token=true` 才清除。不得把掩码当作密码输入的实际值。

@@ -47,6 +47,25 @@ describe('model profile routed editor', () => {
     expect(activate).toHaveBeenCalledWith('profile-a', 4)
   })
 
+  it.each([
+    { error_code: 'HTTP_ERROR' as const, http_status: 404, message: '模型服务返回 HTTP 404：请核对模型 ID 和访问权限。' },
+    { error_code: 'TIMEOUT' as const, message: '模型请求超时，请适当增大请求超时，并检查网络连接。' },
+  ])('shows a failed test and its safe diagnostic instead of an unfinished verification ($error_code)', async (diagnostic) => {
+    const test = vi.spyOn(api, 'testModelConfig').mockResolvedValue({ ok: false, latency_ms: 207, target: 'llm', verified: 'none', ...diagnostic })
+    const { wrapper, update, activate } = await setup()
+    await wrapper.get('#profile-align-mode').setValue('hybrid')
+    await wrapper.get('#profile-llm-url').setValue('https://ark.cn-beijing.volces.com/api/v3')
+    await wrapper.get('#profile-llm-model').setValue('configured-model')
+    await wrapper.findAll('button').find((button) => button.text() === '测试大模型连通性')!.trigger('click')
+    await flushPromises()
+    expect(test).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('连通性测试失败')
+    expect(wrapper.text()).not.toContain('未完成连通验证')
+    expect(wrapper.get('[role="alert"]').text()).toContain(diagnostic.message)
+    expect(update).not.toHaveBeenCalled()
+    expect(activate).not.toHaveBeenCalled()
+  })
+
   it('blocks activation while a paused session still exists', async () => {
     const { wrapper, activate } = await setup(true)
     expect(wrapper.text()).toContain('结束会话后才能激活配置')

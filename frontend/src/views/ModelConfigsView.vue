@@ -32,7 +32,7 @@ const dirty = computed(() => JSON.stringify(draft.value) !== baseline.value)
 const locked = computed(() => busy.value || testingTarget.value !== undefined || store.loading)
 const alreadyActive = computed(() => selected.value?.is_active && !selected.value.pending_activation)
 const canActivate = computed(() => selected.value && !dirty.value && !locked.value && !session.active && !alreadyActive.value && store.storeAvailable)
-const testVerification = computed(() => testResult.value?.verified === 'network' ? '网络请求验证' : testResult.value?.verified === 'capability' ? '本地能力检查，未执行云端网络请求' : '未完成连通验证')
+const testVerification = computed(() => testResult.value?.ok === false ? '连通性测试失败' : testResult.value?.verified === 'network' ? '网络请求验证' : testResult.value?.verified === 'capability' ? '本地能力检查，未执行云端网络请求' : '未完成连通验证')
 
 function apply(profile?: ModelConfig) {
   selected.value = profile
@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
         <div class="profile-test" aria-label="配置连通性测试">
           <div class="profile-test__buttons"><NButton :disabled="locked" :loading="testingTarget === 'stt'" @click="testConnection('stt')">{{ draft.settings.stt_provider === 'local' ? '检查本地 STT' : '测试云端 STT' }}</NButton><NButton :disabled="locked || draft.settings.llm_align_mode === 'off'" :loading="testingTarget === 'llm'" @click="testConnection('llm')">测试大模型连通性</NButton></div>
           <p class="profile-meta">测试使用当前表单，不保存或激活配置。</p>
-          <NAlert v-if="testResult" :type="testResult.ok ? 'success' : 'warning'" :show-icon="false" role="status"><strong>{{ testResult.target === 'llm' ? '大模型' : 'STT' }} · {{ testVerification }}</strong><p>{{ testResult.message }}<span v-if="testResult.latency_ms !== null">（{{ testResult.latency_ms }} ms）</span></p></NAlert>
+          <NAlert v-if="testResult" :type="testResult.ok ? 'success' : 'error'" :show-icon="false" :role="testResult.ok ? 'status' : 'alert'"><strong>{{ testResult.target === 'llm' ? '大模型' : 'STT' }} · {{ testVerification }}</strong><p>{{ testResult.message }}<span v-if="testResult.latency_ms !== null">（{{ testResult.latency_ms }} ms）</span></p></NAlert>
         </div>
         <footer class="profile-actions">
           <div><NButton v-if="selected" :disabled="locked || !store.storeAvailable" @click="duplicate">复制配置</NButton><NPopconfirm v-if="selected && !selected.is_default && !selected.is_active" positive-text="删除配置" negative-text="取消" @positive-click="remove"><template #trigger><NButton type="error" secondary :disabled="locked || !store.storeAvailable">删除</NButton></template>删除“{{ selected.name }}”？此操作不会影响当前生效配置。</NPopconfirm></div>

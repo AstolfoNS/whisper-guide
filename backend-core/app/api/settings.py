@@ -326,14 +326,51 @@ async def test_model_settings(
         result = await refiner.test_connection()
     except Exception:
         result = {"ok": False, "latency_ms": 0}
-    ok = bool(result.get("ok", False))
-    latency = result.get("latency_ms", 0)
-    # Provider error messages may contain URLs, request headers or echoed secrets.
-    return {
+    return _public_llm_test_result(result)
+
+
+def _public_llm_test_result(result: Any, *, success_message: str = "连接成功。") -> dict[str, Any]:
+    """Expose only controlled diagnostics; upstream messages may echo secrets."""
+
+    values = result if isinstance(result, dict) else {}
+    ok = values.get("ok") is True
+    latency = values.get("latency_ms", 0)
+    public = {
         "ok": ok,
         "latency_ms": latency if type(latency) is int and latency >= 0 else 0,
-        "message": "连接成功。" if ok else "连接失败，请检查接口、模型名称、凭据或超时设置。",
+        "message": success_message,
     }
+    if ok:
+        return public
+    messages = {
+        "CONFIG_INCOMPLETE": "配置不完整，请填写 Base URL 和模型名称。",
+        "TIMEOUT": "模型请求超时，请适当增大请求超时，并检查网络连接。",
+        "NETWORK_ERROR": "无法连接模型服务，请检查服务端网络、DNS、代理及 HTTPS 证书。",
+        "INVALID_RESPONSE": "模型服务响应格式不兼容，请确认接口支持 Chat Completions。",
+        "UNKNOWN_ERROR": "模型测试失败，请检查接口配置或服务端运行环境。",
+        "HTTP_ERROR": "模型服务拒绝请求，请核对接口配置。",
+    }
+    code = values.get("error_code")
+    if not isinstance(code, str) or code not in messages:
+        code = "UNKNOWN_ERROR"
+    public["error_code"] = code
+    public["message"] = messages[code]
+    status = values.get("http_status")
+    if code != "HTTP_ERROR" or type(status) is not int or not 100 <= status <= 599:
+        return public
+    public["http_status"] = status
+    suggestions = {
+        400: "请求参数不兼容，请核对模型名称、接口协议及模型参数。",
+        401: "鉴权失败，请检查 API Key 是否有效、是否属于当前服务商。",
+        403: "访问被拒绝，请检查模型开通状态、项目权限及账户状态。",
+        404: "接口或模型不存在，或密钥无访问权限；请核对 Base URL、模型 ID 及开通状态。",
+        429: "请求受限，请检查额度、余额或限流状态，稍后重试。",
+    }
+    advice = suggestions.get(status)
+    if advice is None:
+        advice = "模型服务暂时异常，请稍后重试。" if status >= 500 else "请核对模型服务的接口配置。"
+    public["message"] = f"模型服务返回 HTTP {status}：{advice}"
+    return public
 
 
 class ProfileCreate(BaseModel):
@@ -496,16 +533,11 @@ async def test_model_config(request: Request, payload: ProfileTest) -> dict[str,
         result = await LLMSemanticRefiner.from_settings(candidate).test_connection()
     except Exception:
         result = {"ok": False, "latency_ms": 0}
-    ok = bool(result.get("ok", False))
-    latency = result.get("latency_ms", 0)
+    public_result = _public_llm_test_result(result, success_message="模型接口请求成功。")
     return {
         "target": "llm",
-        "ok": ok,
-        "latency_ms": latency if type(latency) is int and latency >= 0 else 0,
-        "verified": "network" if ok else "none",
-        "message": "模型接口请求成功。"
-        if ok
-        else "连接失败，请检查接口、模型名称、凭据或超时设置。",
+        **public_result,
+        "verified": "network" if public_result["ok"] else "none",
     }
 
 

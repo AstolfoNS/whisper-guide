@@ -84,3 +84,27 @@ docker compose up -d --wait --wait-timeout 180
 ```
 
 日志不得输出音频帧、Base64 音频或密钥。当前无身份隔离，配置与恢复接口只向可信访问者开放；公开部署需要 HTTPS 和认证层。
+
+## 大模型连通性测试失败
+
+“未完成连通验证”是旧界面对失败结果 `verified=none` 的模糊描述，不代表没有执行测试。新版失败标题为“连通性测试失败”，后端返回受控 `error_code`；HTTP 拒绝另含整数 `http_status`。不返回服务商原始正文、异常文本、URL 或请求头，避免凭据回显。
+
+| 诊断 | 优先检查 |
+|---|---|
+| HTTP 400 | 模型参数及 Chat Completions 协议兼容性 |
+| HTTP 401 | API Key 是否有效、是否属于所配置服务 |
+| HTTP 403 | 模型开通、项目权限、账户状态 |
+| HTTP 404 | Base URL、实际 Model ID/接入点 ID、当前密钥是否有权限访问模型 |
+| HTTP 429 | 额度、余额、限流状态 |
+| HTTP 5xx | 服务商暂时异常 |
+| TIMEOUT | 超时阈值及服务器网络 |
+| NETWORK_ERROR | 服务端 DNS、代理、HTTPS 证书与连接 |
+| INVALID_RESPONSE | 是否为兼容的 Chat Completions 响应 |
+
+测试返回耗时明显小于设置的超时值时，不能只凭“连接失败”断定超时。选择“自定义”预设不会改变 HTTP 协议；预设只填充地址和示例模型名。API Key 已保存也不证明它具备目标模型权限。
+
+2026-10-24 在运行后端内用已保存的方舟凭据及截图的草稿模型 `doubao-seed-2.1-lite` 复现一次最小请求，实际返回 **HTTP 404 / InvalidEndpointOrModel.NotFound**，并非超时。该结果只能证明这次请求找不到或无权访问目标模型，不能断言该名称对所有账号都不存在。请从目标模型的 API 调用示例复制 `model` 值，确认同项目密钥具备权限，再重新测试、保存并激活。不要使用 API Key 资源 ID 代替模型 ID。
+
+本次复现只请求短文本，未发送演讲稿或录音，未修改现有模型方案；验证尚未成功，不能记为真实豆包验收通过。后续修复代码需重新构建镜像才会在现有容器生效。
+
+回归记录：[后端](validation/2026-10-24-llm-diagnostics-backend.txt)、[前端](validation/2026-10-24-llm-diagnostics-frontend.txt)。后端 232 项、前端 13 项 Node + 23 项 Vitest 全通过，Ruff 静态/格式检查及类型检查、生产构建通过。未再次运行浏览器端到端或重建镜像。
