@@ -25,7 +25,7 @@ test('session client prepares fixed script, waits for acknowledgement and uses e
   assert.equal(Socket.last.url, 'ws://localhost:5173/api/session')
   const waiting = client.waitFor(session => session.state === 'READY')
   client.prepare('script-id', 1250)
-  assert.deepEqual(JSON.parse(Socket.last.sent[0]), { type: 'prepare', script_id: 'script-id', silence_timeout_ms: 1250, stt_provider: 'local' })
+  assert.deepEqual(JSON.parse(Socket.last.sent[0]), { type: 'prepare', script_id: 'script-id', silence_timeout_ms: 1250 })
   Socket.last.message({ type: 'snapshot', session: { state: 'READY', id: 'session-id' } })
   assert.equal((await waiting).id, 'session-id')
   client.close()

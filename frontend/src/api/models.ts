@@ -43,12 +43,6 @@ export interface ModelSettingsInput {
   llm_timeout_ms: number
 }
 
-export interface ModelTestResult {
-  ok: boolean
-  latency_ms: number | null
-  message: string
-}
-
 const DEFAULT_PRESETS: LlmPreset[] = [
   { id: 'custom', label: '自定义（OpenAI 兼容）', base_url: '', model: '', description: '填写任意兼容 /chat/completions 的服务。' },
   { id: 'deepseek', label: 'DeepSeek', base_url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
@@ -128,43 +122,4 @@ export function normalizeModelSettings(payload: unknown): ModelSettings {
 
 export function apiBase() {
   return (import.meta.env?.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
-}
-
-async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(apiBase() + path, init)
-  if (!response.ok) throw new Error(`模型配置请求失败（HTTP ${response.status}）`)
-  return response.json()
-}
-
-export async function fetchModelSettings(signal?: AbortSignal): Promise<ModelSettings> {
-  return normalizeModelSettings(await request('/api/settings/models', { signal }))
-}
-
-export async function saveModelSettings(input: ModelSettingsInput, signal?: AbortSignal): Promise<ModelSettings> {
-  const payload: Record<string, unknown> = { ...input }
-  if (!input.cloud_stt_access_token?.trim()) delete payload.cloud_stt_access_token
-  if (!input.llm_api_key?.trim()) delete payload.llm_api_key
-  return normalizeModelSettings(await request('/api/settings/models', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  }))
-}
-
-export async function testModelSettings(input?: Partial<ModelSettingsInput>, signal?: AbortSignal): Promise<ModelTestResult> {
-  const payload: Record<string, unknown> = { ...(input ?? {}) }
-  if (!input?.cloud_stt_access_token?.trim()) delete payload.cloud_stt_access_token
-  if (!input?.llm_api_key?.trim()) delete payload.llm_api_key
-  const result = record(await request('/api/settings/models/test', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  }))
-  return {
-    ok: booleanValue(result.ok),
-    latency_ms: typeof result.latency_ms === 'number' ? result.latency_ms : null,
-    message: stringValue(result.message, booleanValue(result.ok) ? '连接成功。' : '连接失败。'),
-  }
 }

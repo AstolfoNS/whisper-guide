@@ -2,7 +2,7 @@
 
 ## 本地开发
 
-后端在 WSL Ubuntu 中执行：
+在 WSL Linux 项目目录执行，使用 Python 3.12、uv、Node.js `^22.18.0` 或 `>=24.12.0` 与 pnpm：
 
 ```bash
 cd backend-core
@@ -10,120 +10,115 @@ uv sync --locked
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-前端另开终端：
+另开终端：
 
 ```bash
 cd frontend
 pnpm install --frozen-lockfile
-pnpm dev --host 0.0.0.0
+pnpm dev
 ```
 
-访问 http://localhost:5173。浏览器需要授权麦克风。用户录音只在内存实时处理，不写数据库或文件。
+访问 `http://localhost:5173`。Vite 的 `/api` 与 WebSocket 代理指向后端 8000；浏览器采音需要 localhost 或 HTTPS。`pnpm preview` 使用 4173 端口及相同代理。
 
-## 模型准备
+## 本地 STT 模型
 
 ```bash
 cd backend-core
 uv run python scripts/download_asr_model.py
 ```
 
-模型目录为 `backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20`，必须包含 `tokens.txt` 以及 `encoder*.onnx`、`decoder*.onnx`、`joiner*.onnx`。第二阶段验收已确认模型和真实中文 STT 闭环可用。模型不进入 Git，但会在 Docker 构建上下文中复制到镜像；下载脚本支持断点续传，失败时保留 `.part` 文件。
+默认路径为 `backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20`。模型不进入 Git；Docker 内置已瘦身的 `tokens.txt` 与 encoder/decoder/joiner 三份 int8 权重，不包含冗余 fp32、测试音频或压缩包。此前真实中文音频、游标推进与回读闭环已经验收。
+
+下载中断时脚本支持断点续传，也可通过 `WHISPER_GUIDE_MODEL_URL` 指定可信镜像：
 
 ```bash
 WHISPER_GUIDE_MODEL_URL='https://your-mirror.example/model.tar.bz2' \
   uv run python scripts/download_asr_model.py
 ```
 
-脚本会在原子解压后检查 `tokens.txt` 以及非空的 `encoder*.onnx`、`decoder*.onnx`、`joiner*.onnx`。没有完整模型时，讲稿管理仍可用，但开始识别会明确报模型未就绪。TTS 使用 edge-tts，需要服务器联网。
+未完整就绪时讲稿管理仍可用，开始识别明确报错。不要通过安装 torch、transformers 或 CUDA 替换现有轻量链路。
 
-## Docker Compose
-
-需要 Docker Engine 和 Compose v2：
+## Docker Compose 更新
 
 ```bash
-cp .env.example .env
+cd /home/timeleafing/projects/whisper-guide
+test -f .env || cp .env.example .env
 mkdir -p data/sqlite data/backups
-docker compose build
-docker compose up -d
-docker compose ps
+sudo chown -R 10001:10001 data/sqlite data/backups
+sudo chmod -R u+rwX data/sqlite data/backups
+docker compose config --quiet
+docker compose build && docker compose up -d --force-recreate --wait --wait-timeout 180
 ```
 
-`Dockerfile` 使用 `frontend-build`、`backend-deps`、`backend-runtime` 和 `frontend-runtime` 多阶段构建。前端使用 pnpm 构建，后端使用 `uv sync --frozen --no-dev`，模型层在业务代码之前复制并缓存；运行命令固定为单个 Uvicorn worker。Nginx 将 `/api/` 和 `/api/session` WebSocket 转发到后端。
+WSL/Windows 浏览器访问 `http://localhost:8080`，首次更新后强制刷新页面。界面地址为 `/`、`/studio`、`/settings/models`。Nginx 将前端路由回退到 `index.html`，并将 `/api/`（含 WebSocket）代理给后端；不要将 API 404 改写成前端 HTML。
 
-访问 http://localhost:8080。SQLite 目录挂载到 `./data/sqlite`，备份目录挂载到 `./data/backups`；模型不通过卷覆盖，直接使用镜像内置内容。
+`Dockerfile` 分别构建前端和后端运行镜像；前端先检查类型再构建，后端使用 uv 锁定生产依赖。模型层置于业务代码之前，运行固定单个 Uvicorn worker。`.dockerignore` 的模型忽略只能限定 `backend-core/models/`，不能使用 `**/models/**` 误排除 Python `app/models/`。
 
-模型忽略规则仅作用于 `backend-core/models/`；不得使用 `**/models/**`，它也会排除 Python 业务包 `backend-core/app/models/`。镜像显式复制 `tokens.txt` 和 encoder/decoder/joiner 的三份 int8 权重，不携带 fp32 权重或测试音频。构建末尾以运行用户导入 FastAPI 应用并校验 STT 资源；源码被误排除时会在构建期失败。
-
-## 离线发布
-
-在 Docker daemon 可用的构建机执行：
+数据库及私有模型方案挂载至宿主机 `./data/sqlite`，备份挂载至 `./data/backups`。镜像更新继续使用原目录，不删除这些数据。日志单文件 10 MiB、最多 5 个。模型无需启动时下载；`edge-tts` 以及启用的云端服务仍需后端网络。
 
 ```bash
-chmod +x deploy/package.sh
-./deploy/package.sh
+docker compose ps
+curl -fsS http://localhost:8080/api/health
+curl -fsS http://localhost:8080/api/speech/status
+curl -fsS http://localhost:8080/studio >/dev/null
+curl -fsS http://localhost:8080/settings/models >/dev/null
+docker compose logs --tail=100 backend frontend
 ```
 
-脚本会构建 `whisper-guide-backend:0.1.0` 和 `whisper-guide-frontend:0.1.0`，将两个镜像合并保存为 `release/whisper-guide-image.tar.gz`，并生成 `whisper-guide-release.tar`。目标服务器使用 `DEPLOY.md` 中的 `deploy.sh` 启动，不会重新构建镜像。
+## 三视图与配置使用
 
-当前无用户认证和讲稿权限隔离，默认端口只绑定 localhost。公网使用前需配置 HTTPS、认证和访问控制；浏览器采音也要求 HTTPS 或 localhost。
+1. 在概览进入工作台，选择或上传讲稿，再开始演讲。
+2. 在模型配置页面新建方案，独立选择 STT 与语义校准参数。
+3. “测试连通性”按当前表单测试 STT 或 LLM，不保存也不激活；STT 本地测试只检查模型能力，云端测试检查网关响应协议，不代表识别准确率。
+4. “保存修改”生成方案新修订。结束全部会话后再“设为生效配置”；READY/PAUSED 同样属于未结束会话。
+5. 切离工作台会立即停止采集和播放并暂停会话；返回后点击继续。刷新遗留会话可从恢复入口继续或明确结束，不能直接用配置激活绕过会话保护。
 
-## 配置
+当前主要 API 为 `/api/settings/model-configs`；旧 `/api/settings/models` 保留兼容。方案及独立生效快照保存到 `/data/.model-configs.json`，对应宿主机 `data/sqlite/.model-configs.json`，权限 `0600`。升级读取旧 `.model-settings.json` 并保留“现有配置”；新仓储存在后以它为准。两类私有文件都不能进 Git、日志或离线包，SQLite backup 不包含它们。
 
-- WHISPER_GUIDE_DATA_DIR：SQLite 目录。
-- WHISPER_GUIDE_BACKUP_DIR：备份目录。
-- WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS：默认静音阈值，单位毫秒；必须为不小于 1000 的整数，默认 3000。
-- WHISPER_GUIDE_SPEECH_MODEL_DIR：模型目录。
-- WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES：单文件默认 2 MiB。
-- WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES：单批默认 10 份。
-- WHISPER_GUIDE_TTS_VOICE：默认 zh-CN-XiaoxiaoNeural。
-- WHISPER_GUIDE_CORS_ORIGINS：JSON 格式允许来源数组。
-- WHISPER_GUIDE_SERVER_HOST、WHISPER_GUIDE_SERVER_PORT：后端监听地址和端口。
+## 环境变量
 
-实时会话位于单进程内存，必须使用单个 Uvicorn worker。重启会丢失实时会话，讲稿仍保存在 SQLite，需重新准备会话。当前没有用户认证和讲稿权限隔离，默认端口只绑定 localhost；公网部署前必须增加 HTTPS、认证、访问控制和资源配额。
+路径与初始运行参数：
+
+| 环境变量 | 默认或规则 |
+|---|---|
+| `WHISPER_GUIDE_DATA_DIR` | 容器 `/data`，SQLite 与私有模型方案目录 |
+| `WHISPER_GUIDE_BACKUP_DIR` | 容器 `/backups` |
+| `WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS` | 默认 3000；整数且不小于 1000 |
+| `WHISPER_GUIDE_SPEECH_MODEL_DIR` | 容器内固定的 sherpa-onnx 模型目录 |
+| `WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES` | 默认 2097152，即 2 MiB |
+| `WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES` | 默认 10 |
+| `WHISPER_GUIDE_TTS_VOICE` | `zh-CN-XiaoxiaoNeural` |
+| `WHISPER_GUIDE_CORS_ORIGINS` | JSON 来源数组 |
+| `WHISPER_GUIDE_SERVER_HOST` / `WHISPER_GUIDE_SERVER_PORT` | 本地默认 `127.0.0.1:8000`，容器 `0.0.0.0:8000` |
+| `WHISPER_GUIDE_HTTP_PORT` | Compose 对外 localhost 端口，默认 8080 |
+
+模型环境值作为首次配置的默认值；已有私有仓储的生效版本优先：
+
+| 环境变量 | 默认或规则 |
+|---|---|
+| `WHISPER_GUIDE_STT_PROVIDER` | 默认 `local`；界面支持 `cloud` |
+| `WHISPER_GUIDE_CLOUD_OPT_IN` | 默认 `false`，云端音频需授权 |
+| `WHISPER_GUIDE_CLOUD_STT_ENDPOINT` | 通用 HTTP 语音网关，公网音频要求 HTTPS |
+| `WHISPER_GUIDE_CLOUD_STT_APP_ID` / `WHISPER_GUIDE_CLOUD_STT_ACCESS_TOKEN` | 后端应用 ID / 令牌 |
+| `WHISPER_GUIDE_LLM_ALIGN_MODE` | `off` / `fallback` / `hybrid` |
+| `WHISPER_GUIDE_LLM_PROVIDER_PRESET` | `custom` / `deepseek` / `qwen` / `doubao` / `openai` / `ollama` |
+| `WHISPER_GUIDE_LLM_BASE_URL` | OpenAI 兼容聊天接口基址 |
+| `WHISPER_GUIDE_LLM_MODEL` | 账号实际可用模型名或接入点 ID |
+| `WHISPER_GUIDE_LLM_API_KEY` | 后端密钥 |
+| `WHISPER_GUIDE_LLM_TIMEOUT_MS` | 默认 1500，正整数毫秒 |
+
+环境兼容注册表 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 继续可用，详见 [协议](speech-provider-interface.md)。云端语音网关与聊天模型 Base URL 不是同一协议。容器中的 localhost 指向当前容器；Ollama 等外部服务应填写后端容器可访问的地址。预设只是可修改示例，不证明账号已开通。
 
 ## 语音诊断
 
-/api/speech/status 中的 tts=ready 表示 edge-tts 依赖已安装，不等价于当前网络一定能访问语音合成服务。出现无声时，先点击页面的“手动提示”，再在容器内执行真实合成探测：
+`/api/speech/status` 的 `tts=ready` 表示依赖可用，不等价于真实合成或浏览器扬声器正常。先在工作台主动手动提示，再检查网络和播放权限；常规健康轮询不会自动合成声音或调用付费模型。
 
-docker compose -f docker-compose.yml exec backend /app/backend-core/.venv/bin/python -c "import asyncio; from app.infrastructure.speech import SpeechServices; print(len(asyncio.run(SpeechServices().synthesize('测试播报'))))"
-
-手动提示有声而自动提示没有声音时，应优先检查讲稿定位状态；手动提示也失败时，再检查 edge-tts 网络和浏览器播放。
-
-## 模型与识别引擎配置
-
-页面可直接配置 STT 源与语义大模型，并分别执行测试和保存。配置 API 为 `GET/PUT /api/settings/models` 与 `POST /api/settings/models/test`。测试使用临时配置，不改变当前设置；保存原子写入数据目录 `.model-settings.json`（权限 `0600`），重启加载并覆盖环境中的模型默认值。容器数据卷中的位置是宿主机 `data/sqlite/.model-settings.json`。该文件含后端密钥，需与数据库分别备份并限制读取权限，不能进入 Git 或发布包。
-
-| 环境变量 | 默认 / 可选值 |
-|---|---|
-| `WHISPER_GUIDE_STT_PROVIDER` | `local`；页面可选 `cloud` |
-| `WHISPER_GUIDE_CLOUD_OPT_IN` | `false`，云端音频需显式授权 |
-| `WHISPER_GUIDE_CLOUD_STT_ENDPOINT` | 通用 HTTP 语音网关地址 |
-| `WHISPER_GUIDE_CLOUD_STT_APP_ID` | 网关应用 ID |
-| `WHISPER_GUIDE_CLOUD_STT_ACCESS_TOKEN` | 后端访问令牌 |
-| `WHISPER_GUIDE_LLM_ALIGN_MODE` | `off` / `fallback` / `hybrid` |
-| `WHISPER_GUIDE_LLM_PROVIDER_PRESET` | `custom` / `deepseek` / `qwen` / `doubao` / `openai` / `ollama` |
-| `WHISPER_GUIDE_LLM_BASE_URL` | OpenAI 兼容 API 基址，可含路径 |
-| `WHISPER_GUIDE_LLM_MODEL` | 自由模型名称，不绑定固定模型 |
-| `WHISPER_GUIDE_LLM_API_KEY` | 后端访问密钥 |
-| `WHISPER_GUIDE_LLM_TIMEOUT_MS` | `1500`，正整数毫秒 |
-
-示例仅展示配置格式，真实云端调用需可用账号、Endpoint、模型名与凭据：
-
-```dotenv
-WHISPER_GUIDE_STT_PROVIDER=local
-WHISPER_GUIDE_CLOUD_OPT_IN=false
-WHISPER_GUIDE_LLM_ALIGN_MODE=fallback
-WHISPER_GUIDE_LLM_PROVIDER_PRESET=custom
-WHISPER_GUIDE_LLM_BASE_URL=https://gateway.example/v1
-WHISPER_GUIDE_LLM_MODEL=your-model-name
-WHISPER_GUIDE_LLM_API_KEY=
-WHISPER_GUIDE_LLM_TIMEOUT_MS=1500
+```bash
+docker compose exec -T backend /app/backend-core/.venv/bin/python -c "import asyncio; from app.infrastructure.speech import SpeechServices; print(len(asyncio.run(SpeechServices().synthesize('测试播报'))))"
 ```
 
-STT 与 LLM 独立：本地 STT 可结合云端语义对齐，云端 STT 也可关闭 LLM。语义对齐只传送讲稿窗口和转写；云端 STT 传送音频片段。未授权云端音频时强制回到本地 STT。API 返回固定 `****` 与凭据存在标记；密码框留空保留原密钥。`POST /test` 当前测试 LLM 连通性，不代表云端 STT 协议或真实录音识别已验收。
+## 离线发布与容量
 
-保留环境变量 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 作为多个通用网关 profile 的兼容注册方式，详见[Provider 协议](speech-provider-interface.md)。使用 Ollama 时，容器内 `localhost` 是当前容器；应改成可由后端容器访问的服务地址。
+在 Docker daemon 可用的构建机执行 `./deploy/package.sh`。它将后端与前端合并保存为一个 gzip 镜像包，外层使用 tar；生成外层归档后移除内部大镜像副本。禁止将凭据、SQLite、node_modules、.venv、dist、测试音频或归档重新带入构建上下文。目标部署及备份见 [DEPLOY.md](../DEPLOY.md)。
 
-## 空间控制
-
-构建上下文只允许瘦身后的 int8 模型文件进入镜像；fp32 权重、归档、node_modules、.venv 和 dist 均排除。Docker 构建使用 uv no-cache，日志轮转为单文件 10 MiB、最多 5 个文件。package.sh 在生成外层 release tar 后会删除内部 image.tar.gz，避免磁盘同时保存两份大型镜像归档。
+当前无用户认证与讲稿权限隔离，Compose 默认只绑定 localhost。远程使用需可信网络、HTTPS、认证和访问控制；不要仅修改端口暴露配置接口。

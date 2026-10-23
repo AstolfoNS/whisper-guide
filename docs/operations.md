@@ -1,6 +1,6 @@
 # 运维手册
 
-## 日常检查
+## 日常与更新
 
 ```bash
 curl -fsS http://localhost:8080/api/health
@@ -9,74 +9,78 @@ docker compose ps
 docker compose logs --tail=100 backend frontend
 ```
 
-健康接口确认 Web 服务，语音状态接口确认模型和依赖。TTS 包已安装不代表网络永远可用，合成失败会暂停会话。
-当 `/api/speech/status` 返回 `stt=unavailable` 时，讲稿上传、列表和预览仍可用，但不能开始识别会话。
+顶栏诊断区分后端能力、WebSocket、麦克风和最近播放结果。`tts=ready` 仅表明依赖可用；真实合成或浏览器播放失败需单独处理。常规轮询不调用付费模型、不录音、不自动试听。
 
-## 启停与更新
-
-```bash
-docker compose up -d
-docker compose restart backend
-docker compose down
-docker compose build --pull
-docker compose up -d
-```
-
-更新前备份数据。不要执行 docker compose down -v，除非确实要永久删除数据库和模型卷。
-
-## 一致性备份
+保留数据目录后更新：
 
 ```bash
-python scripts/backup.py data/sqlite/whisper-guide.db data/backups/whisper-guide-20261022.db
+docker compose build && docker compose up -d --force-recreate --wait --wait-timeout 180
 ```
 
-脚本使用 SQLite backup API 和 quick_check，不覆盖已存在的目标文件。容器部署可将脚本复制到容器或使用 SQLite backup API 在数据卷中执行，然后将备份复制到宿主机安全位置。备份中无用户录音。
+更新前备份讲稿与私有配置。容器重启丢失实时会话，讲稿和已激活模型配置仍从挂载加载。不要删除 `data/sqlite` 或 `data/backups`。
 
-## 恢复
+## 讲稿备份与恢复
 
-1. 停止服务并保留当前数据库副本。
-2. 验证备份 quick_check 为 ok。
-3. 恢复数据目录中的 whisper-guide.db。
-4. 启动服务并读取 /api/scripts 检查正文，再检查语音服务。
-5. 用户重新准备会话。
+在项目根目录执行：
+
+```bash
+python3 scripts/backup.py data/sqlite/whisper-guide.db \
+  data/backups/whisper-guide-$(date +%Y%m%d-%H%M%S).db
+```
+
+脚本使用 SQLite backup API 和 quick_check，不覆盖同名目标。目标目录必须对执行用户可写，容器 UID 为 10001。数据库备份不含录音，也不含下述模型方案。
+
+恢复前停止 backend、保留当前数据库副本，验证备份 quick_check，再替换 `whisper-guide.db`。不要在 SQLite 仍有写入连接时覆盖文件；恢复后检查 `/api/scripts`、`/api/health` 和语音状态，重新准备演讲。
+
+## 模型方案备份与迁移
+
+当前文件 `data/sqlite/.model-configs.json` 包括全部方案、密钥和独立生效快照；旧兼容文件为 `.model-settings.json`。两者均按敏感凭据保护，权限 `0600`，只备份到受限目录，不进入 Git、发布包或日志。
+
+首次升级读取旧配置并生成“现有配置”和无凭据的“默认本地离线模式”；新仓储落盘后以其生效快照为准。迁移时保留新仓储整份文件、所有者和权限，停止 backend 后恢复并重启。只恢复 SQLite 不会恢复模型方案。
+
+编辑不改变生效版本，保存后需主动激活。测试使用未保存草稿，不改写文件或生效状态。凭据留空保留，新值替换，明确清除才删除；复制方案不复制凭据。修订冲突返回 409，应保留本地草稿并刷新比较。
+
+配置损坏时显示仓储不可用。先停止服务、保留损坏文件，再从受限备份修复，不要直接删除私有文件解除错误。503 保存失败时检查磁盘余量和 UID 10001 的目录写权限。
+
+## 断线会话恢复与配置激活
+
+工作台提供恢复/明确结束入口，避免浏览器刷新遗留暂停会话阻止激活。恢复不自动打开麦克风或播放音频，之后由用户开始或继续。
+
+```bash
+curl -fsS http://localhost:8080/api/sessions/recoverable
+```
+
+只列出无连接且未终止的会话元数据：`session_id`、`script_name`、`state`、`config_name`，不返回正文或识别文本。明确放弃某会话时指定 ID：
+
+```bash
+curl -fsS -X POST http://localhost:8080/api/sessions/<session-id>/terminate
+```
+
+已被其他页面连接的会话返回 `409 SESSION_CONNECTED`，需在所属工作台结束；不存在返回 404。接口不会自动结束在线会话。所有未终止状态（包括 READY 与 PAUSED）都会使模型激活返回 `409 SESSION_ACTIVE`；恢复后继续或明确结束即可解除。
 
 ## 故障排查
 
 | 现象 | 检查项 |
 |---|---|
 | 页面打不开 | frontend 容器、8080 端口、Nginx 日志 |
-| API 502 | backend 健康检查、反代配置 |
-| 构建成功但后端 unhealthy / 持续重启 | 先查看 backend 日志；若报 `app.models.script` 缺失，检查 `.dockerignore` 是否误排除 `app/models` |
-| WebSocket 断开 | Upgrade 头、/api/session、单 worker |
-| 上传失败 | 格式、2 MiB/10 份限制、SQLite 权限 |
-| 无法开始识别 | 模型目录、原生依赖、语音状态接口 |
-| 没有提示音 | edge-tts 网络、耳机输出、浏览器播放权限 |
-| 重启后进度丢失 | 活跃会话只在内存中，需重新准备 |
+| 嵌套路由刷新 404 | Nginx `try_files $uri $uri/ /index.html`，不要改写 `/api/` |
+| API 502 | backend 健康与代理配置 |
+| `app.models.script` 缺失 | 只忽略 `backend-core/models/`，保留应用 `app/models/` |
+| SQLite 无法打开 / 配置保存 503 | UID 10001 的挂载目录写权限和磁盘余量 |
+| 不能激活模型 | 结束全部未终止会话，检查断线恢复列表 |
+| 修订冲突 | 其他标签页已修改，刷新并比较草稿 |
+| 不能开始识别 | 模型完整性、原生依赖、语音状态 |
+| 无提示音 | 合成网络、浏览器授权、输出设备、最近播放结果 |
+| 云端测试失败 | 凭据、协议、模型名、超时；语音网关不能使用聊天 Base URL |
+| WebSocket 断开 | Upgrade 头、网络、单 worker；回工作台手动重连 |
+| 重启后进度丢失 | 实时会话仅在内存，需重新准备 |
 
-应用日志不要输出音频帧、Base64 音频或完整用户录音。生产需要受信网络、HTTPS 和认证层。
-
-## 运行时模型配置备份
-
-前端保存的模型配置位于 `data/sqlite/.model-settings.json`，文件权限为 `0600`，包含后端 API Key 和 Token。SQLite 备份脚本只备份讲稿数据库，不包含该文件；需要迁移模型设置时，另行复制到受限位置，并保持文件所有者与 `0600` 权限。不要把配置文件放入日志、Git 或离线发布包。恢复后重启 backend，GET `/api/settings/models` 只返回脱敏状态。
-
-模型配置更新失败且返回 503 时，检查 `data/sqlite` 是否允许容器 UID `10001` 写入。连通性测试失败不会改写已保存或生效的配置，先核对 Base URL、模型名称、凭据和超时，再检查后端网络。
-
-
-## 镜像缺少 Python 模块
-
-`dependency failed to start: ... unhealthy` 是 Compose 等待后端启动失败的结果，根因应查看：
+修复目录权限：
 
 ```bash
-docker compose logs --tail=100 backend
+sudo chown -R 10001:10001 data/sqlite data/backups
+sudo chmod -R u+rwX data/sqlite data/backups
+docker compose up -d --wait --wait-timeout 180
 ```
 
-若出现 `ModuleNotFoundError: No module named 'app.models.script'`，检查构建上下文是否把 Python `app/models` 当成声学模型目录排除了。排除规则应限定 `backend-core/models/`，并保留应用源码。修复后重建后端并等待实际健康检查：
-
-```bash
-docker compose build backend &&
-docker compose up -d --force-recreate --wait --wait-timeout 180
-curl -fsS http://localhost:8080/api/health
-curl -fsS http://localhost:8080/api/speech/status
-```
-
-构建期导入检查能验证源码和模型文件完整性；宿主机 SQLite 挂载权限仍需在容器启动后验证。
+日志不得输出音频帧、Base64 音频或密钥。当前无身份隔离，配置与恢复接口只向可信访问者开放；公开部署需要 HTTPS 和认证层。

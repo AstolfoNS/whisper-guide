@@ -2,9 +2,9 @@
 
 FROM node:24-alpine AS frontend-build
 WORKDIR /src
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
-COPY frontend/package.json frontend/package-lock.json ./
-RUN pnpm install --no-frozen-lockfile
+RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY frontend ./
 RUN pnpm run build
 

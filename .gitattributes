@@ -5,3 +5,4 @@
 *.wav binary
 *.mp3 binary
 *.onnx binary
+*.sh text eol=lf

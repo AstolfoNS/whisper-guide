@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { SessionSnapshot, SessionState, TransitionRecord } from '../api/session'
+import type { SessionSnapshot, SessionState, TransitionRecord } from '../../api/session'
 
 const props = defineProps<{ session?: SessionSnapshot }>()
 
@@ -148,3 +148,7 @@ function triggerLabel(value: string) {
     </div>
   </section>
 </template>
+
+<style scoped>
+.state-monitor__graph svg{width:100%;max-height:260px;color:var(--muted)}.section-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.section-heading h2{font-size:16px;margin:0}.state-monitor__transition{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 0;font-size:13px}.state-monitor__trigger{color:var(--muted)}.state-monitor__edge{fill:none;stroke:var(--line);stroke-width:1.5}.state-monitor__edge--active{stroke:var(--accent);stroke-width:3}.state-monitor__node circle{fill:var(--soft);stroke:var(--line);stroke-width:1.5}.state-monitor__node text{fill:var(--text);font-size:12px}.state-monitor__node--current circle{fill:var(--cursor-reading);stroke:var(--accent);stroke-width:2}.state-monitor__node .state-monitor__node-ring{fill:none;stroke:var(--accent);stroke-dasharray:4 4}.state-monitor__history h3{font-size:13px}.state-monitor__history ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}.state-monitor__history li{display:grid;grid-template-columns:30px 120px 1fr 80px;gap:8px;font-size:12px}.state-monitor__history-trigger,.state-monitor__history time,.input-help{color:var(--muted)}.input-help{font-size:12px}.state-monitor__current{padding:3px 10px;background:var(--soft);border-radius:6px;font-size:12px}@media(max-width:600px){.state-monitor__history li{grid-template-columns:25px 1fr}.state-monitor__history li time{grid-column:2}}
+</style>

@@ -9,6 +9,7 @@ export interface ScriptUnit { text: string; start: number; end: number }
 export interface PromptSegment { id: string; text: string; start: number; end: number; next_position: number }
 export interface SessionSnapshot {
   id: string; script_id: string; script_name: string; script_text?: string; stt_provider?: string; state: SessionState; current_state?: SessionState
+  model_config_id?: string; model_config_name?: string; model_config_revision?: number
   silence_timeout_ms: number; reading_position: number | null; prompt_position: number
   generation: number; prompt: PromptSegment | null; reliable: boolean; speaking: boolean
   previous_state?: SessionState | null; transition_trigger?: string | null; transition_at?: string | null
@@ -31,9 +32,9 @@ function wsUrl() {
 export class SessionClient {
   private socket?: WebSocket
   private waiters = new Set<{ predicate: (session: SessionSnapshot) => boolean; resolve: (session: SessionSnapshot) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }>()
-  waitFor(predicate: (session: SessionSnapshot) => boolean): Promise<SessionSnapshot> {
+  waitFor(predicate: (session: SessionSnapshot) => boolean, timeoutMs = 15000): Promise<SessionSnapshot> {
     return new Promise((resolve, reject) => {
-      const waiter = { predicate, resolve, reject, timer: setTimeout(() => { this.waiters.delete(waiter); reject(new Error('等待服务状态超时，请重试。')) }, 15000) }
+      const waiter = { predicate, resolve, reject, timer: setTimeout(() => { this.waiters.delete(waiter); reject(new Error('等待服务状态超时，请重试。')) }, timeoutMs) }
       this.waiters.add(waiter)
     })
   }
@@ -64,7 +65,7 @@ export class SessionClient {
   }
   send(command: Record<string, unknown>) { if (!this.connected) throw new Error('实时连接已断开，请连接后继续。'); this.socket!.send(JSON.stringify(command)) }
   sendAudio(frame: ArrayBuffer) { if (!this.connected) return; if (this.socket!.bufferedAmount > 320000) { this.close(); this.onClose(); return }; this.socket!.send(frame) }
-  prepare(scriptId: string, timeout: number, sttProvider = 'local') { this.send({ type: 'prepare', script_id: scriptId, silence_timeout_ms: timeout, stt_provider: sttProvider }) }
+  prepare(scriptId: string, timeout: number, sttProvider?: string) { this.send({ type: 'prepare', script_id: scriptId, silence_timeout_ms: timeout, ...(sttProvider ? { stt_provider: sttProvider } : {}) }) }
   attach(sessionId: string) { this.send({ type: 'attach', session_id: sessionId }) }
   close() { for (const waiter of this.waiters) { clearTimeout(waiter.timer); waiter.reject(new Error('连接已关闭。')) }; this.waiters.clear(); const socket = this.socket; this.socket = undefined; if (socket) { socket.onmessage = null; socket.onclose = null; socket.close() } }
 }

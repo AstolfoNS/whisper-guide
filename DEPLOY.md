@@ -19,7 +19,7 @@ chmod +x deploy.sh
 
 `deploy.sh` 会检查 Docker daemon、加载两个离线镜像、创建数据目录，并使用
 `docker compose up -d --no-build` 启动服务。启动后访问：
-`http://服务器地址:8080`。
+`http://localhost:8080`。Compose 默认只绑定服务器本机；远程可通过 SSH 隧道访问，再在本地浏览器使用 localhost。不要直接公开无认证的配置接口。
 
 ## 停止和查看日志
 
@@ -55,6 +55,14 @@ docker compose -f docker-compose.yml start backend
 
 ## 运行时模型配置备份
 
-前端保存的模型配置位于 `data/sqlite/.model-settings.json`，文件权限为 `0600`，包含后端 API Key 和 Token。SQLite 备份脚本只备份讲稿数据库，不包含该文件；需要迁移模型设置时，另行复制到受限位置，并保持文件所有者与 `0600` 权限。不要把配置文件放入日志、Git 或离线发布包。恢复后重启 backend，GET `/api/settings/models` 只返回脱敏状态。
+模型方案与独立生效快照位于 `data/sqlite/.model-configs.json`（`0600`），包含后端 API Key 和 Token。升级时旧 `.model-settings.json` 自动迁移为“现有配置”；新仓储存在后以其生效快照为准。SQLite 备份不包含这些私有文件，迁移需另行复制到受限位置并保持所有者与权限。不要把凭据放入日志、Git 或离线包。恢复后重启 backend，配置 API 只返回固定掩码。
 
 模型配置更新失败且返回 503 时，检查 `data/sqlite` 是否允许容器 UID `10001` 写入。连通性测试失败不会改写已保存或生效的配置，先核对 Base URL、模型名称、凭据和超时，再检查后端网络。
+
+## 更新后的界面与会话
+
+访问 `/` 概览、`/studio` 工作台、`/settings/models` 模型方案管理。离开工作台会停止采集和播放并请求暂停，返回后手动继续。刷新遗留的断线会话可以恢复或明确结束；暂停仍阻止模型激活。
+
+配置的保存与激活独立，测试不保存、不激活。默认本地方案不可修改，复制不会复制密钥；模型状态、真实网络请求及扬声器播放分别检查。全量规则见源码仓库的 `docs/speech-provider-interface.md`。
+
+本轮源码更新不会自动更新旧离线镜像；构建机需重新运行 `deploy/package.sh` 才生成包含新界面的发布包。目标服务器继续使用原数据目录，加载新镜像并重新创建容器。
