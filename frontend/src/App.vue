@@ -3,7 +3,10 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchHealth } from './api/health'
 import ScriptLibrary from './components/ScriptLibrary.vue'
 import SessionPanel from './components/SessionPanel.vue'
-import ProviderSettings from './components/ProviderSettings.vue'
+import ModelConfigPanel from './components/ModelConfigPanel.vue'
+import StateMachineMonitor from './components/StateMachineMonitor.vue'
+import type { SessionSnapshot } from './api/session'
+import type { ModelSettings } from './api/models'
 import type { ScriptDocument } from './api/scripts'
 
 type ConnectionState = 'checking' | 'connected' | 'unavailable'
@@ -13,17 +16,17 @@ const connectionMessage = ref('正在检查后端服务…')
 const serviceVersion = ref('')
 const selectedScript = ref<ScriptDocument>()
 const sessionActive = ref(false)
+const sessionSnapshot = ref<SessionSnapshot>()
 const selectedProvider = ref('local')
+const settingsRevision = ref(0)
+function applyModelSettings(settings: ModelSettings) {
+  selectedProvider.value = settings.stt_provider
+  settingsRevision.value++
+}
+
 let healthRequest: AbortController | undefined
 let healthTimeout: ReturnType<typeof setTimeout> | undefined
 
-const sessionStates = [
-  { name: '就绪', description: '准备讲稿，等待开始' },
-  { name: '识别', description: '追踪朗读进度与停顿' },
-  { name: '播报', description: '提示至下一个分段标点' },
-  { name: '暂停', description: '保留位置，等待继续' },
-  { name: '终止', description: '结束当前演讲会话' },
-]
 
 async function checkConnection() {
   healthRequest?.abort()
@@ -67,24 +70,9 @@ onBeforeUnmount(() => {
 
   <div class="app-shell">
     <header class="site-header">
-      <span class="brand-mark" aria-hidden="true">声</span>
       <span class="brand-name">Whisper Guide</span>
-      <span class="version-badge">讲稿准备 · v0.1</span>
-    </header>
-
-    <main id="main-content" tabindex="-1">
-      <section class="intro" aria-labelledby="page-title">
-        <p class="eyebrow">演讲语音追踪与提示</p>
-        <h1 id="page-title">轻声提示，<br />接上每一句。</h1>
-        <p class="intro-copy">
-          为盲人演讲者提供朗读进度追踪与耳机提示。停顿达到设定时间后，
-          从最后读到的内容单位开始，提示至下一个分段标点。
-        </p>
-      </section>
-
-      <section class="connection-card" aria-labelledby="connection-title">
+      <div class="connection-toolbar" aria-label="服务连接">
         <div>
-          <h2 id="connection-title">服务连接</h2>
           <p
             class="connection-status"
             :class="`connection-status--${connectionState}`"
@@ -104,29 +92,17 @@ onBeforeUnmount(() => {
         >
           {{ connectionState === 'checking' ? '检查中…' : '重新检查连接' }}
         </button>
-      </section>
+      </div>
+    </header>
+
+    <main id="main-content" tabindex="-1">
 
       <ScriptLibrary :locked="sessionActive" @selected="selectedScript = $event" />
-      <ProviderSettings v-model="selectedProvider" :disabled="sessionActive || connectionState !== 'connected'" />
-      <SessionPanel :script="selectedScript" :stt-provider="selectedProvider" :service-available="connectionState === 'connected'" @active="sessionActive = $event" />
+      <SessionPanel :script="selectedScript" :stt-provider="selectedProvider" :settings-revision="settingsRevision" :service-available="connectionState === 'connected'" @active="sessionActive = $event" @snapshot="sessionSnapshot = $event" />
+      <StateMachineMonitor :session="sessionSnapshot" />
+      <details class="model-config-disclosure"><summary>模型与识别引擎配置</summary><ModelConfigPanel :disabled="sessionActive || connectionState !== 'connected'" @loaded="applyModelSettings" @saved="applyModelSettings" /></details>
 
-      <section class="scope-card" aria-labelledby="scope-title">
-        <div class="section-heading">
-          <h2 id="scope-title">第一版工作流程</h2>
-          <span class="timeout-label">默认静音阈值：3000 毫秒</span>
-        </div>
-        <ul class="state-list">
-          <li v-for="state in sessionStates" :key="state.name">
-            <h3>{{ state.name }}</h3>
-            <p>{{ state.description }}</p>
-          </li>
-        </ul>
-        <p class="scope-note">
-            当前已支持讲稿上传、选择和预览，以及基本的会话控制。语音识别和语音合成由服务端提供。
-        </p>
-      </section>
     </main>
 
-    <footer>浏览器采集与播放 · 服务端语音处理</footer>
   </div>
 </template>

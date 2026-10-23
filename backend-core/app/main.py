@@ -8,12 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.health import router as health_router
 from app.api.scripts import router as scripts_router
 from app.api.session import router as session_router
-from app.config import Settings, get_settings
+from app.api.settings import router as settings_router
+from app.config import Settings, get_settings, load_model_settings
 from app.database import Base, create_database_engine
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    configuration = settings if settings is not None else get_settings()
+    configuration = load_model_settings(settings if settings is not None else get_settings())
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -49,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(health_router, prefix="/api")
     application.include_router(scripts_router, prefix="/api")
     application.include_router(session_router, prefix="/api")
+    application.include_router(settings_router, prefix="/api")
     return application
 
 

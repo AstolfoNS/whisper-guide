@@ -1,18 +1,16 @@
-# Speech Provider 接口
+# 语音与语义 Provider 接口
 
-Whisper Guide 的语音输入由 Provider 负责把音频转换为统一的 `RecognitionUpdate`，再交给本地 `ScriptAligner` 和五状态会话机。Provider 从不修改 `reading_position` 或 `prompt_position`，也不能绕过轮次令牌和 AC-27 的内存边界。
+语音识别与大模型语义校准独立配置。两者均不能直接修改 `reading_position` 或 `prompt_position`；本地 `ScriptAligner` 是游标提交入口。
 
 ```text
-浏览器 PCM16 → VAD → ProviderRegistry 选择 Provider
-                         ├─ LocalSherpaProvider
-                         └─ HttpStreamingProvider（任意后端注册的云端模型）
-                              ↓
-                    RecognitionUpdate(partial/final)
-                              ↓
-                  ScriptAligner → 双游标/提示状态机
+PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider
+                         ↓ RecognitionUpdate(partial/final)
+                     ScriptAligner → 双游标 / 五状态机
+                         ↑ 经本地验证的讲稿原文
+                 LLMSemanticRefiner（可选 OpenAI 兼容接口）
 ```
 
-## 统一契约
+## STT 统一事件
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -23,30 +21,58 @@ class RecognitionUpdate:
     is_filler_only: bool
 ```
 
-同一 `segment_id` 内的 `partial` 是可修订的完整假设，服务端覆盖显示内容而不是增量拼接；端点产生 `final` 后 Provider 重置流并递增分段号。填充词只用于打断静音计时和更新界面，不提交讲稿游标。
+同一 `segment_id` 的 partial 覆盖前次假设；final 后重置流并递增分段号。填充词不提交讲稿位置。默认 `local` 使用 `sherpa-onnx`；`cloud` 需配置通用网关与 `cloud_opt_in=true`，未授权时锁定本地。
 
-## Provider 注册
-
-后端通过 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 注册远程 Provider。配置是 JSON 数组，每项至少包含 `id`、`label`、`endpoint` 和凭据；推荐使用 `access_token_env` 引用服务器环境变量，避免把密钥写进配置文件：
-
-```dotenv
-WHISPER_GUIDE_STT_PROVIDER=local
-WHISPER_GUIDE_STT_PROVIDER_CONFIGS=[{"id":"my-model","label":"我的流式模型","endpoint":"https://gateway.example/v1/stt","model":"streaming-model","access_token_env":"MY_MODEL_TOKEN"}]
-WHISPER_GUIDE_CLOUD_OPT_IN=false
-```
-
-远程网关接收 JSON：
+通用 HTTP 语音网关接收：
 
 ```json
 {"audio":"<base64 PCM16>","sample_rate":16000,"segment_id":0,"turn_token":3}
 ```
 
-并返回 `text`（或 `transcript`）、`is_final`（或 `final`）和可选 `segment_id`。如果厂商使用 WebSocket、专用鉴权或不同消息格式，请在网关层或单独适配器中转换为该契约；核心代码不绑定任何厂商名称。
+返回 `text` / `transcript`、`is_final` / `final`，可选 `segment_id`。这不是任一厂商的原生协议；需要 WebSocket 或专用鉴权的厂商可通过网关或独立适配器转换。不得将凭据放进 URL 查询参数。
 
-`GET /api/speech/providers` 只返回 Provider ID、标签、模型、能力和隐私说明，不返回 endpoint 中的 token。前端可以选择当前会话使用的 Provider，新增 Provider 仍由服务端环境变量完成。未显式 `WHISPER_GUIDE_CLOUD_OPT_IN=true` 时，远程 Provider 会显示为未配置并强制回退本地。
+兼容保留 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 注册表；主要工作台使用 `local` / `cloud` 及模型设置 API。`GET /api/speech/providers` 返回能力与隐私信息，不包含密钥。请求失败、超时或断网时回退本地，返回仍经过本地讲稿对齐和轮次校验。
 
-## 回退与会话安全
+## 通用语义校准
 
-`local` 直接使用 `sherpa-onnx`。选择远程 Provider 或 `hybrid` 时，远程请求携带当前会话 generation 作为 `turn_token`；网络超时、HTTP 错误或会话打断会立即关闭远程流并回退本地。回退结果仍必须经过 `ScriptAligner`，旧 generation 的结果会被丢弃。
+`LLMSemanticRefiner` 使用 `httpx.AsyncClient` 调用 OpenAI 兼容 `POST {base_url}/chat/completions`。主机根地址会补 `/v1`，已含路径的 Base URL 直接追加 `/chat/completions`；也可填写完整 endpoint。
 
-TTS 继续使用 `edge-tts`，音频只在内存中生成并通过 WebSocket 返回。麦克风 PCM 不写入 SQLite、临时文件或日志。
+输入仅包含讲稿窗口与粗糙转写；输出约束为：
+
+```json
+{"matched_quote":"讲稿窗口内的连续原文","confidence":0.92}
+```
+
+返回必须是窗口中的连续原文，置信度有效，且任务仍属于当前会话轮次；随后由本地对齐器确认位置。`off` 不调用；`fallback` 用于本地低置信度；`hybrid` 在有效句末异步校准。超时默认 1500 ms，错误或无效输出静默保留本地结果。
+
+内置预设为 `custom`、`deepseek`、`qwen`、`doubao`、`openai`、`ollama`。预设只填充推荐 URL 和示例模型名，用户可自由改写模型名与地址；它们不证明真实账号、配额或模型访问权限已经可用。
+
+## 运行时模型配置 API
+
+| 接口 | 行为 |
+|---|---|
+| `GET /api/settings/models` | 返回当前配置、预设、固定密钥掩码 `****` 与 `has_*` / `*_configured` 标记 |
+| `PUT /api/settings/models` | 验证配置副本，原子持久化后激活；新会话使用最新设置 |
+| `POST /api/settings/models/test` | 对临时配置发送极简 LLM 请求，返回 `ok`、`latency_ms`、安全错误消息；不改变配置 |
+
+前端使用平面字段；API 同时接受嵌套 `stt` / `llm` 对象。平面字段显式提供时优先。可配置字段：
+
+```json
+{
+  "stt_provider": "local",
+  "cloud_opt_in": false,
+  "cloud_stt_endpoint": "",
+  "cloud_stt_app_id": "",
+  "cloud_stt_access_token": "",
+  "llm_align_mode": "off",
+  "llm_provider_preset": "custom",
+  "llm_base_url": "",
+  "llm_model": "",
+  "llm_api_key": "",
+  "llm_timeout_ms": 1500
+}
+```
+
+API Key 与 Token 只向后端单向提交，GET 不回传明文，空白或 `****` 保留已有密钥。配置保存于 `WHISPER_GUIDE_DATA_DIR/.model-settings.json`（`0600`），重启优先加载其中模型字段；此文件含服务端凭据，不得提交版本库或进入发布包。浏览器不将密钥保存到 localStorage。
+
+云端 STT 会发送音频片段；语义 LLM 仅发送讲稿窗口和转写。麦克风 PCM 和 TTS MP3 均不写入 SQLite、临时文件或日志。真实云端服务仍需用户提供有效凭据并执行账号联调。

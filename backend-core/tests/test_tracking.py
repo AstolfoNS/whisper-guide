@@ -85,12 +85,14 @@ def test_script_must_have_content_units() -> None:
     with pytest.raises(ValueError):
         ScriptTracker("，？！   ")
 
+
 def test_repeated_streaming_prefix_is_collapsed_only_when_script_matches() -> None:
     tracker = ScriptTracker("大家好。")
     assert tracker.normalize_transcript("大大大大家好好好好", None) == "大家好"
 
     other = ScriptTracker("大大大好。")
     assert other.normalize_transcript("大大大好", None) == "大大大好"
+
 
 def test_script_aligner_corrects_homophone_to_script_text() -> None:
     pytest.importorskip("pypinyin")

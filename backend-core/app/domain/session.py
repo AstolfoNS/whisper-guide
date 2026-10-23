@@ -1,6 +1,10 @@
-"""Deterministic session state machine; speech engines and wall clocks stay outside."""
+"""Deterministic session state machine with bounded transition telemetry."""
 
+from __future__ import annotations
+
+from collections import deque
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -18,6 +22,23 @@ class SessionState(StrEnum):
     TERMINATED = "TERMINATED"
 
 
+TRANSITION_TARGETS: dict[SessionState, tuple[SessionState, ...]] = {
+    SessionState.READY: (SessionState.LISTENING, SessionState.TERMINATED),
+    SessionState.LISTENING: (
+        SessionState.PROMPTING,
+        SessionState.PAUSED,
+        SessionState.TERMINATED,
+    ),
+    SessionState.PROMPTING: (
+        SessionState.LISTENING,
+        SessionState.PAUSED,
+        SessionState.TERMINATED,
+    ),
+    SessionState.PAUSED: (SessionState.LISTENING, SessionState.TERMINATED),
+    SessionState.TERMINATED: (),
+}
+
+
 class SessionOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -29,19 +50,7 @@ class SessionError(ValueError):
 
 
 FILLER_UTTERANCES = frozenset(
-    {
-        "嗯",
-        "嗯嗯",
-        "呃",
-        "呃呃",
-        "啊",
-        "额",
-        "唔",
-        "诶",
-        "欸",
-        "那个",
-        "这个",
-    }
+    {"嗯", "嗯嗯", "呃", "呃呃", "啊", "额", "唔", "诶", "欸", "那个", "这个"}
 )
 
 
@@ -68,11 +77,7 @@ EVENT_PRIORITY = {
 
 
 class SpeechSession:
-    """One in-memory session with original-script offsets and round identifiers.
-
-    The adapter serializes incoming events and supplies a monotonic millisecond clock.
-    Audio buffers are not part of this domain object and are never persisted here.
-    """
+    """One in-memory session with bounded state transition telemetry."""
 
     def __init__(
         self,
@@ -84,11 +89,25 @@ class SpeechSession:
         self.id = session_id or str(uuid4())
         self.script_id = script_id
         self.tracker = ScriptTracker(script_text)
+        self.aligner = ScriptAligner(self.tracker)
         self.options = SessionOptions(silence_timeout_ms=silence_timeout_ms)
         self.state = SessionState.READY
+        self.previous_state: SessionState | None = None
+        self.transition_trigger = "session_initialized"
+        self.transition_at = datetime.now(UTC).isoformat()
+        self.transition_history: deque[dict[str, Any]] = deque(maxlen=10)
+        self.transition_history.append(
+            {
+                "from_state": None,
+                "to_state": SessionState.READY.value,
+                "trigger": "session_initialized",
+                "timestamp": self.transition_at,
+            }
+        )
         self.reading_position: int | None = None
         self.prompt_position = self.tracker.units[0].start
         self.reliable = True
+        self._last_reliable = True
         self.generation = 0
         self.prompt: ActivePrompt | None = None
         self.silence_since_ms: int | None = None
@@ -97,14 +116,42 @@ class SpeechSession:
         self.message: str | None = None
         self.feedback_id = 0
         self.last_transcript = ""
+        self.raw_transcript = ""
+        self.aligned_transcript = ""
         self.match_confidence: float | None = None
         self._location_warning_reported = False
+
+    def _transition(self, state: SessionState, trigger: str, timestamp: int | None) -> None:
+        if state == self.state:
+            return
+        previous = self.state
+        self.previous_state = previous
+        self.state = state
+        self.transition_trigger = trigger
+        self.transition_at = datetime.now(UTC).isoformat()
+        self.transition_history.append(
+            {
+                "from_state": previous.value,
+                "to_state": state.value,
+                "trigger": trigger,
+                "timestamp": self.transition_at,
+            }
+        )
+
+    def allowed_transitions(self) -> list[str]:
+        return [state.value for state in TRANSITION_TARGETS[self.state]]
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "script_id": self.script_id,
             "state": self.state.value,
+            "current_state": self.state.value,
+            "previous_state": self.previous_state.value if self.previous_state else None,
+            "transition_trigger": self.transition_trigger,
+            "transition_at": self.transition_at,
+            "transition_history": list(self.transition_history),
+            "allowed_transitions": self.allowed_transitions(),
             "silence_timeout_ms": self.options.silence_timeout_ms,
             "reading_position": self.reading_position,
             "prompt_position": self.prompt_position,
@@ -116,6 +163,8 @@ class SpeechSession:
             "message": self.message,
             "feedback_id": self.feedback_id,
             "last_transcript": self.last_transcript,
+            "raw_transcript": self.raw_transcript,
+            "aligned_transcript": self.aligned_transcript,
             "match_confidence": self.match_confidence,
             "at_end": self.prompt_position >= len(self.tracker.text),
         }
@@ -124,19 +173,19 @@ class SpeechSession:
         self.message = message
         self.feedback_id += 1
 
-    def _listen(self, now_ms: int) -> None:
-        self.state = SessionState.LISTENING
+    def _listen(self, now_ms: int, trigger: str) -> None:
+        self._transition(SessionState.LISTENING, trigger, now_ms)
         self.generation += 1
         self.prompt = None
         self.speaking = False
         self.silence_since_ms = now_ms
         self.pause_reason = None
 
-    def _prompt(self) -> None:
+    def _prompt(self, now_ms: int, trigger: str = "silence_threshold_reached") -> None:
         segment = self.tracker.segment(self.prompt_position)
         if segment is None:
             return
-        self.state = SessionState.PROMPTING
+        self._transition(SessionState.PROMPTING, trigger, now_ms)
         self.generation += 1
         self.silence_since_ms = None
         self.speaking = False
@@ -153,18 +202,19 @@ class SpeechSession:
         return self.snapshot()
 
     def handle(self, event: str, now_ms: int, **payload: Any) -> dict[str, Any]:
-        # A terminated session is immutable, including late controls and callbacks.
         if self.state == SessionState.TERMINATED:
             return self.snapshot()
-        # Only asynchronous engine callbacks carry a round identifier. User controls
-        # always apply to the current session and must never be dropped as stale.
         if event in {"speech_start", "speech_end", "transcript", "tick"}:
             generation = payload.get("generation")
             if generation is not None and generation != self.generation:
                 return self.snapshot()
 
         if event == "end":
-            self.state = SessionState.TERMINATED
+            self._transition(
+                SessionState.TERMINATED,
+                payload.get("transition_trigger", "user_terminated"),
+                now_ms,
+            )
             self.generation += 1
             self.prompt = None
             self.silence_since_ms = None
@@ -174,7 +224,7 @@ class SpeechSession:
             self._require(SessionState.READY if event == "start" else SessionState.PAUSED)
             if not payload.get("service_available", True):
                 raise SessionError("语音服务尚不可用，请检查后重试。")
-            self._listen(now_ms)
+            self._listen(now_ms, "user_resumed" if event == "resume" else "session_started")
         elif event == "update_options":
             self._require(SessionState.READY, SessionState.PAUSED)
             self.options = SessionOptions(silence_timeout_ms=payload.get("silence_timeout_ms"))
@@ -183,7 +233,11 @@ class SpeechSession:
                 self._require(SessionState.LISTENING, SessionState.PROMPTING)
             elif self.state not in {SessionState.LISTENING, SessionState.PROMPTING}:
                 return self.snapshot()
-            self.state = SessionState.PAUSED
+            trigger = payload.get(
+                "transition_trigger",
+                "user_paused" if event == "pause" else "service_fault",
+            )
+            self._transition(SessionState.PAUSED, trigger, now_ms)
             self.generation += 1
             self.prompt = None
             self.silence_since_ms = None
@@ -194,7 +248,7 @@ class SpeechSession:
             self._feedback(self.pause_reason)
         elif event == "interrupt":
             if self.state == SessionState.PROMPTING:
-                self._listen(now_ms)
+                self._listen(now_ms, "speech_interrupted_prompt")
         elif event == "playback_finished":
             if (
                 self.state == SessionState.PROMPTING
@@ -202,37 +256,41 @@ class SpeechSession:
                 and payload.get("prompt_id") == self.prompt.id
             ):
                 self.prompt_position = self.prompt.next_position
-                self._listen(now_ms)
+                self._listen(now_ms, "prompt_audio_finished")
         elif event == "speech_start":
             if self.state == SessionState.LISTENING:
+                if not self.speaking:
+                    self._last_reliable = self.reliable
+                self.reliable = False
                 self.speaking = True
                 self.silence_since_ms = None
         elif event == "speech_end":
             if self.state == SessionState.LISTENING:
                 self.speaking = False
                 self.silence_since_ms = now_ms
+        elif event == "filler":
+            if self.state == SessionState.LISTENING:
+                self.reliable = self._last_reliable
         elif event == "transcript":
             if self.state == SessionState.LISTENING:
                 text = payload.get("text", "")
                 if not isinstance(text, str):
                     raise SessionError("识别文本必须是字符串。")
-                self.raw_transcript = text
+                self.raw_transcript = payload.get("raw_text", text)
                 text = self.tracker.normalize_transcript(text, self.reading_position)
                 self.last_transcript = text
                 compact = "".join(text.split()).strip("，。！？!?；;,.、")
                 if compact.casefold() in FILLER_UTTERANCES:
+                    self.reliable = self._last_reliable
                     return self.snapshot()
                 result = self.aligner.align(text, self.reading_position)
                 if result is None and self.prompt_position != self.reading_position:
-                    # After several automatically read segments the speaker may
-                    # resume near the system's current prompt, outside the last
-                    # confirmed user's local window. This is only a second anchor;
-                    # it never changes reading_position without actual speech.
                     result = self.aligner.align(text, self.prompt_position)
                 if result:
                     self.reading_position = result.position
                     self.prompt_position = result.position
                     self.reliable = True
+                    self._last_reliable = True
                     self.match_confidence = result.confidence
                     self.aligned_transcript = result.matched_text
                     self._location_warning_reported = False
@@ -243,6 +301,7 @@ class SpeechSession:
                         )
                         self._location_warning_reported = True
                     self.reliable = False
+                    self._last_reliable = False
                     self.match_confidence = None
         elif event == "tick":
             if (
@@ -252,10 +311,10 @@ class SpeechSession:
                 and self.silence_since_ms is not None
                 and now_ms - self.silence_since_ms >= self.options.silence_timeout_ms
             ):
-                self._prompt()
+                self._prompt(now_ms)
         elif event == "manual_prompt":
             self._require(SessionState.LISTENING)
-            self._prompt()
+            self._prompt(now_ms, "manual_prompt")
         elif event == "reposition":
             self._require(SessionState.READY, SessionState.LISTENING, SessionState.PAUSED)
             position = payload.get("position")
@@ -267,6 +326,7 @@ class SpeechSession:
                 raise SessionError(str(error)) from error
             self.reading_position = self.prompt_position
             self.reliable = True
+            self._last_reliable = True
             self._location_warning_reported = False
             self.match_confidence = None
             self.generation += 1

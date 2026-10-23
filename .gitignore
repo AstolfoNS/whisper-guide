@@ -48,3 +48,5 @@ release/
 *.tar
 *.tar.gz
 *.bz2
+.model-settings.json
+.model-settings-*.tmp

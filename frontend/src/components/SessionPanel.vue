@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ScriptDocument } from '../api/scripts'
 import { SessionClient, type SessionSnapshot, type SessionServerEvent } from '../api/session'
 import { Microphone } from '../audio/microphone'
 import { PromptPlayer } from '../audio/player'
 
-const props = defineProps<{ script?: ScriptDocument; serviceAvailable: boolean; sttProvider?: string }>()
-const emit = defineEmits<{ active: [value: boolean] }>()
+
+const props = defineProps<{ script?: ScriptDocument; serviceAvailable: boolean; sttProvider?: string; settingsRevision?: number }>()
+const emit = defineEmits<{ active: [value: boolean]; snapshot: [value: SessionSnapshot | undefined] }>()
 const snapshot = ref<SessionSnapshot>()
+watch(snapshot, value => emit('snapshot', value))
 const timeout = ref(3000)
 const position = ref(0)
 const busy = ref(false)
@@ -19,6 +21,31 @@ const player = new PromptPlayer()
 const state = computed(() => localPaused.value ? 'PAUSED' : snapshot.value?.state ?? 'READY')
 const labels = { READY: '就绪', LISTENING: '识别', PROMPTING: '播报', PAUSED: '暂停', TERMINATED: '终止' }
 const selectedProvider = computed(() => props.sttProvider ?? 'local')
+watch([selectedProvider, () => props.settingsRevision], () => { void refreshSpeech() })
+const activeSnapshot = computed(() => snapshot.value?.state === 'TERMINATED' && props.script && props.script.id !== snapshot.value.script_id ? undefined : snapshot.value)
+const readingUnit = computed(() => activeSnapshot.value?.units.find(unit => unit.start === activeSnapshot.value?.reading_position))
+const promptUnit = computed(() => activeSnapshot.value?.units.find(unit => unit.start === activeSnapshot.value?.prompt_position))
+const activeScriptText = computed(() => {
+  const script = props.script
+  if (activeSnapshot.value?.script_text !== undefined) return activeSnapshot.value.script_text
+  if (script && (!activeSnapshot.value || script.id === activeSnapshot.value.script_id)) return script.content
+  return activeSnapshot.value?.units.map(unit => unit.text).join('') ?? script?.content ?? ''
+})
+const scriptTokens = computed(() => {
+  const text = activeScriptText.value
+  const units = activeSnapshot.value?.units ?? []
+  if (!units.length) return [{ text, start: 0, end: text.length, reading: false, prompt: false }]
+  const tokens: Array<{ text: string; start: number; end: number; reading: boolean; prompt: boolean }> = []
+  let offset = 0
+  for (const unit of units) {
+    if (unit.start > offset) tokens.push({ text: text.slice(offset, unit.start), start: offset, end: unit.start, reading: false, prompt: false })
+    tokens.push({ text: text.slice(unit.start, unit.end) || unit.text, start: unit.start, end: unit.end, reading: unit.start === activeSnapshot.value?.reading_position, prompt: unit.start === activeSnapshot.value?.prompt_position })
+    offset = unit.end
+  }
+  if (offset < text.length) tokens.push({ text: text.slice(offset), start: offset, end: text.length, reading: false, prompt: false })
+  return tokens
+})
+const rawIsFinal = computed(() => snapshot.value?.raw_transcript_is_final ?? Boolean(snapshot.value?.aligned_transcript && snapshot.value?.raw_transcript === snapshot.value?.last_transcript))
 const canConfigure = computed(() => ['READY', 'PAUSED'].includes(state.value))
 const validTimeout = computed(() => Number.isInteger(timeout.value) && timeout.value > 0)
 const canStart = computed(() => !busy.value && props.script && props.serviceAvailable &&
@@ -264,6 +291,7 @@ onBeforeUnmount(() => {
     <p role="status">识别服务：{{ speech.stt === 'ready' ? '已就绪' : '未就绪' }}；
       合成服务：{{ speech.tts === 'ready' ? '已安装，播放时检查网络' : '未就绪' }}</p>
     <p v-if="speech.detail">{{ speech.detail }}</p>
+    <p v-if="speech.cloud_notice" class="session-alert session-alert--warning" role="status">云端识别：音频片段会发送至配置的接口，本服务不保存录音。</p>
     <button type="button" @click="refreshSpeech">检查语音服务</button>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     <div class="session-controls">
@@ -285,14 +313,20 @@ onBeforeUnmount(() => {
       </select>
       <button type="button" @click="reposition">应用位置</button>
     </fieldset>
+    <section v-if="activeScriptText" class="cursor-tracker" aria-labelledby="cursor-title">
+      <div class="section-heading"><h3 id="cursor-title">讲稿进度</h3><span class="cursor-legend"><span class="cursor-reading">已读</span><span class="cursor-prompt">提示起点</span></span></div>
+      <dl class="cursor-values"><div><dt>reading_position</dt><dd>{{ activeSnapshot?.reading_position ?? '未定位' }}<span v-if="readingUnit"> · {{ readingUnit.text }}</span></dd></div><div><dt>prompt_position</dt><dd>{{ activeSnapshot?.prompt_position ?? 0 }}<span v-if="promptUnit"> · {{ promptUnit.text }}</span></dd></div></dl>
+      <div class="script-content cursor-script" tabindex="0" role="region" aria-label="讲稿双游标视图"><span v-for="token in scriptTokens" :key="token.start" :class="{ 'cursor-reading': token.reading, 'cursor-prompt': token.prompt }" :aria-label="token.reading || token.prompt ? [token.reading ? '已读位置' : '', token.prompt ? '提示起点' : '', token.text].filter(Boolean).join('：') : undefined">{{ token.text }}</span></div>
+    </section>
     <div class="transcript-grid">
-      <p v-if="snapshot?.raw_transcript || snapshot?.last_transcript" class="transcript"><strong>实时语音识别</strong><br />{{ snapshot.raw_transcript || snapshot.last_transcript }}</p>
+      <p v-if="snapshot?.raw_transcript || snapshot?.last_transcript" class="transcript"><strong>实时语音识别</strong> <span class="transcript-kind">{{ rawIsFinal ? 'final · 已定稿' : 'partial · 修订中' }}</span><br />{{ snapshot.raw_transcript || snapshot.last_transcript }}</p>
       <p v-if="snapshot?.aligned_transcript" class="prompt-preview"><strong>已对齐讲稿位置</strong><br />{{ snapshot.aligned_transcript }}<span v-if="snapshot.match_confidence != null">（置信度 {{ Math.round(snapshot.match_confidence * 100) }}%）</span></p>
     </div>
     <p v-if="snapshot && !snapshot.reliable" class="session-alert session-alert--warning" role="status">暂时没有匹配到讲稿，自动提示已暂停；可以手动提示或重新定位。</p>
     <p v-if="snapshot?.prompt">当前提示：{{ snapshot.prompt.text }}</p>
     <p v-if="snapshot?.at_end" role="status">系统已提示到讲稿末尾，自动续播停止；仍可朗读、重新定位或结束。</p>
     <p class="input-help">Alt+Shift+P 暂停或继续，Alt+Shift+I 打断，Alt+Shift+E 结束，Alt+Shift+H 手动提示。
-      播报期间不识别，请先打断再继续说话。用户录音不保存。</p>
+      用户录音不保存。</p>
+
   </section>
 </template>

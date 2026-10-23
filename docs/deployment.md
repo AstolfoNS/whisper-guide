@@ -7,14 +7,14 @@
 ```bash
 cd backend-core
 uv sync --locked
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
 前端另开终端：
 
 ```bash
 cd frontend
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev --host 0.0.0.0
 ```
 
@@ -87,25 +87,40 @@ docker compose -f docker-compose.yml exec backend /app/backend-core/.venv/bin/py
 
 手动提示有声而自动提示没有声音时，应优先检查讲稿定位状态；手动提示也失败时，再检查 edge-tts 网络和浏览器播放。
 
-## STT Provider 配置
+## 模型与识别引擎配置
 
-默认使用本地识别：
+页面可直接配置 STT 源与语义大模型，并分别执行测试和保存。配置 API 为 `GET/PUT /api/settings/models` 与 `POST /api/settings/models/test`。测试使用临时配置，不改变当前设置；保存原子写入数据目录 `.model-settings.json`（权限 `0600`），重启加载并覆盖环境中的模型默认值。容器数据卷中的位置是宿主机 `data/sqlite/.model-settings.json`。该文件含后端密钥，需与数据库分别备份并限制读取权限，不能进入 Git 或发布包。
+
+| 环境变量 | 默认 / 可选值 |
+|---|---|
+| `WHISPER_GUIDE_STT_PROVIDER` | `local`；页面可选 `cloud` |
+| `WHISPER_GUIDE_CLOUD_OPT_IN` | `false`，云端音频需显式授权 |
+| `WHISPER_GUIDE_CLOUD_STT_ENDPOINT` | 通用 HTTP 语音网关地址 |
+| `WHISPER_GUIDE_CLOUD_STT_APP_ID` | 网关应用 ID |
+| `WHISPER_GUIDE_CLOUD_STT_ACCESS_TOKEN` | 后端访问令牌 |
+| `WHISPER_GUIDE_LLM_ALIGN_MODE` | `off` / `fallback` / `hybrid` |
+| `WHISPER_GUIDE_LLM_PROVIDER_PRESET` | `custom` / `deepseek` / `qwen` / `doubao` / `openai` / `ollama` |
+| `WHISPER_GUIDE_LLM_BASE_URL` | OpenAI 兼容 API 基址，可含路径 |
+| `WHISPER_GUIDE_LLM_MODEL` | 自由模型名称，不绑定固定模型 |
+| `WHISPER_GUIDE_LLM_API_KEY` | 后端访问密钥 |
+| `WHISPER_GUIDE_LLM_TIMEOUT_MS` | `1500`，正整数毫秒 |
+
+示例仅展示配置格式，真实云端调用需可用账号、Endpoint、模型名与凭据：
 
 ```dotenv
 WHISPER_GUIDE_STT_PROVIDER=local
-WHISPER_GUIDE_STT_PROVIDER_CONFIGS=[]
 WHISPER_GUIDE_CLOUD_OPT_IN=false
+WHISPER_GUIDE_LLM_ALIGN_MODE=fallback
+WHISPER_GUIDE_LLM_PROVIDER_PRESET=custom
+WHISPER_GUIDE_LLM_BASE_URL=https://gateway.example/v1
+WHISPER_GUIDE_LLM_MODEL=your-model-name
+WHISPER_GUIDE_LLM_API_KEY=
+WHISPER_GUIDE_LLM_TIMEOUT_MS=1500
 ```
 
-可以在后端注册多个任意兼容网关，前端会在“识别模型服务”面板列出可用 Provider 并保存本次选择。密钥只放在服务端环境变量中，推荐用 `access_token_env` 引用：
+STT 与 LLM 独立：本地 STT 可结合云端语义对齐，云端 STT 也可关闭 LLM。语义对齐只传送讲稿窗口和转写；云端 STT 传送音频片段。未授权云端音频时强制回到本地 STT。API 返回固定 `****` 与凭据存在标记；密码框留空保留原密钥。`POST /test` 当前测试 LLM 连通性，不代表云端 STT 协议或真实录音识别已验收。
 
-```dotenv
-WHISPER_GUIDE_STT_PROVIDER=hybrid
-WHISPER_GUIDE_STT_PROVIDER_CONFIGS=[{"id":"my-model","label":"我的流式模型","endpoint":"https://gateway.example/v1/stt","model":"streaming-model","access_token_env":"MY_MODEL_TOKEN"}]
-WHISPER_GUIDE_CLOUD_OPT_IN=true
-```
-
-前端不会接触 access token。远程 Provider 失败时自动回退本地识别；云端模式下浏览器音频片段会离开本机，启用前应取得用户同意。
+保留环境变量 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 作为多个通用网关 profile 的兼容注册方式，详见[Provider 协议](speech-provider-interface.md)。使用 Ollama 时，容器内 `localhost` 是当前容器；应改成可由后端容器访问的服务地址。
 
 ## 空间控制
 

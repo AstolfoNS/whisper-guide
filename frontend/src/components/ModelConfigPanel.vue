@@ -11,7 +11,9 @@ import {
 } from '../api/models'
 
 const props = withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false })
+const emit = defineEmits<{ loaded: [settings: ModelSettings]; saved: [settings: ModelSettings] }>()
 const loading = ref(false)
+const localSttReady = ref<boolean | null>(null)
 const saving = ref(false)
 const testing = ref(false)
 const error = ref('')
@@ -59,7 +61,7 @@ function applySettings(settings: ModelSettings) {
 
 function inputPayload(): ModelSettingsInput {
   return {
-    stt_provider: form.stt_provider,
+    stt_provider: form.stt_provider === 'cloud' && form.cloud_opt_in ? 'cloud' : 'local',
     cloud_opt_in: form.cloud_opt_in,
     cloud_stt_endpoint: form.cloud_stt_endpoint.trim(),
     cloud_stt_app_id: form.cloud_stt_app_id.trim(),
@@ -73,6 +75,18 @@ function inputPayload(): ModelSettingsInput {
   }
 }
 
+async function refreshLocalStt(signal?: AbortSignal) {
+  try {
+    const base = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+    const response = await fetch(base + '/api/speech/status', { signal })
+    const status = await response.json()
+    const providers = Array.isArray(status.providers) ? status.providers : []
+    const local = providers.find((provider: { id?: string }) => provider.id === 'local')
+    if (signal?.aborted) return
+    localSttReady.value = local ? local.available === true : status.provider === 'local' ? status.stt === 'ready' : null
+  } catch { localSttReady.value = null }
+}
+
 async function refresh() {
   requestController.value?.abort()
   const controller = new AbortController()
@@ -81,7 +95,10 @@ async function refresh() {
   error.value = ''
   message.value = ''
   try {
-    applySettings(await fetchModelSettings(controller.signal))
+    void refreshLocalStt(controller.signal)
+    const settings = await fetchModelSettings(controller.signal)
+    applySettings(settings)
+    emit('loaded', settings)
   } catch (reason) {
     if (!controller.signal.aborted) error.value = reason instanceof Error ? reason.message : '无法读取模型配置。'
   } finally {
@@ -100,6 +117,11 @@ function choosePreset(event: Event) {
 
 async function save() {
   if (!canSubmit.value) return
+  const cloudRequested = form.stt_provider === 'cloud'
+  if (cloudRequested && !form.cloud_opt_in) {
+    form.stt_provider = 'local'
+    message.value = '未授予云端音频权限，已锁定本地识别。'
+  }
   if (!form.llm_base_url.trim() && form.llm_align_mode !== 'off') {
     error.value = '启用大模型对齐时必须填写 Base URL。'
     return
@@ -108,8 +130,12 @@ async function save() {
   error.value = ''
   message.value = ''
   try {
-    applySettings(await saveModelSettings(inputPayload()))
-    message.value = '模型配置已保存，新会话将使用最新设置。'
+    const saved = await saveModelSettings(inputPayload())
+    applySettings(saved)
+    emit('saved', saved)
+    message.value = cloudRequested && !form.cloud_opt_in
+      ? '配置已保存，但未授予云端音频权限，当前锁定本地识别。'
+      : '模型配置已保存，新会话将使用最新设置。'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '保存模型配置失败。'
   } finally { saving.value = false }
@@ -160,7 +186,9 @@ defineExpose({ refresh })
           <option value="local">本地 sherpa-onnx（离线）</option>
           <option value="cloud">云端语音接口（需授权）</option>
         </select>
-        <label class="model-config__check"><input v-model="form.cloud_opt_in" type="checkbox" :disabled="!cloudEnabled" /> 我同意将麦克风音频片段发送至云端处理（不持久化录音）</label>
+        <p class="input-help" role="status">本地 sherpa-onnx：{{ localSttReady === null ? '待检查' : localSttReady ? '已就绪' : '未就绪' }}</p>
+        <label class="model-config__check"><input v-model="form.cloud_opt_in" type="checkbox" :disabled="!cloudEnabled" /> 我同意将麦克风音频片段发送至云端处理（本服务不保存录音）</label>
+        <p v-if="cloudEnabled && !form.cloud_opt_in" class="model-config__warning" role="status">未授权云端音频时，会话将回退到本地识别。</p>
         <div v-if="cloudEnabled" class="model-config__grid">
           <label>Cloud Endpoint<input v-model="form.cloud_stt_endpoint" type="url" autocomplete="url" placeholder="https://…" /></label>
           <label>App ID<input v-model="form.cloud_stt_app_id" type="text" autocomplete="off" /></label>
@@ -176,6 +204,7 @@ defineExpose({ refresh })
           <option value="fallback">低分兜底（本地低置信度时调用）</option>
           <option value="hybrid">混合校准（句末异步协同）</option>
         </select>
+        <p v-if="form.llm_align_mode !== 'off'" class="input-help">启用后，讲稿窗口和识别文字会发送至所配置的模型接口。</p>
         <div class="model-config__grid">
           <label>服务商预设<select :value="form.llm_provider_preset" @change="choosePreset"><option v-for="preset in presets" :key="preset.id" :value="preset.id">{{ preset.label }}</option></select></label>
           <label>模型名称<input v-model="form.llm_model" type="text" autocomplete="off" placeholder="由服务商提供的模型名" /></label>
@@ -196,4 +225,3 @@ defineExpose({ refresh })
     </form>
   </section>
 </template>
-

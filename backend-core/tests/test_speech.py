@@ -66,6 +66,7 @@ def test_tts_reports_missing_optional_dependency(monkeypatch) -> None:
     with pytest.raises(SpeechUnavailableError):
         asyncio.run(SpeechServices().synthesize("你好"))
 
+
 def test_stream_normalizes_repeated_streaming_prefix() -> None:
     stream = SpeechStream(recognizer=lambda pcm: "大大大大家好好好好")
 
@@ -87,6 +88,7 @@ def test_recognition_update_carries_segment_and_filler_metadata() -> None:
 
     assert result.segment_id == 3
     assert result.is_filler_only
+
 
 def test_cloud_provider_requires_explicit_opt_in() -> None:
     from types import SimpleNamespace
@@ -135,6 +137,7 @@ def test_generic_provider_registry_exposes_capabilities_without_credentials() ->
     assert remote["model"] == "streaming-v1"
     assert "access_token" not in remote
     assert services.status()["provider"] == "generic-model"
+
 
 def test_remote_provider_can_start_without_local_model() -> None:
     from app.infrastructure.speech import ProviderSpeechServices

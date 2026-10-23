@@ -53,3 +53,9 @@ python scripts/backup.py data/sqlite/whisper-guide.db data/backups/whisper-guide
 | 重启后进度丢失 | 活跃会话只在内存中，需重新准备 |
 
 应用日志不要输出音频帧、Base64 音频或完整用户录音。生产需要受信网络、HTTPS 和认证层。
+
+## 运行时模型配置备份
+
+前端保存的模型配置位于 `data/sqlite/.model-settings.json`，文件权限为 `0600`，包含后端 API Key 和 Token。SQLite 备份脚本只备份讲稿数据库，不包含该文件；需要迁移模型设置时，另行复制到受限位置，并保持文件所有者与 `0600` 权限。不要把配置文件放入日志、Git 或离线发布包。恢复后重启 backend，GET `/api/settings/models` 只返回脱敏状态。
+
+模型配置更新失败且返回 503 时，检查 `data/sqlite` 是否允许容器 UID `10001` 写入。连通性测试失败不会改写已保存或生效的配置，先核对 Base URL、模型名称、凭据和超时，再检查后端网络。

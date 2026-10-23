@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.domain.session import SessionError, SessionState, SpeechSession
+from app.infrastructure.llm import LLMSemanticRefiner
 from app.infrastructure.speech import ProviderSpeechServices, SpeechUnavailableError
 from app.repositories.scripts import get_script as find_script
 
@@ -33,6 +34,11 @@ class SessionRuntime:
         self.session = session
         self.script_name = script_name
         self.speech = speech
+        self.provider_name = provider_name
+        self.refinement: asyncio.Task[None] | None = None
+        self.transcript_revision = 0
+        self.last_filler_only = False
+        self.settled_segment_id = -1
         self.stream: Any = None
         self.socket: WebSocket | None = None
         self.lock = asyncio.Lock()
@@ -53,6 +59,7 @@ class SessionRuntime:
         snapshot.update(
             session_id=self.session.id,
             script_name=self.script_name,
+            script_text=self.session.tracker.text,
             units=[asdict(unit) for unit in self.session.tracker.units],
             position_reliable=self.session.reliable,
             recognized_text=self.last_text or self.session.last_transcript,
@@ -60,6 +67,11 @@ class SessionRuntime:
             aligned_transcript=self.session.aligned_transcript,
             notice=self.session.message,
             stt_provider=self.provider_name,
+            recognition_is_final=self.last_update_final,
+            raw_transcript_is_final=(
+                self.last_update_final or (not self.last_text and bool(self.session.raw_transcript))
+            ),
+            recognition_segment_id=self.last_segment_id,
         )
         return snapshot
 
@@ -71,6 +83,10 @@ class SessionRuntime:
         await self.send({"type": "snapshot", "session": self.snapshot()})
 
     def release_stream(self) -> None:
+        self.cancel_refinement()
+        self.transcript_revision += 1
+        self.settled_segment_id = -1
+        self.last_filler_only = False
         self.ready_generation = -1
         while not self.audio_queue.empty():
             self.audio_queue.get_nowait()
@@ -90,6 +106,88 @@ class SessionRuntime:
         if self.synthesis and self.synthesis is not asyncio.current_task():
             self.synthesis.cancel()
         self.synthesis = None
+
+    def cancel_refinement(self) -> None:
+        if self.refinement and self.refinement is not asyncio.current_task():
+            self.refinement.cancel()
+        self.refinement = None
+
+    def commit_transcript(self, text: str, timestamp: int) -> None:
+        """Commit locally first; optional semantic work never holds the audio lock."""
+        anchor = self.session.reading_position
+        window = self.session.aligner.script_window(anchor)
+        self.session.handle("transcript", timestamp, text=text)
+        self.settled_segment_id = self.last_segment_id
+        settings = getattr(self.speech, "settings", None)
+        refiner = LLMSemanticRefiner(settings)
+        if not refiner.enabled:
+            return
+        if refiner.align_mode == "fallback" and self.session.reliable:
+            return
+        self.cancel_refinement()
+        self.refinement = asyncio.create_task(
+            self.refine_transcript(
+                refiner, window, text, self.session.generation, self.transcript_revision
+            )
+        )
+
+    async def refine_transcript(
+        self,
+        refiner: LLMSemanticRefiner,
+        window: str,
+        rough: str,
+        generation: int,
+        revision: int,
+    ) -> None:
+        try:
+            result = await refiner.refine(window, rough, turn_token=generation)
+            async with self.lock:
+                if (
+                    result is None
+                    or result.confidence < 0.68
+                    or result.matched_quote not in window
+                    or self.session.state != SessionState.LISTENING
+                    or self.session.generation != generation
+                    or self.transcript_revision != revision
+                ):
+                    return
+                # Domain uses ScriptAligner once more; the model never supplies offsets.
+                self.session.handle(
+                    "transcript",
+                    now_ms(),
+                    text=result.matched_quote,
+                    raw_text=rough,
+                    generation=generation,
+                )
+                await self.publish()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self.refinement is asyncio.current_task():
+                self.refinement = None
+
+    async def tick(self, timestamp: int) -> None:
+        """Settle a pending hypothesis only at the actual silence deadline."""
+        due = (
+            not self.session.speaking
+            and self.session.silence_since_ms is not None
+            and timestamp - self.session.silence_since_ms >= self.session.options.silence_timeout_ms
+        )
+        if (
+            due
+            and self.last_text
+            and not self.last_update_final
+            and not self.last_filler_only
+            and self.settled_segment_id != self.last_segment_id
+        ):
+            self.commit_transcript(self.last_text, timestamp)
+        before = self.session.state
+        self.session.handle("tick", timestamp)
+        if self.session.state != before:
+            self.release_stream()
+            await self.publish()
+            if self.session.prompt:
+                self.synthesis = asyncio.create_task(self.make_prompt(self.session.prompt.id))
 
     async def change(self, event: str, **payload: Any) -> None:
         previous_generation = self.session.generation
@@ -125,25 +223,21 @@ class SessionRuntime:
         except asyncio.CancelledError:
             return
         except Exception:
-            should_fault = False
             async with self.lock:
-                should_fault = bool(
-                    self.session.prompt and self.session.prompt.id == prompt_id
-                )
-            if should_fault:
-                await self.change(
-                    "service_fault", reason="提示语音生成失败，请检查服务后继续。"
-                )
+                if self.session.prompt and self.session.prompt.id == prompt_id:
+                    await self.change(
+                        "service_fault", reason="提示语音生成失败，请检查服务后继续。"
+                    )
         finally:
             if self.synthesis is asyncio.current_task():
                 self.synthesis = None
 
-    async def _create_stream(self) -> Any:
+    async def _create_stream(self, turn_token: int | None = None) -> Any:
         try:
             return await asyncio.to_thread(
                 self.speech.create_stream,
                 provider_name=self.provider_name,
-                turn_token=self.session.generation,
+                turn_token=self.session.generation if turn_token is None else turn_token,
             )
         except TypeError:
             return await asyncio.to_thread(self.speech.create_stream)
@@ -162,7 +256,7 @@ class SessionRuntime:
             }
             if not available:
                 raise SessionError("识别模型尚未就绪，请先安装服务器语音资源。")
-            stream = await self._create_stream()
+            stream = await self._create_stream(self.session.generation + 1)
             if not stream.available:
                 stream.close()
                 raise SessionError("识别模型加载失败，请检查服务器语音资源。")
@@ -232,6 +326,8 @@ class SessionRuntime:
             if voiced:
                 self.last_voice_ms = received
                 if not self.session.speaking:
+                    self.transcript_revision += 1
+                    self.cancel_refinement()
                     self.last_text = ""
                     self.last_segment_id = -1
                     self.last_update_final = False
@@ -258,17 +354,31 @@ class SessionRuntime:
                 return
             if update.segment_id > self.last_segment_id:
                 self.last_text = ""
+            if update.segment_id == self.last_segment_id and self.last_update_final:
+                return
+            if update.text != self.last_text or update.segment_id != self.last_segment_id:
+                self.transcript_revision += 1
+                self.cancel_refinement()
             self.last_segment_id = update.segment_id
             self.last_update_final = update.is_final
+            self.last_filler_only = update.is_filler_only
             previous_text = self.last_text
             self.last_text = update.text
-            if update.text.strip() and not update.is_filler_only and not self.session.speaking:
-                self.session.handle("speech_start", received)
+            if update.text.strip() and not update.is_filler_only and update.text != previous_text:
+                # Text can confirm quiet voice missed by VAD. Identical cumulative
+                # hypotheses during silence must not continually restart the clock.
+                self.last_voice_ms = received
+                if not self.session.speaking:
+                    self.session.handle("speech_start", received)
             if update.text != previous_text:
                 await self.publish()
-            if update.is_filler_only or not update.is_final or not update.text.strip():
+            if update.is_filler_only:
+                self.session.handle("filler", received)
+                await self.publish()
                 return
-            self.session.handle("transcript", received, text=update.text)
+            if not update.is_final or not update.text.strip():
+                return
+            self.commit_transcript(update.text, received)
             await self.publish()
 
 
@@ -292,6 +402,7 @@ def speech_providers(request: Request):
         "configuration_source": "server-environment",
         "providers": services.provider_options(),
     }
+
 
 @router.get("/speech/status")
 def speech_status(request: Request):
@@ -343,23 +454,7 @@ async def session_socket(socket: WebSocket) -> None:
                         if runtime.last_frame_ms and now_ms() - runtime.last_frame_ms > 5000:
                             await runtime.change("service_fault", reason="麦克风数据中断，已暂停。")
                         else:
-                            before = runtime.session.state
-                            if (
-                                runtime.last_text
-                                and not runtime.last_update_final
-                                and runtime.last_text != runtime.session.last_transcript
-                            ):
-                                runtime.session.handle(
-                                    "transcript", now_ms(), text=runtime.last_text
-                                )
-                            runtime.session.handle("tick", now_ms())
-                            if runtime.session.state != before:
-                                runtime.release_stream()
-                                await runtime.publish()
-                                if runtime.session.prompt:
-                                    runtime.synthesis = asyncio.create_task(
-                                        runtime.make_prompt(runtime.session.prompt.id)
-                                    )
+                            await runtime.tick(now_ms())
 
     timer = asyncio.create_task(ticker())
     audio_task = asyncio.create_task(audio_worker())
@@ -400,8 +495,13 @@ async def session_socket(socket: WebSocket) -> None:
                             "stt_provider",
                             getattr(socket.app.state.settings, "stt_provider", "local"),
                         )
-                        available_providers = {item["id"] for item in services.provider_options()}
-                        if provider_name not in available_providers:
+                        options = (
+                            services.provider_options()
+                            if hasattr(services, "provider_options")
+                            else [{"id": "local", "available": True}]
+                        )
+                        known_providers = {item["id"] for item in options}
+                        if provider_name not in known_providers:
                             raise SessionError("未配置或未授权该语音 Provider。")
                         engine = SpeechSession(
                             script.id,
@@ -451,7 +551,12 @@ async def session_socket(socket: WebSocket) -> None:
             runtime.socket = None
             runtime.cancel_prompt()
             runtime.release_stream()
-            runtime.session.handle("service_fault", now_ms(), reason="连接中断，等待用户继续。")
+            runtime.session.handle(
+                "service_fault",
+                now_ms(),
+                reason="连接中断，等待用户继续。",
+                transition_trigger="ws_disconnected",
+            )
             if runtime.session.state == SessionState.TERMINATED:
                 registry.pop(runtime.session.id, None)
         timer.cancel()

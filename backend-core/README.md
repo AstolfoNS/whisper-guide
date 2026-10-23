@@ -9,7 +9,7 @@ Python 3.12 + FastAPI，使用 uv 管理依赖、SQLAlchemy 连接服务端本�
 ```bash
 cd backend-core
 uv sync --locked
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
 也可以执行 `uv run python main.py` 启动相同的开发服务。Windows 浏览器访问 `http://localhost:8000/docs` 查看 API 文档，`GET /api/health` 检查服务。
@@ -73,4 +73,10 @@ WebSocket 入口为 /api/session。先发送 prepare 绑定讲稿，再发送 st
 
 ## STT Provider
 
-默认使用 LocalSherpaProvider。通过 WHISPER_GUIDE_STT_PROVIDER 选择 local、hybrid 或服务端注册的任意 Provider ID；远程 Provider 由 WHISPER_GUIDE_STT_PROVIDER_CONFIGS 配置，建议使用 access_token_env 引用密钥，并通过 WHISPER_GUIDE_CLOUD_OPT_IN=true 明确授权。远程请求失败时回退到本地 Provider，所有游标仍由本地 ScriptAligner 更新。
+默认使用 LocalSherpaProvider。工作台通过 `stt_provider=local|cloud` 和显式 `cloud_opt_in` 切换通用语音源；保留 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 兼容注册表。远程失败回退本地，所有游标仍由本地 ScriptAligner 更新。
+
+## 模型设置与语义对齐
+
+`GET/PUT /api/settings/models` 读取和更新 STT 与独立 LLM 配置；`POST /api/settings/models/test` 仅测试临时 LLM 配置，不激活、不保存。GET 只返回固定 `****` 和凭据存在标记；空白密钥保留原值。PUT 原子保存 `data/.model-settings.json`，文件权限 `0600`，启动加载其模型字段。配置文件含后端凭据，不能进入 Git、构建上下文或发布包。
+
+`LLMSemanticRefiner` 使用 OpenAI 兼容 HTTP 接口，支持关闭、低分兜底、混合校准；预设只提供可修改 URL 与模型名示例。LLM 只能返回当前讲稿窗口连续原文，本地子串校验、ScriptAligner 与轮次令牌共同决定能否提交。真实云端账号需有效 endpoint、模型名和密钥执行独立联调。详见[Provider 协议](../docs/speech-provider-interface.md)。

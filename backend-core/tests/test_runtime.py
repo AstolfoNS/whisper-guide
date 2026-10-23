@@ -61,6 +61,7 @@ def test_duplicate_audio_ready_does_not_reset_silence_clock():
 
     asyncio.run(scenario())
 
+
 class PartialFinalStream:
     available = True
 

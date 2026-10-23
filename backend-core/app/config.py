@@ -1,13 +1,31 @@
-"""Application configuration loaded from environment variables or a local .env file."""
+"""Environment defaults and private, persisted runtime model settings."""
 
+from __future__ import annotations
+
+import json
+import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+MODEL_SETTINGS_FIELDS = (
+    "stt_provider",
+    "cloud_opt_in",
+    "cloud_stt_endpoint",
+    "cloud_stt_app_id",
+    "cloud_stt_access_token",
+    "llm_align_mode",
+    "llm_provider_preset",
+    "llm_base_url",
+    "llm_model",
+    "llm_api_key",
+    "llm_timeout_ms",
+)
 
 
 class Settings(BaseSettings):
@@ -32,23 +50,21 @@ class Settings(BaseSettings):
     server_host: str = "127.0.0.1"
     server_port: int = Field(default=8000, gt=0, le=65535)
     stt_provider: str = "local"
-    # Remote providers are backend-owned JSON configuration. Secrets are never returned.
     stt_provider_configs: list[dict[str, Any]] = Field(default_factory=list)
+    # Legacy cloud aliases remain supported by existing installations.
     cloud_endpoint: str = ""
     cloud_app_id: str = ""
     cloud_access_token: str = ""
     cloud_opt_in: bool = False
-    # Optional semantic LLM alignment settings. Secrets remain server-side.
+    cloud_stt_endpoint: str = ""
+    cloud_stt_app_id: str = ""
+    cloud_stt_access_token: str = ""
     llm_align_mode: Literal["off", "fallback", "hybrid"] = "off"
     llm_provider_preset: str = "custom"
     llm_base_url: str = ""
     llm_model: str = ""
     llm_api_key: str = ""
     llm_timeout_ms: int = Field(default=1500, gt=0)
-    # Explicit names used by the runtime settings API; legacy cloud_* fields remain supported.
-    cloud_stt_endpoint: str = ""
-    cloud_stt_app_id: str = ""
-    cloud_stt_access_token: str = ""
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
@@ -73,9 +89,75 @@ class Settings(BaseSettings):
         path = self.speech_model_dir.expanduser()
         return path if path.is_absolute() else BACKEND_ROOT / path
 
+    @property
+    def model_settings_path(self) -> Path:
+        return self.resolved_data_dir / ".model-settings.json"
+
+
+def clone_model_settings(settings: Settings, updates: dict[str, Any]) -> Settings:
+    """Validate a new settings instance without mutating the active instance."""
+
+    values = settings.model_dump()
+    values.update({key: value for key, value in updates.items() if key in MODEL_SETTINGS_FIELDS})
+    for suffix in ("endpoint", "app_id", "access_token"):
+        canonical = f"cloud_stt_{suffix}"
+        legacy = f"cloud_{suffix}"
+        values[canonical] = (
+            updates[canonical]
+            if canonical in updates
+            else values.get(canonical) or values.get(legacy, "")
+        )
+        values[legacy] = values[canonical]
+    # Opt-in is an explicit precondition for any remote speech source.
+    if not values.get("cloud_opt_in") and values.get("stt_provider") != "local":
+        values["stt_provider"] = "local"
+    return Settings(**values, _env_file=None)
+
+
+def persist_model_settings(settings: Settings) -> None:
+    """Atomically write owner-only model configuration next to the SQLite DB."""
+
+    directory = settings.resolved_data_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = settings.model_settings_path
+    if destination.is_symlink():
+        raise OSError("Runtime model settings must be a regular file.")
+    values = {key: getattr(settings, key) for key in MODEL_SETTINGS_FIELDS}
+    temporary: str | None = None
+    try:
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".model-settings-", suffix=".tmp", dir=directory
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            os.fchmod(output.fileno(), 0o600)
+            json.dump(values, output, ensure_ascii=False)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, destination)
+        temporary = None
+        destination.chmod(0o600)
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+
+
+def load_model_settings(settings: Settings) -> Settings:
+    """Load saved model fields; invalid files leave environment defaults intact."""
+
+    path = settings.model_settings_path
+    if not path.is_file() or path.is_symlink():
+        return clone_model_settings(settings, {})
+    try:
+        if path.stat().st_size > 64 * 1024:
+            return clone_model_settings(settings, {})
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return clone_model_settings(settings, {})
+        return clone_model_settings(settings, payload)
+    except (OSError, ValueError, TypeError, ValidationError):
+        return clone_model_settings(settings, {})
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
-

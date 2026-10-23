@@ -7,8 +7,8 @@ import os
 import shutil
 import tarfile
 import urllib.request
-from urllib.error import HTTPError
 from pathlib import Path
+from urllib.error import HTTPError
 
 MODEL_NAME = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
 MODEL_URL = (
@@ -54,18 +54,14 @@ def main() -> None:
             _safe_extract(bundle, staging)
         extracted = staging / MODEL_NAME
         if not _model_is_complete(extracted):
-            raise RuntimeError(
-                f"模型归档已解压，但缺少 tokens/encoder/decoder/joiner：{extracted}"
-            )
+            raise RuntimeError(f"模型归档已解压，但缺少 tokens/encoder/decoder/joiner：{extracted}")
         if target.exists():
             shutil.rmtree(target)
         extracted.replace(target)
     except (EOFError, OSError, RuntimeError, tarfile.TarError) as error:
         # Keep the complete HTTP response so a later invocation can resume it.
         archive.replace(temporary)
-        raise RuntimeError(
-            f"模型归档不完整或损坏，已保留断点文件：{temporary}"
-        ) from error
+        raise RuntimeError(f"模型归档不完整或损坏，已保留断点文件：{temporary}") from error
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     archive.unlink(missing_ok=True)

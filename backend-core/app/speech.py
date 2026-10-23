@@ -4,6 +4,7 @@ New code should import from app.infrastructure.speech. This module remains as a
 small compatibility surface for existing integrations and tests.
 """
 
+from app.infrastructure.llm import LLMSemanticRefiner, SemanticRefinement
 from app.infrastructure.speech import (
     HttpStreamingProvider,
     ProviderRegistry,
@@ -17,6 +18,8 @@ from app.infrastructure.speech import (
 )
 
 __all__ = [
+    "LLMSemanticRefiner",
+    "SemanticRefinement",
     "HttpStreamingProvider",
     "ProviderRegistry",
     "ProviderSpeechServices",

@@ -3,18 +3,18 @@ export interface TransitionRecord {
   from_state: SessionState | null
   to_state: SessionState
   trigger: string
-  timestamp: string
+  timestamp: string | null
 }
 export interface ScriptUnit { text: string; start: number; end: number }
 export interface PromptSegment { id: string; text: string; start: number; end: number; next_position: number }
 export interface SessionSnapshot {
-  id: string; script_id: string; script_name: string; stt_provider?: string; state: SessionState
+  id: string; script_id: string; script_name: string; script_text?: string; stt_provider?: string; state: SessionState; current_state?: SessionState
   silence_timeout_ms: number; reading_position: number | null; prompt_position: number
   generation: number; prompt: PromptSegment | null; reliable: boolean; speaking: boolean
   previous_state?: SessionState | null; transition_trigger?: string | null; transition_at?: string | null
   transition_history?: TransitionRecord[]; allowed_transitions?: SessionState[]
   pause_reason: string | null; message: string | null; feedback_id: number
-  last_transcript: string; raw_transcript: string; aligned_transcript: string; match_confidence: number | null; at_end: boolean; units: ScriptUnit[]
+  last_transcript: string; raw_transcript: string; raw_transcript_is_final?: boolean; aligned_transcript: string; match_confidence: number | null; at_end: boolean; units: ScriptUnit[]
 }
 export type SessionServerEvent =
   | { type: 'snapshot'; session: SessionSnapshot }
@@ -68,4 +68,3 @@ export class SessionClient {
   attach(sessionId: string) { this.send({ type: 'attach', session_id: sessionId }) }
   close() { for (const waiter of this.waiters) { clearTimeout(waiter.timer); waiter.reject(new Error('连接已关闭。')) }; this.waiters.clear(); const socket = this.socket; this.socket = undefined; if (socket) { socket.onmessage = null; socket.onclose = null; socket.close() } }
 }
-

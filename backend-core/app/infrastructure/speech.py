@@ -13,9 +13,12 @@ import re
 import threading
 from array import array
 from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 
 class SpeechUnavailableError(RuntimeError):
@@ -375,7 +378,7 @@ class RemoteProviderConfig:
     privacy: str = "音频片段加密发送到已配置的云端 Provider，不在本服务持久化"
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "RemoteProviderConfig | None":
+    def from_mapping(cls, value: Mapping[str, Any]) -> RemoteProviderConfig | None:
         provider_id = str(value.get("id", "")).strip()
         endpoint = str(value.get("endpoint", "")).strip()
         if not provider_id or not endpoint or provider_id == "local":
@@ -407,6 +410,22 @@ class RemoteProviderConfig:
         )
 
 
+def _secure_speech_endpoint(endpoint: str) -> bool:
+    """Cloud microphone audio requires TLS; loopback gateways may use HTTP."""
+    try:
+        parts = urlsplit(endpoint)
+        return bool(
+            parts.hostname
+            and not (parts.username or parts.password or parts.query or parts.fragment)
+            and (
+                parts.scheme == "https"
+                or (parts.scheme == "http" and parts.hostname in {"localhost", "127.0.0.1", "::1"})
+            )
+        )
+    except ValueError:
+        return False
+
+
 class HttpStreamingProvider:
     """Generic remote STT adapter using a small HTTP JSON gateway contract."""
 
@@ -417,8 +436,10 @@ class HttpStreamingProvider:
 
     @property
     def configured(self) -> bool:
-        return bool(self.config.endpoint and self.config.access_token) and (
-            self.opt_in or not self.config.requires_opt_in
+        return bool(
+            self.opt_in
+            and self.config.access_token
+            and _secure_speech_endpoint(self.config.endpoint)
         )
 
     def descriptor(self) -> dict[str, Any]:
@@ -430,7 +451,7 @@ class HttpStreamingProvider:
             "available": self.configured,
             "configured": bool(self.config.endpoint and self.config.access_token),
             "supports_streaming": True,
-            "requires_opt_in": self.config.requires_opt_in,
+            "requires_opt_in": True,
             "privacy": self.config.privacy,
         }
 
@@ -467,16 +488,26 @@ class ProviderRegistry:
             except json.JSONDecodeError:
                 raw = []
         values: list[Mapping[str, Any]] = [item for item in raw if isinstance(item, Mapping)]
-        if not values and getattr(settings, "cloud_endpoint", ""):
-            values.append(
+        cloud_endpoint = getattr(settings, "cloud_stt_endpoint", "") or getattr(
+            settings, "cloud_endpoint", ""
+        )
+        cloud_access_token = getattr(settings, "cloud_stt_access_token", "") or getattr(
+            settings, "cloud_access_token", ""
+        )
+        cloud_app_id = getattr(settings, "cloud_stt_app_id", "") or getattr(
+            settings, "cloud_app_id", ""
+        )
+        if cloud_endpoint:
+            values = [
                 {
                     "id": "cloud",
                     "label": "云端 Provider",
-                    "endpoint": getattr(settings, "cloud_endpoint", ""),
-                    "access_token": getattr(settings, "cloud_access_token", ""),
-                    "app_id": getattr(settings, "cloud_app_id", ""),
-                }
-            )
+                    "endpoint": cloud_endpoint,
+                    "access_token": cloud_access_token,
+                    "app_id": cloud_app_id,
+                },
+                *(value for value in values if value.get("id") != "cloud"),
+            ]
         result: list[RemoteProviderConfig] = []
         for value in values:
             config = RemoteProviderConfig.from_mapping(value)
@@ -515,31 +546,69 @@ class ProviderRegistry:
 
 
 class FallbackSpeechStream:
-    """Use a remote stream first and fall back to local on failure."""
+    """Keep local recognition warm while a remote stream has priority."""
 
     def __init__(self, remote: SpeechStream, local: SpeechStream) -> None:
         self.remote = remote
         self.local = local
         self.active = remote
         self.available = True
+        self._closed = False
+        self._last_segment_id = -1
+        self._segment_offset = 0
+        self._needs_remap = False
+        self._latest_local: RecognitionUpdate | None = None
 
     def is_speech(self, pcm: bytes) -> bool:
         return self.local.is_speech(pcm)
 
     def accept_pcm(self, pcm: bytes) -> RecognitionUpdate | None:
+        if self._closed:
+            return None
         try:
-            return self.active.accept_pcm(pcm)
+            local_update = self.local.accept_pcm(pcm)
         except SpeechUnavailableError:
             if self.active is self.local:
                 raise
+            local_update = None
+        if self._closed:
+            return None
+        if local_update is not None:
+            self._latest_local = local_update
+        if self.active is self.local:
+            return self._map_update(local_update)
+        try:
+            return self._map_update(self.remote.accept_pcm(pcm))
+        except SpeechUnavailableError:
+            if self._closed:
+                return None
+            if not self.local.available:
+                raise
             self.remote.close()
             self.active = self.local
-            return self.local.accept_pcm(pcm)
+            self._needs_remap = True
+            return self._map_update(self._latest_local)
+
+    def _map_update(self, update: RecognitionUpdate | None) -> RecognitionUpdate | None:
+        if self._closed or update is None:
+            return None
+        if self._needs_remap:
+            self._segment_offset = self._last_segment_id + 1 - update.segment_id
+            self._needs_remap = False
+        segment_id = update.segment_id + self._segment_offset
+        self._last_segment_id = max(self._last_segment_id, segment_id)
+        return RecognitionUpdate(
+            text=update.text,
+            is_final=update.is_final,
+            segment_id=segment_id,
+            is_filler_only=update.is_filler_only,
+        )
 
     def reset(self) -> None:
         self.active.reset()
 
     def close(self) -> None:
+        self._closed = True
         self.remote.close()
         self.local.close()
         self.active = self.local
@@ -624,51 +693,95 @@ class ProviderSpeechServices(SpeechServices):
         return FallbackSpeechStream(remote_stream, local)
 
 
+_CLOUD_REQUESTS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cloud-stt")
+
+
 class _HTTPStreamingRecognizer:
+    """Send bounded PCM chunks without blocking the real-time audio consumer.
+
+    There is at most one request and one second of queued PCM per stream. A slow
+    gateway falls back to the continuously warmed local recognizer. A request
+    owns its HTTP client, so pause/close never races a request's client lifetime.
+    """
+
     def __init__(
         self, config: RemoteProviderConfig, sample_rate: int, turn_token: int | None
     ) -> None:
         self.config = config
         self.sample_rate = sample_rate
         self.turn_token = turn_token
+        self.stream_id = str(uuid4())
+        self._lock = threading.Lock()
         self.segment_id = 0
-        self.client: Any | None = None
+        self._closed = False
+        self._buffer = bytearray()
+        self._future: Future[RecognitionUpdate | None] | None = None
+        self._chunk_bytes = sample_rate * 2 * 2 // 5  # 400 ms PCM16
+        self._max_buffer_bytes = sample_rate * 2  # one second
 
     def __call__(self, pcm: bytes) -> RecognitionUpdate | None:
+        with self._lock:
+            return self._accept(pcm)
+
+    def _accept(self, pcm: bytes) -> RecognitionUpdate | None:
+        if self._closed:
+            return None
+        update = None
+        if self._future is not None and self._future.done():
+            future, self._future = self._future, None
+            update = future.result()
+            if update is not None and update.is_final:
+                self.segment_id = max(self.segment_id + 1, update.segment_id + 1)
+        self._buffer.extend(pcm)
+        if len(self._buffer) > self._max_buffer_bytes:
+            raise SpeechUnavailableError("云端识别积压，已回退本地。")
+        if self._future is None and len(self._buffer) >= self._chunk_bytes:
+            chunk = bytes(self._buffer)
+            self._buffer.clear()
+            self._future = _CLOUD_REQUESTS.submit(self._request, chunk, self.segment_id)
+        return update
+
+    def _request(self, pcm: bytes, request_segment_id: int) -> RecognitionUpdate | None:
+        return asyncio.run(self._request_async(pcm, request_segment_id))
+
+    async def _request_async(self, pcm: bytes, request_segment_id: int) -> RecognitionUpdate | None:
+        if self._closed:
+            return None
         try:
             import httpx
         except ImportError as error:
             raise SpeechUnavailableError("云端 Provider 需要 httpx。") from error
-        if self.client is None:
-            self.client = httpx.Client(timeout=self.config.timeout_seconds)
         headers = {"Authorization": f"Bearer {self.config.access_token}"}
         if self.config.app_id:
             headers["X-Application-Id"] = self.config.app_id
         if self.config.model:
             headers["X-Provider-Model"] = self.config.model
         try:
-            response = self.client.post(
-                self.config.endpoint,
-                headers=headers,
-                json={
-                    "audio": base64.b64encode(pcm).decode("ascii"),
-                    "sample_rate": self.sample_rate,
-                    "segment_id": self.segment_id,
-                    "turn_token": self.turn_token,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+            async with asyncio.timeout(self.config.timeout_seconds):
+                async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+                    response = await client.post(
+                        self.config.endpoint,
+                        headers=headers,
+                        json={
+                            "stream_id": self.stream_id,
+                            "audio": base64.b64encode(pcm).decode("ascii"),
+                            "sample_rate": self.sample_rate,
+                            "segment_id": request_segment_id,
+                            "turn_token": self.turn_token,
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+            if not isinstance(payload, Mapping):
+                raise ValueError("Cloud STT response must be a JSON object.")
         except Exception as error:
             raise SpeechUnavailableError("云端 Provider 请求失败。") from error
         text = _normalize_transcript(str(payload.get("text", payload.get("transcript", ""))))
         is_final = bool(payload.get("is_final", payload.get("final", False)))
         try:
-            segment_id = int(payload.get("segment_id", self.segment_id))
+            segment_id = int(payload.get("segment_id", request_segment_id))
         except (TypeError, ValueError):
-            segment_id = self.segment_id
-        if is_final:
-            self.segment_id = max(self.segment_id + 1, segment_id + 1)
+            segment_id = request_segment_id
         if not text and not is_final:
             return None
         return RecognitionUpdate(
@@ -679,6 +792,9 @@ class _HTTPStreamingRecognizer:
         )
 
     def close(self) -> None:
-        if self.client is not None:
-            self.client.close()
-            self.client = None
+        with self._lock:
+            self._closed = True
+            self._buffer.clear()
+            if self._future is not None:
+                self._future.cancel()
+                self._future = None

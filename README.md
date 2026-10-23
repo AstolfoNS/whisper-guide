@@ -1,73 +1,80 @@
 # Whisper Guide
 
-面向盲人演讲者的实时语音追踪与提示网站。
+实时讲稿追踪与语音提示工作台。第一版需求基线见 [AC-01 至 AC-27](docs/requirements-v1.md)。
 
-第一版需求见 [需求文档](docs/requirements-v1.md)，包含就绪、识别、播报、暂停、终止五个状态，以及可配置的静音提示阈值。
+当前界面只保留讲稿库、会话与双游标、五状态机监控、模型与识别引擎配置。原生控件、键盘焦点与 `Alt+Shift` 会话快捷键继续可用。
 
-## 当前第一版实现状态
+## 处理链路
 
-- Vue 3、TypeScript、Vite 前端，提供无障碍基础布局、讲稿库和会话控制。
-- Python 3.12、FastAPI 后端，提供健康检查、SQLite 讲稿库、五状态会话和 WebSocket 协议。
-- 浏览器采集 16 kHz 单声道 PCM，服务端接入 sherpa-onnx、WebRTC VAD 和 edge-tts，提示音频只在内存中生成。
-- 纯文本讲稿支持批量上传、持久保存、选择和全文预览；用户录音不持久保存。
+```text
+浏览器 PCM16 → WebRTC VAD → SpeechProvider → RecognitionUpdate(partial/final)
+                                                  ↓
+                            ScriptAligner 讲稿约束对齐 → 双游标与五状态机 → edge-tts
+                                                  ↑
+                         可选 LLMSemanticRefiner（任意 OpenAI 兼容接口）
+```
 
-第一版核心流程已经接入。第二阶段验收确认 ASR 模型、VAD、TTS 和真实中文识别闭环已就绪；TTS 仍需要服务器联网，真实麦克风、耳机、浏览器和读屏设备边界见[第一轮验收](docs/acceptance-round-1.md)。
+- 同一语音分段的 partial 覆盖显示，final 才正常提交位置；填充词不触发失配。
+- `ScriptAligner` 结合字面、拼音/近音、游标邻近与上下文处理同音错字和重复句，仍是唯一游标提交入口。
+- STT 默认使用本地 `sherpa-onnx`；通用云端接口与语义大模型独立配置，厂商预设仅用于填表。
+- 活跃会话、PCM 队列与提示 MP3 均在内存中；讲稿保存在 SQLite。始终使用一个 Uvicorn worker。
 
 ## 目录
 
 ```text
 whisper-guide/
 ├── backend-core/
-│   ├── app/api/             # HTTP 与 WebSocket 控制器
-│   ├── app/domain/          # 五状态机、双游标与讲稿追踪
-│   ├── app/infrastructure/  # sherpa-onnx、VAD、edge-tts 适配
-│   ├── app/repositories/    # SQLite 讲稿仓储
-│   └── scripts/             # 模型下载与运维脚本
-├── frontend/                # Vue 前端
-├── docs/                    # 需求、架构、部署与验收文档
-├── Dockerfile               # backend-runtime/frontend-runtime 多阶段构建
-└── docker-compose.yml       # 本地容器编排
+│   ├── app/api/              # 讲稿、会话、模型配置 API
+│   ├── app/domain/           # 五状态机、双游标、ScriptAligner
+│   ├── app/infrastructure/   # speech.py 与通用 llm.py
+│   ├── app/repositories/     # SQLite 讲稿仓储
+│   ├── app/config.py         # 环境默认值、运行时模型配置持久化
+│   ├── scripts/              # 模型下载、备份与验证
+│   └── models/               # 已瘦身本地 STT 模型（不入 Git）
+├── frontend/src/
+│   ├── api/                  # HTTP / WebSocket 类型与客户端
+│   ├── audio/                # PCM 采集、内存播放和取消令牌
+│   └── components/           # 讲稿、会话、状态机、模型配置面板
+├── docs/
+├── deploy/                   # 部署和打包脚本
+├── Dockerfile
+└── docker-compose.yml
 ```
 
-## 开发环境
+## 本地启动
 
-使用 WSL Ubuntu，在项目的 Linux 路径内运行以下命令。需要 Python 3.12、uv、Node.js 24 和 pnpm；避免混用 Windows 与 WSL 的虚拟环境或 node_modules。
-
-Python 环境由 `backend-core/.python-version` 指定，uv 会在需要时准备对应解释器。
-
-## 启动
-
-第一个终端启动后端：
+在 WSL Linux 路径下使用 Python 3.12、`uv`、Node.js `^22.18.0` 或 `>=24.12.0`、`pnpm`。勿混用 Windows 与 WSL 的虚拟环境或 node_modules。
 
 ```bash
 cd backend-core
 uv sync --locked
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-第二个终端启动前端：
+另开终端：
 
 ```bash
 cd frontend
-pnpm install
-pnpm dev --host 0.0.0.0
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-Windows 浏览器访问 `http://localhost:5173`。开发服务器将 `/api` 请求代理到后端 `127.0.0.1:8000`。
+打开 `http://localhost:5173`。开发及预览服务器代理 `/api` 与 WebSocket 到后端 `8000`；浏览器采音需要 localhost 或 HTTPS。
 
-后端健康检查：`http://localhost:8000/api/health`。前端页面也提供手动检查入口。
+## 模型与识别引擎配置
 
-前端生产构建及静态预览：
+页面的“模型与识别引擎”支持：
 
-```bash
-cd frontend
-pnpm build
-pnpm preview --host 0.0.0.0
-```
+- STT：`local` / `cloud`，Cloud Endpoint、App ID、Access Token、云端音频授权。
+- 语义对齐：`off` / `fallback` / `hybrid`。
+- 大模型：`custom`、`deepseek`、`qwen`、`doubao`、`openai`、`ollama` 预设；Base URL、自由模型名称、API Key、正整数超时毫秒。
+- 测试连通性与保存配置。测试使用临时配置，不改变正在生效或保存的配置。
 
-本地预览也已配置 `/api` 代理。生产部署使用 Docker Compose 和 Nginx，将 `/api`（包括 WebSocket）转发到单个后端 worker；详细步骤见[部署说明](docs/deployment.md)。
+配置默认来自 `WHISPER_GUIDE_*` 环境变量；保存后原子写入后端数据目录 `.model-settings.json`（权限 `0600`），重启会加载已保存的模型字段并覆盖环境默认值。该文件含后端凭据，应与 `.env` 一样保护。GET 只返回密钥存在标记和固定 `****`；密码框留空保留原密钥。云端 STT 未授权时强制使用本地识别。
 
-容器启动：
+真实云端服务需自行提供可用 Endpoint、模型名和凭据。预设的 URL/模型名只是可修改示例，不代表账号已开通或已完成真实云端联调。LLM 仅接收讲稿窗口和识别文本，云端 STT 接收音频片段；本项目不保存用户录音。
+
+## 容器启动
 
 ```bash
 cp .env.example .env
@@ -76,9 +83,7 @@ docker compose build
 docker compose up -d
 ```
 
-容器镜像在构建时内置 `backend-core/models/` 下的已验证 STT 模型；SQLite 和备份分别持久化到 `./data/sqlite` 与 `./data/backups`。
-
-离线发布使用 `deploy/package.sh` 生成 `release/` 和 `whisper-guide-release.tar`；目标服务器解包后运行 `./deploy.sh whisper-guide-image.tar.gz`。
+打开 `http://localhost:8080`。镜像内置已验证的 `backend-core/models/` 核心模型，SQLite 与 `.model-settings.json` 持久化到 `./data/sqlite`，备份到 `./data/backups`。容器仅使用一个 worker。离线发布及权限修复见 [部署说明](docs/deployment.md) 和 [DEPLOY.md](DEPLOY.md)。
 
 ## 验证
 
@@ -96,35 +101,11 @@ pnpm typecheck
 pnpm build
 ```
 
-## 第一版技术实现
+本地真实 STT 模型与中文闭环已完成此前验收；本轮新增模型配置、语义对齐、状态监控与前端简化，最终回归结果记录在 [验收报告](docs/acceptance-round-1.md)。实际云端账号、目标麦克风/耳机和读屏设备需单独验收。
 
-- 前端：Vue 3 + TypeScript + Vite。
-- 后端：Python + FastAPI；实时音频和控制事件通过 WebSocket 传输。
-- 数据：SQLAlchemy + SQLite 保存讲稿正文和元数据；模型保存在服务端目录，活跃会话保存在单进程内存，原始上传文件和用户录音不落盘。
-- 语音：服务端已接入 sherpa-onnx 流式 STT、WebRTC VAD 和 edge-tts；容器镜像从 `backend-core/models/` 内置已验证模型。
-- 当前无需 PostgreSQL、Redis、MinIO 或独立消息队列。
+- [架构说明](docs/architecture.md)
+- [语音与语义 Provider 协议](docs/speech-provider-interface.md)
+- [部署说明](docs/deployment.md)
+- [运维手册](docs/operations.md)
 
-第一版需求基线没有改变；未完成事项主要是不同目标设备、读屏软件和生产并发规模的现场验收。
-
-## 部署与运维
-
-- [部署说明](docs/deployment.md)：本地开发、模型准备、Docker Compose 与配置。
-- [运维手册](docs/operations.md)：健康检查、日志、备份恢复与故障排查。
-- [架构说明](docs/architecture.md)：组件职责、双游标和数据边界。
-- [第一轮验收](docs/acceptance-round-1.md)：自动化、真实 STT 闭环和设备边界。
-
-当前已接入会话控制、浏览器 PCM 采集与提示播放；模型目录在容器构建时复制到 `/models`，TTS 需要服务器联网。用户录音不持久保存。运行 `pnpm test` 可检查前端音频取消、重采样和 WebSocket 协议。
-
-生产部署只使用一个后端 worker。当前没有用户认证和讲稿权限隔离，默认只绑定 localhost；公网开放前应增加 HTTPS、认证与访问控制。
-
-### 语音定位与播报说明
-
-识别结果先经过填充词过滤和短文本稳定性检查，再交给讲稿追踪器匹配；未匹配时页面会明确显示“自动提示已暂停”，用户可以手动提示或重新定位。当前版本仍由本地讲稿追踪器决定 reading_position 和 prompt_position，通用 STT 文本不会直接改变讲稿游标。
-
-服务端可通过 WHISPER_GUIDE_STT_PROVIDER_CONFIGS 注册任意兼容网关，前端从 /api/speech/providers 选择已配置的模型；密钥只保存在后端环境变量中。远程 Provider 只输出 RecognitionUpdate，不能直接修改讲稿游标；超时或断网时回退本地 Provider。
-
-## 语音处理架构
-
-实时链路为：VAD 分段 → partial/final 流式识别 → ScriptAligner 结合讲稿窗口进行字面、拼音/近音和游标约束对齐 → reading_position 与 prompt_position 推进 → TTS 播报。
-
-STT Provider 默认使用本地 LocalSherpaProvider。服务端可通过 WHISPER_GUIDE_STT_PROVIDER_CONFIGS 注册任意兼容网关，前端从 /api/speech/providers 选择已配置的模型；密钥只保存在后端环境变量中。远程 Provider 只输出 RecognitionUpdate，不能直接修改讲稿游标；超时或断网时回退本地 Provider。
+当前没有用户认证与讲稿权限隔离，默认绑定 localhost；公开部署模型配置接口前需配置 HTTPS、认证与访问控制。`edge-tts` 合成需要服务器联网。

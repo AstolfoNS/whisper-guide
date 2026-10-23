@@ -106,20 +106,20 @@ export function normalizeModelSettings(payload: unknown): ModelSettings {
     ? rawPresets.flatMap((item) => { const preset = normalizePreset(item); return preset ? [preset] : [] })
     : []
   const mergedPresets = presets.length ? presets : defaultLlmPresets()
-  const tokenHint = stringValue(root.cloud_stt_access_token_hint ?? root.cloud_access_token_hint ?? stt.access_token_hint)
-  const apiKeyHint = stringValue(root.llm_api_key_hint ?? root.api_key_hint ?? llm.api_key_hint)
+  const tokenHint = stringValue(root.cloud_stt_access_token_hint ?? root.cloud_access_token_hint ?? root.access_token ?? stt.access_token_hint ?? stt.access_token)
+  const apiKeyHint = stringValue(root.llm_api_key_hint ?? root.api_key_hint ?? root.llm_api_key ?? root.api_key ?? llm.api_key_hint ?? llm.api_key)
   return {
     stt_provider: stringValue(root.stt_provider ?? stt.provider, 'local'),
     cloud_opt_in: booleanValue(root.cloud_opt_in ?? stt.opt_in),
     cloud_stt_endpoint: stringValue(root.cloud_stt_endpoint ?? root.cloud_endpoint ?? stt.endpoint),
     cloud_stt_app_id: stringValue(root.cloud_stt_app_id ?? root.cloud_app_id ?? stt.app_id),
-    cloud_stt_token_configured: booleanValue(root.cloud_stt_token_configured ?? root.has_cloud_stt_access_token ?? stt.token_configured) || Boolean(tokenHint),
+    cloud_stt_token_configured: booleanValue(root.cloud_stt_token_configured ?? root.has_cloud_stt_access_token ?? root.has_access_token ?? stt.token_configured ?? stt.has_access_token) || Boolean(tokenHint),
     cloud_stt_token_hint: tokenHint,
     llm_align_mode: alignMode(root.llm_align_mode ?? llm.align_mode),
     llm_provider_preset: stringValue(root.llm_provider_preset ?? llm.provider_preset, 'custom'),
     llm_base_url: stringValue(root.llm_base_url ?? llm.base_url),
     llm_model: stringValue(root.llm_model ?? llm.model),
-    llm_api_key_configured: booleanValue(root.llm_api_key_configured ?? root.has_llm_api_key ?? llm.api_key_configured) || Boolean(apiKeyHint),
+    llm_api_key_configured: booleanValue(root.llm_api_key_configured ?? root.has_llm_api_key ?? root.has_api_key ?? llm.api_key_configured ?? llm.has_api_key) || Boolean(apiKeyHint),
     llm_api_key_hint: apiKeyHint,
     llm_timeout_ms: positiveInteger(root.llm_timeout_ms ?? llm.timeout_ms, 1500),
     llm_presets: mergedPresets,
@@ -127,7 +127,7 @@ export function normalizeModelSettings(payload: unknown): ModelSettings {
 }
 
 export function apiBase() {
-  return (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+  return (import.meta.env?.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {

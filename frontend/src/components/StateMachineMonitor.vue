@@ -11,13 +11,12 @@ const labels: Record<SessionState, string> = {
   PAUSED: '暂停',
   TERMINATED: '终止',
 }
-const stateOrder: SessionState[] = ['READY', 'LISTENING', 'PROMPTING', 'PAUSED', 'TERMINATED']
 const nodes: Array<{ state: SessionState; x: number; y: number }> = [
-  { state: 'READY', x: 88, y: 50 },
-  { state: 'LISTENING', x: 275, y: 50 },
-  { state: 'PROMPTING', x: 462, y: 50 },
-  { state: 'PAUSED', x: 275, y: 140 },
-  { state: 'TERMINATED', x: 462, y: 140 },
+  { state: 'READY', x: 70, y: 60 },
+  { state: 'LISTENING', x: 240, y: 60 },
+  { state: 'PROMPTING', x: 430, y: 60 },
+  { state: 'PAUSED', x: 240, y: 190 },
+  { state: 'TERMINATED', x: 430, y: 190 },
 ]
 const nodeByState = Object.fromEntries(nodes.map((node) => [node.state, node])) as Record<SessionState, { state: SessionState; x: number; y: number }>
 const edges: Array<{ from: SessionState; to: SessionState; curve?: boolean }> = [
@@ -33,7 +32,7 @@ const edges: Array<{ from: SessionState; to: SessionState; curve?: boolean }> = 
   { from: 'PAUSED', to: 'TERMINATED', curve: true },
 ]
 
-const currentState = computed<SessionState>(() => props.session?.state ?? 'READY')
+const currentState = computed<SessionState>(() => props.session?.current_state ?? props.session?.state ?? 'READY')
 const previousState = computed<SessionState | null>(() => props.session?.previous_state ?? null)
 const transitionTrigger = computed(() => props.session?.transition_trigger || (props.session ? 'session_initialized' : ''))
 const transitionAt = computed(() => props.session?.transition_at || '')
@@ -47,19 +46,24 @@ function isCurrent(state: SessionState) { return currentState.value === state }
 function isActiveEdge(from: SessionState, to: SessionState) {
   return previousState.value === from && currentState.value === to
 }
-function point(node: { x: number; y: number }, endpoint: 'start' | 'end') {
-  const radius = 26
-  return { x: node.x + (endpoint === 'start' ? radius : -radius), y: node.y }
-}
 function edgePath(edge: { from: SessionState; to: SessionState; curve?: boolean }) {
-  const start = point(nodeByState[edge.from], 'start')
-  const end = point(nodeByState[edge.to], 'end')
-  if (!edge.curve) return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
-  const midX = (start.x + end.x) / 2
-  const offset = start.y === end.y ? -32 : 20
-  return `M ${start.x} ${start.y} Q ${midX} ${start.y + offset} ${end.x} ${end.y}`
+  const start = nodeByState[edge.from]
+  const end = nodeByState[edge.to]
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const length = Math.hypot(dx, dy)
+  const radius = 31
+  const sx = start.x + dx / length * radius
+  const sy = start.y + dy / length * radius
+  const ex = end.x - dx / length * radius
+  const ey = end.y - dy / length * radius
+  if (!edge.curve) return `M ${sx} ${sy} L ${ex} ${ey}`
+  const bend = edge.from === 'READY' ? 34 : 24
+  const cx = (sx + ex) / 2 - dy / length * bend
+  const cy = (sy + ey) / 2 + dx / length * bend
+  return `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`
 }
-function formatTime(value: string) {
+function formatTime(value: string | number | null | undefined) {
   if (!value) return '—'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString('zh-CN', { hour12: false })
@@ -67,6 +71,9 @@ function formatTime(value: string) {
 function triggerLabel(value: string) {
   const labelsByTrigger: Record<string, string> = {
     session_initialized: '会话初始化',
+    session_started: '开始演讲',
+    manual_prompt: '手动提示',
+    service_fault: '语音服务异常',
     user_speech_started: '检测到人声',
     silence_threshold_reached: '达到静音阈值',
     prompt_audio_finished: '提示音播放完成',
@@ -76,7 +83,7 @@ function triggerLabel(value: string) {
     ws_disconnected: '连接断开',
     user_terminated: '用户结束',
   }
-  return labelsByTrigger[value] ?? value || '—'
+  return (labelsByTrigger[value] ?? value) || '—'
 }
 </script>
 
@@ -84,7 +91,6 @@ function triggerLabel(value: string) {
   <section class="state-monitor" aria-labelledby="state-monitor-title">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">会话诊断</p>
         <h2 id="state-monitor-title">五状态机</h2>
       </div>
       <span class="state-monitor__current" :class="`state-monitor__current--${currentState.toLowerCase()}`" role="status" aria-live="polite">
@@ -99,13 +105,14 @@ function triggerLabel(value: string) {
         <span class="state-monitor__trigger">{{ triggerLabel(transitionTrigger) }}</span>
         <span aria-hidden="true">→</span>
         <span class="state-monitor__state state-monitor__state--current">{{ labels[currentState] }}</span>
-        <time v-if="transitionAt" :datetime="transitionAt">{{ formatTime(transitionAt) }}</time>
+        <time v-if="transitionAt" :datetime="transitionAt || undefined">{{ formatTime(transitionAt) }}</time>
       </template>
-      <span v-else class="state-monitor__empty">尚未连接会话</span>
+      <span v-else class="state-monitor__empty">尚未创建会话</span>
     </div>
 
+    <p v-if="props.session?.allowed_transitions?.length" class="input-help">允许切换：{{ props.session.allowed_transitions.map((state) => labels[state]).join("、") }}</p>
     <div class="state-monitor__graph" role="img" aria-label="五状态机状态关系图">
-      <svg viewBox="0 0 550 190" focusable="false" aria-hidden="true">
+      <svg viewBox="0 0 510 250" focusable="false" aria-hidden="true">
         <defs>
           <marker id="state-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
@@ -125,7 +132,6 @@ function triggerLabel(value: string) {
           <text y="5" text-anchor="middle">{{ labels[node.state] }}</text>
         </g>
       </svg>
-      <p class="state-monitor__legend">箭头表示允许的状态转换；高亮节点为当前状态，高亮箭头为最近一次转换。</p>
     </div>
 
     <div class="state-monitor__history">
@@ -136,7 +142,7 @@ function triggerLabel(value: string) {
           <span class="state-monitor__sequence">#{{ history.length - index }}</span>
           <span>{{ entry.from_state ? labels[entry.from_state] : '—' }} → {{ labels[entry.to_state] }}</span>
           <span class="state-monitor__history-trigger">{{ triggerLabel(entry.trigger) }}</span>
-          <time :datetime="entry.timestamp">{{ formatTime(entry.timestamp) }}</time>
+          <time :datetime="entry.timestamp || undefined">{{ formatTime(entry.timestamp) }}</time>
         </li>
       </ol>
     </div>

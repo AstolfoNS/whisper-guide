@@ -204,6 +204,7 @@ def test_invalid_commands_and_relocation_are_rejected(session) -> None:
         with pytest.raises(SessionError):
             session.handle("reposition", 0, position=position)
 
+
 def test_filler_transcript_does_not_disable_automatic_prompt(session) -> None:
     session.handle("start", 0)
     session.handle("speech_start", 1)

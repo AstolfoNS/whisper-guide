@@ -33,6 +33,7 @@ class MatchResult:
     position: int
     unit_index: int
     confidence: float
+    matched_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,7 @@ class ScriptTracker:
         raw_match = self.match(transcript, reading_position)
         collapsed_match = self.match(collapsed, reading_position)
         return collapsed if raw_match is None and collapsed_match is not None else transcript
+
     def match(self, transcript: str, reading_position: int | None) -> MatchResult | None:
         recognized = content_units(transcript)
         if not recognized:
@@ -175,6 +177,7 @@ class ScriptTracker:
             return None
         return MatchResult(self.units[index].start, index, confidence)
 
+
 @dataclass(frozen=True, slots=True)
 class AlignmentCandidate:
     start_index: int
@@ -208,6 +211,18 @@ class ScriptAligner:
         self.search_after = search_after
         self.reliable_threshold = reliable_threshold
         self._script_pinyin = [_pinyin_key(unit.text) for unit in tracker.units]
+
+    def script_window(self, reading_position: int | None) -> str:
+        """Return only original text inside the bounded alignment search window."""
+        units = self.tracker.units
+        anchor = 0 if reading_position is None else self.tracker.unit_index_at(reading_position)
+        left = max(0, anchor - self.search_before)
+        right = min(len(units), anchor + self.search_after)
+        if left >= right:
+            return ""
+        start, end = units[left].start, units[right - 1].end
+        # Never split an English/number unit merely to fit a remote context limit.
+        return self.tracker.text[start:end] if end - start <= 4096 else ""
 
     def align(self, transcript: str, reading_position: int | None) -> MatchResult | None:
         recognized = content_units(transcript)

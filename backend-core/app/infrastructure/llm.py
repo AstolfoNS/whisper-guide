@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, Mapping
+from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -24,34 +28,70 @@ class LLMSemanticRefiner:
 
     PRESETS: ClassVar[dict[str, dict[str, str]]] = {
         "custom": {"label": "自定义（OpenAI 兼容）", "base_url": "", "model": ""},
-        "deepseek": {"label": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
-        "qwen": {"label": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-turbo"},
-        "doubao": {"label": "豆包 / 火山方舟", "base_url": "https://ark.cn-beijing.volces.com/api/v3", "model": "doubao-1-5-lite-32k"},
-        "openai": {"label": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
-        "ollama": {"label": "Ollama（局域网）", "base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b"},
+        "deepseek": {
+            "label": "DeepSeek",
+            "base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-chat",
+        },
+        "qwen": {
+            "label": "通义千问",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-turbo",
+        },
+        "doubao": {
+            "label": "豆包 / 火山方舟",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "model": "doubao-1-5-lite-32k",
+        },
+        "openai": {
+            "label": "OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+        },
+        "ollama": {
+            "label": "Ollama（局域网）",
+            "base_url": "http://127.0.0.1:11434/v1",
+            "model": "qwen2.5:7b",
+        },
     }
 
     def __init__(
         self,
+        settings: Any | None = None,
         *,
-        align_mode: str = "off",
-        provider_preset: str = "custom",
-        base_url: str = "",
-        model: str = "",
-        api_key: str = "",
-        timeout_ms: int = 1500,
+        align_mode: str | None = None,
+        provider_preset: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout_ms: int | None = None,
         client_factory: Any | None = None,
     ) -> None:
-        self.align_mode = align_mode
-        self.provider_preset = provider_preset
-        self.base_url = base_url.strip()
-        self.model = model.strip()
-        self.api_key = api_key
-        self.timeout_ms = max(1, int(timeout_ms))
+        self.align_mode = (
+            align_mode
+            if align_mode is not None
+            else str(getattr(settings, "llm_align_mode", "off"))
+        )
+        self.provider_preset = (
+            provider_preset
+            if provider_preset is not None
+            else str(getattr(settings, "llm_provider_preset", "custom"))
+        )
+        self.base_url = (
+            base_url if base_url is not None else str(getattr(settings, "llm_base_url", ""))
+        ).strip()
+        self.model = (
+            model if model is not None else str(getattr(settings, "llm_model", ""))
+        ).strip()
+        self.api_key = api_key if api_key is not None else str(getattr(settings, "llm_api_key", ""))
+        configured_timeout = (
+            timeout_ms if timeout_ms is not None else getattr(settings, "llm_timeout_ms", 1500)
+        )
+        self.timeout_ms = max(1, int(configured_timeout))
         self._client_factory = client_factory or httpx.AsyncClient
 
     @classmethod
-    def from_settings(cls, settings: Any) -> "LLMSemanticRefiner":
+    def from_settings(cls, settings: Any) -> LLMSemanticRefiner:
         return cls(
             align_mode=str(getattr(settings, "llm_align_mode", "off")),
             provider_preset=str(getattr(settings, "llm_provider_preset", "custom")),
@@ -71,9 +111,7 @@ class LLMSemanticRefiner:
 
     @property
     def enabled(self) -> bool:
-        return self.align_mode in {"fallback", "hybrid"} and bool(
-            self.base_url and self.model and self.api_key
-        )
+        return self.align_mode in {"fallback", "hybrid"} and bool(self.base_url and self.model)
 
     @property
     def endpoint(self) -> str:
@@ -82,9 +120,9 @@ class LLMSemanticRefiner:
             return ""
         if value.endswith("/chat/completions"):
             return value
-        if value.endswith("/v1"):
-            return f"{value}/chat/completions"
-        return f"{value}/v1/chat/completions"
+        if not urlsplit(value).path.strip("/"):
+            value += "/v1"
+        return f"{value}/chat/completions"
 
     async def refine(
         self,
@@ -130,11 +168,12 @@ class LLMSemanticRefiner:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
-            async with self._client_factory(timeout=self.timeout_ms / 1000) as client:
-                response = await client.post(self.endpoint, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-        except (httpx.HTTPError, TimeoutError, OSError, ValueError, TypeError):
+            async with asyncio.timeout(self.timeout_ms / 1000):
+                async with self._client_factory(timeout=self.timeout_ms / 1000) as client:
+                    response = await client.post(self.endpoint, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+        except Exception:
             return None
         result = self._parse_response(data)
         if result is None:
@@ -154,9 +193,11 @@ class LLMSemanticRefiner:
         return await self.refine(*args, **kwargs)
 
     async def test_connection(self) -> dict[str, Any]:
-        if not self.base_url or not self.model or not self.api_key:
+        if not self.base_url or not self.model:
             return {"ok": False, "latency_ms": 0, "message": "LLM 配置不完整。"}
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         payload = {
             "model": self.model,
             "temperature": 0,
@@ -165,10 +206,14 @@ class LLMSemanticRefiner:
         }
         started = time.perf_counter()
         try:
-            async with self._client_factory(timeout=self.timeout_ms / 1000) as client:
-                response = await client.post(self.endpoint, headers=headers, json=payload)
-                response.raise_for_status()
-        except (httpx.HTTPError, TimeoutError, OSError, ValueError, TypeError) as error:
+            async with asyncio.timeout(self.timeout_ms / 1000):
+                async with self._client_factory(timeout=self.timeout_ms / 1000) as client:
+                    response = await client.post(self.endpoint, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                    if not isinstance(data, Mapping) or not data.get("choices"):
+                        raise ValueError("Invalid response")
+        except Exception as error:
             elapsed = int((time.perf_counter() - started) * 1000)
             return {"ok": False, "latency_ms": elapsed, "message": _safe_error(error)}
         elapsed = int((time.perf_counter() - started) * 1000)
@@ -180,6 +225,7 @@ class LLMSemanticRefiner:
             return None
         content: Any = data.get("matched_quote")
         confidence: Any = data.get("confidence")
+        from_choices = False
         if content is None:
             choices = data.get("choices")
             if isinstance(choices, list) and choices:
@@ -187,15 +233,22 @@ class LLMSemanticRefiner:
                 if isinstance(first, Mapping):
                     message = first.get("message", first)
                     content = message.get("content") if isinstance(message, Mapping) else None
+                    from_choices = True
         if isinstance(content, str):
             parsed = _parse_json_object(content)
             if parsed is not None:
                 content = parsed.get("matched_quote")
                 confidence = parsed.get("confidence", confidence)
+            elif from_choices:
+                return None
         if not isinstance(content, str):
             return None
         try:
-            score = min(1.0, max(0.0, float(confidence)))
+            if isinstance(confidence, bool):
+                return None
+            score = float(confidence)
+            if not math.isfinite(score) or not 0 <= score <= 1:
+                return None
         except (TypeError, ValueError):
             return None
         quote = content.strip()
@@ -216,8 +269,11 @@ def _parse_json_object(content: str) -> Mapping[str, Any] | None:
 
 
 def _safe_error(error: Exception) -> str:
-    message = str(error).strip().replace("\n", " ")
-    return message[:200] or "连接失败。"
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+        return "模型服务请求超时。"
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"模型服务返回 HTTP {error.response.status_code}。"
+    return "模型服务连接失败或响应格式无效。"
 
 
 __all__ = ["LLMSemanticRefiner", "SemanticRefinement"]

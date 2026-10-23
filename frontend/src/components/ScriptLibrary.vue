@@ -173,19 +173,17 @@ onBeforeUnmount(() => {
   <section class="script-card" aria-labelledby="scripts-title">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">演讲准备</p>
-        <h2 id="scripts-title">我的讲稿</h2>
+<h2 id="scripts-title">我的讲稿</h2>
       </div>
       <button type="button" class="secondary-button" :disabled="loading || uploading" @click="refreshScripts">
         {{ loading ? '刷新中…' : '刷新讲稿列表' }}
       </button>
     </div>
-    <p class="section-copy">上传多份纯文本讲稿，选择其中一份作为本次演讲准备使用的讲稿。</p>
 
     <form class="upload-form" :aria-busy="uploading" @submit.prevent="upload">
       <label for="script-files">选择讲稿文件（支持多选）</label>
       <p id="upload-help" class="input-help">
-        支持 .txt、.text、.md；每份最多 2 MiB，每次最多 10 份。.md 按纯文本处理。
+        txt / text / md · 每份 ≤ 2 MiB · 每次 ≤ 10 份
       </p>
       <input
         id="script-files"
@@ -209,7 +207,7 @@ onBeforeUnmount(() => {
       <div class="script-library" :aria-busy="loading">
         <p v-if="libraryError" class="form-error" role="alert">{{ libraryError }}</p>
         <p v-if="!scripts.length" class="empty-state" role="status">
-          {{ loading ? '正在读取讲稿…' : libraryError ? '讲稿列表暂时不可用，可重试刷新。' : '还没有讲稿，上传后将在这里显示。' }}
+          {{ loading ? '正在读取讲稿…' : libraryError ? '讲稿列表暂时不可用，可重试刷新。' : '暂无讲稿' }}
         </p>
         <fieldset v-else class="script-choices">
           <legend>选择本次演讲稿（共 {{ scripts.length }} 份）</legend>
@@ -236,14 +234,14 @@ onBeforeUnmount(() => {
         <p v-if="selecting" role="status">正在加载讲稿内容…</p>
         <template v-else-if="selectedScript">
           <p class="selected-script-name" role="status">已选择：{{ selectedScript.name }}</p>
-          <p class="script-meta">{{ selectedScript.character_count }} 字符 · 选择仅在当前页面保留</p>
+          <p class="script-meta">{{ selectedScript.character_count }} 字符</p>
           <div class="script-content" tabindex="0" role="region" :aria-label="`${selectedScript.name}全文预览`">{{ selectedScript.content }}</div>
         </template>
-        <p v-else-if="!selectionError" class="empty-state">请从列表选择一份讲稿，查看全文。</p>
+        <p v-else-if="!selectionError" class="empty-state">未选择讲稿</p>
         <button v-if="selectionError && selectedScriptId" type="button" class="secondary-button" @click="selectScript(selectedScriptId)">重新加载所选讲稿</button>
       </section>
     </div>
 
-    <p class="scope-note">讲稿保存在服务端，可重复使用。开始后本次讲稿锁定，更换讲稿请先结束会话。用户录音不保存。</p>
+    <p v-if="locked" class="input-help" role="status">会话中讲稿已锁定，结束后可更换。</p>
   </section>
 </template>
