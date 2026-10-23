@@ -1,0 +1,59 @@
+$ pnpm test:legacy && pnpm test:unit
+$ node --experimental-strip-types --test tests/*.test.mjs
+✔ stopping an audio decode prevents stale playback and completion (3.012009ms)
+✔ manual stop detaches completion callback (0.305039ms)
+✔ AudioWorklet resamples 48 kHz into 20 ms PCM16 frames and flushes on disable (3.995162ms)
+✔ editor draft keeps revision and activation metadata separate and never fills a masked key (0.874233ms)
+✔ credential preserve, replacement and explicit clear are distinct payloads (0.272393ms)
+✔ cloud drafts require explicit microphone authorization and model drafts require URL and model (0.245648ms)
+✔ save, duplicate, test and activate use independent routes and never send secrets during copy (20.477071ms)
+✔ revision and session conflicts retain structured server reasons (0.887711ms)
+✔ model discovery uses the draft without requiring a model, preserving saved credentials and supporting cancellation (1.057866ms)
+✔ model settings normalize nested response and preserve only secret metadata (0.69539ms)
+✔ model presets include generic providers and custom fallback (0.612934ms)
+✔ session client prepares fixed script, waits for acknowledgement and uses expected socket URL (1.897749ms)
+✔ server errors reject pending state acknowledgement (0.66558ms)
+✔ events from old connection do not modify a replacement connection (0.274887ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 126.120272
+$ vitest run
+
+ RUN  v5.0.5 /home/timeleafing/projects/whisper-guide/frontend
+
+ ✓ tests/unit/modelConfigsStore.spec.ts (2 tests) 8ms
+ ✓ tests/unit/sessionController.spec.ts (8 tests) 75ms
+ ✓ tests/unit/studioComponents.spec.ts (3 tests) 154ms
+ ✓ tests/unit/modelConfigs.spec.ts (7 tests) 194ms
+ ✓ tests/unit/modelConfigsView.spec.ts (15 tests) 889ms
+
+ Test Files  5 passed (5)
+      Tests  35 passed (35)
+   Start at  03:25:23
+   Duration  3.66s (import 51%, environment 22%, transform 14%, tests 12%)
+
+$ vue-tsc --noEmit
+$ npm run typecheck && vite build
+npm notice run whisper-guide-frontend@0.1.0 typecheck
+npm notice run vue-tsc --noEmit
+vite v7.3.7 building client environment for production...
+transforming...
+✓ 2738 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                              0.55 kB │ gzip:   0.39 kB
+dist/assets/ModelConfigsView-B8kycYnz.css    5.26 kB │ gzip:   1.31 kB
+dist/assets/StudioView-C0WdaT5w.css          7.49 kB │ gzip:   1.80 kB
+dist/assets/index-BLU93SRY.css               9.85 kB │ gzip:   2.88 kB
+dist/assets/scripts-BcW15MeW.js              2.14 kB │ gzip:   1.07 kB
+dist/assets/DashboardView-BMUOwqiH.js        5.47 kB │ gzip:   2.60 kB
+dist/assets/modelConfigs-C0ujyNQc.js         5.56 kB │ gzip:   2.31 kB
+dist/assets/ModelConfigsView-p1GZgRFx.js    25.19 kB │ gzip:   8.55 kB
+dist/assets/StudioView-9U-3oH8E.js         167.41 kB │ gzip:  49.09 kB
+dist/assets/index-C8k5mp3N.js              451.84 kB │ gzip: 139.13 kB
+✓ built in 4.89s

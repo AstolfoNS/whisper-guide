@@ -1,0 +1,8 @@
+2026-10-24: live Ark model discovery through the new implementation
+GET https://ark.cn-beijing.volces.com/api/v3/models
+Used existing backend credentials internally; no credential values were emitted.
+Executed the new app source in a read-only temporary container, with existing data mounted read-only.
+Result: {"probe":"new_discovery_implementation","ok":true,"model_count":137,"truncated":false,"latency_ms":479,"error_code":null,"http_status":null}
+Only catalog discovery was requested. No generation, transcript or recording was submitted.
+No profile was saved or activated. The temporary container was automatically removed.
+Existing 8080 containers remained running. This does not establish generation permission for all listed models.

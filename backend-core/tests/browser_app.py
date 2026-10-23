@@ -6,6 +6,9 @@ import tempfile
 import wave
 from pathlib import Path
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
 from app.config import Settings
 from app.infrastructure.speech import RecognitionUpdate
 from app.main import create_app
@@ -69,3 +72,19 @@ app.state.speech_services = BrowserSpeech()
 @app.post("/mock/chat/completions")
 async def mock_llm():
     return {"choices": [{"message": {"content": "OK"}}]}
+
+
+@app.get("/mock/models")
+async def mock_models(request: Request):
+    if request.headers.get("authorization") != "Bearer synthetic-browser-discovery-key":
+        return JSONResponse(
+            status_code=401, content={"error": {"message": "mock credentials rejected"}}
+        )
+    return {
+        "data": [
+            {"id": "demo-accurate-model", "display_name": "精确文本模型"},
+            {"id": "demo-fast-model", "display_name": "快速文本模型"},
+            {"id": "demo-fast-model", "private": "synthetic-browser-discovery-key"},
+            {"id": "synthetic-browser-discovery-key"},
+        ]
+    }

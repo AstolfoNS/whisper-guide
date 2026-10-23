@@ -9,7 +9,7 @@ import * as api from '../../src/api/modelConfigs'
 
 let mounted: VueWrapper | undefined
 function sample() {
-  return api.normalizeModelConfig({ id: 'profile-a', name: '演讲配置', revision: 3, is_active: true, active_revision: 2, pending_activation: true, settings: { stt_provider: 'local', llm_align_mode: 'off' } })
+  return api.normalizeModelConfig({ id: 'profile-a', name: '演讲配置', revision: 3, is_active: true, active_revision: 2, pending_activation: true, settings: { stt_provider: 'local', llm_align_mode: 'off', llm_base_url: 'https://models.example.test/v1', has_llm_api_key: true } })
 }
 
 async function setup(activeSession = false) {
@@ -62,6 +62,99 @@ describe('model profile routed editor', () => {
     expect(wrapper.text()).toContain('连通性测试失败')
     expect(wrapper.text()).not.toContain('未完成连通验证')
     expect(wrapper.get('[role="alert"]').text()).toContain(diagnostic.message)
+    expect(update).not.toHaveBeenCalled()
+    expect(activate).not.toHaveBeenCalled()
+  })
+
+  it('discovers with a stored key and no model, selecting changes only the unsaved draft', async () => {
+    const discovery = vi.spyOn(api, 'discoverModels').mockResolvedValue({ ok: true, models: [{ id: 'model-from-server' }], latency_ms: 15, message: '已获取模型列表', truncated: false })
+    const { wrapper, update, activate } = await setup()
+    await wrapper.findAll('button').find((button) => button.text() === '获取模型列表')!.trigger('click')
+    await flushPromises()
+    expect(discovery).toHaveBeenCalledWith(expect.objectContaining({ settings: expect.objectContaining({ llm_align_mode: 'off', llm_model: '', llm_api_key: '' }) }), 'profile-a', expect.any(AbortSignal))
+    await wrapper.get('#profile-discovered-model').setValue('model-from-server')
+    expect(wrapper.get<HTMLInputElement>('#profile-llm-model').element.value).toBe('model-from-server')
+    expect(wrapper.text()).toContain('未保存')
+    expect(update).not.toHaveBeenCalled()
+    expect(activate).not.toHaveBeenCalled()
+  })
+
+  it('aborts requests when the destination changes and ignores old replies after a newer result', async () => {
+    let oldResolve!: (value: api.ModelDiscoveryResult) => void
+    let newResolve!: (value: api.ModelDiscoveryResult) => void
+    const discovery = vi.spyOn(api, 'discoverModels')
+      .mockImplementationOnce(() => new Promise((resolve) => { oldResolve = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { newResolve = resolve }))
+    const { wrapper } = await setup()
+    const button = () => wrapper.findAll('button').find((item) => item.text() === '获取模型列表')!
+    await button().trigger('click')
+    const oldSignal = discovery.mock.calls[0]![2]!
+    expect(wrapper.get<HTMLInputElement>('#profile-llm-url').element.disabled).toBe(false)
+    await wrapper.get('#profile-llm-url').setValue('https://new.example.test/v1')
+    expect(oldSignal.aborted).toBe(true)
+    await button().trigger('click')
+    newResolve({ ok: true, models: [{ id: 'new-model' }], latency_ms: 1, message: '新地址列表', truncated: false })
+    await flushPromises()
+    oldResolve({ ok: true, models: [{ id: 'stale-model' }], latency_ms: 100, message: '旧地址列表', truncated: false })
+    await flushPromises()
+    expect(wrapper.text()).toContain('new-model')
+    expect(wrapper.text()).not.toContain('stale-model')
+    await wrapper.get('#profile-llm-key').setValue('replacement-key')
+    expect(wrapper.find('#profile-discovered-model').exists()).toBe(false)
+  })
+
+  it.each(['key', 'clear', 'preset', 'profile'] as const)('cancels an in-flight discovery when its %s changes', async (change) => {
+    let resolve!: (value: api.ModelDiscoveryResult) => void
+    const discovery = vi.spyOn(api, 'discoverModels').mockImplementation(() => new Promise((finish) => { resolve = finish }))
+    const { wrapper } = await setup()
+    await wrapper.findAll('button').find((button) => button.text() === '获取模型列表')!.trigger('click')
+    const signal = discovery.mock.calls[0]![2]!
+    if (change === 'key') await wrapper.get('#profile-llm-key').setValue('new-key')
+    if (change === 'clear') await wrapper.findAll('button').find((button) => button.text() === '清除凭据')!.trigger('click')
+    if (change === 'preset') await wrapper.get('#profile-llm-preset').setValue('deepseek')
+    if (change === 'profile') await wrapper.findAll('button').find((button) => button.text() === '新建配置')!.trigger('click')
+    expect(signal.aborted).toBe(true)
+    resolve({ ok: true, models: [{ id: 'outdated-model' }], latency_ms: 20, message: '过期响应', truncated: false })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('outdated-model')
+    expect(wrapper.text()).not.toContain('过期响应')
+  })
+
+  it.each([
+    { ok: true, models: [], message: '接口未返回模型', latency_ms: 2, truncated: false },
+    { ok: false, models: [], message: '模型列表接口不支持，HTTP 404', latency_ms: 2, truncated: false, error_code: 'HTTP_ERROR' as const, http_status: 404 },
+  ])('keeps manual input available for empty or unsupported model lists ($ok)', async (result) => {
+    vi.spyOn(api, 'discoverModels').mockResolvedValue(result)
+    const { wrapper } = await setup()
+    await wrapper.findAll('button').find((button) => button.text() === '获取模型列表')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain(result.message)
+    expect(wrapper.find('#profile-discovered-model').exists()).toBe(false)
+    await wrapper.get('#profile-llm-model').setValue('manual-model')
+    expect(wrapper.get<HTMLInputElement>('#profile-llm-model').element.value).toBe('manual-model')
+  })
+
+  it('cancels a pending discovery on route exit without blocking navigation', async () => {
+    const discovery = vi.spyOn(api, 'discoverModels').mockImplementation(() => new Promise(() => {}))
+    const { wrapper, router } = await setup()
+    await wrapper.findAll('button').find((button) => button.text() === '获取模型列表')!.trigger('click')
+    const signal = discovery.mock.calls[0]![2]!
+    await router.push('/')
+    expect(signal.aborted).toBe(true)
+    expect(router.currentRoute.value.path).toBe('/')
+  })
+
+  it('can discover from a new unnamed draft without saving or activating a profile', async () => {
+    const discovery = vi.spyOn(api, 'discoverModels').mockResolvedValue({ ok: true, models: [], latency_ms: 0, message: '空列表', truncated: false })
+    const create = vi.spyOn(api, 'createModelConfig')
+    const { wrapper, update, activate } = await setup()
+    await wrapper.findAll('button').find((button) => button.text() === '新建配置')!.trigger('click')
+    await wrapper.get('#profile-llm-url').setValue('https://new.example.test/v1')
+    await wrapper.get('#profile-llm-key').setValue('draft-only-key')
+    await wrapper.findAll('button').find((button) => button.text() === '获取模型列表')!.trigger('click')
+    await flushPromises()
+    expect(discovery).toHaveBeenCalledWith(expect.objectContaining({ name: '', settings: expect.objectContaining({ llm_api_key: 'draft-only-key', llm_model: '' }) }), undefined, expect.any(AbortSignal))
+    expect(create).not.toHaveBeenCalled()
     expect(update).not.toHaveBeenCalled()
     expect(activate).not.toHaveBeenCalled()
   })

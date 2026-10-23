@@ -59,6 +59,7 @@ class RecognitionUpdate:
 | `DELETE /api/settings/model-configs/{id}` | 删除非默认、非生效方案 |
 | `POST /api/settings/model-configs/{id}/activate` | 显式激活，可传 `{revision}`；未终止会话存在时 409 |
 | `POST /api/settings/model-configs/test` | 测试已保存方案或未保存表单；`target` 为 `stt` 或 `llm` |
+| `POST /api/settings/model-configs/discover-models` | 使用已保存配置或当前草稿获取模型列表，不保存、不激活 |
 
 列表中的 `configs` 是可编辑草稿；当 `pending_activation=true` 时，草稿参数与实际生效参数不同。顶栏、首页应读取独立 `active_profile`，不能把新草稿当作当前模型。
 
@@ -93,6 +94,28 @@ LLM 测试失败时额外返回受控 `error_code`：`CONFIG_INCOMPLETE`、`TIME
 更新必须携带当前 `revision`，冲突为 `409 REVISION_CONFLICT`。激活遇到 READY/LISTENING/PROMPTING/PAUSED 为 `409 SESSION_ACTIVE`，不能通过暂停绕过；同一锁保护会话准备与激活。默认本地方案只读；当前生效方案不可删除。选中、保存、测试、激活四种动作互不隐式替代。
 
 API 接受平面模型字段，也兼容嵌套 `stt`/`llm`；显式平面字段优先。云端 STT 使用 `cloud_stt_endpoint`、`cloud_stt_app_id`、`cloud_stt_access_token`，与语义 `llm_*` 分开。API Key 与 Token 只单向提交，GET 不回传明文。空白或 `****` 保留旧值；`clear_llm_api_key=true` / `clear_cloud_stt_access_token=true` 才清除。不得把掩码当作密码输入的实际值。
+
+## 模型发现
+
+```json
+{"id":"<可选的已保存方案 ID>","settings":{"llm_base_url":"https://ark.cn-beijing.volces.com/api/v3","llm_api_key":"<新输入或省略以复用已存密钥>"}}
+```
+
+不要求方案名称、`llm_model` 或启用对齐模式。省略 `id` 时使用无凭据的本地默认方案；传 `id` 时，空白/掩码密钥沿用该方案原凭据，明确清除标志则本次请求也不使用该密钥。没有鉴权要求的本地服务可以不填 API Key。
+
+后端请求 `GET {api_root}/models`，主机根地址补 `/v1`；保留 `/api/v3`、`/compatible-mode/v1`，完整 `/chat/completions` 地址会先去掉该尾段。仅请求这个地址，不自动尝试其它端点或翻页，不跟随重定向。
+
+返回示例：
+
+```json
+{"ok":true,"models":[{"id":"actual-model-id","name":"可选显示名"}],"latency_ms":479,"message":"模型列表已获取；选择后仍需测试模型调用权限。","truncated":false}
+```
+
+兼容 `data` 数组、裸数组及 Ollama 风格 `models` 数组，只输出规范化的 ID 和可选名称。条目去重，过滤控制字符与凭据回显；最多返回 500 个模型、扫描 5000 项，响应体最多 1 MiB，请求采用所配置超时且上限 30 秒。请求未压缩响应，服务强制返回压缩内容时按格式不兼容处理并提示手填。
+
+空列表为 `ok=true`，不清除现有模型 ID；失败为 `ok=false`、`models=[]` 并返回受控诊断，额外支持 `RESPONSE_TOO_LARGE`。404/405 提示接口不可用时手填。列表可见不等于有生成权限，选择后必须单独测试连通性。
+
+浏览器列表仅存在编辑页内存；修改 Base URL、输入密钥、清除标记、预设、切换方案或离开路由会取消旧请求并丢弃迟到结果。新地址会接收当前草稿或后端保留的凭据，页面明确提示目标地址。获取列表、选择模型、保存、激活是独立操作。
 
 ## 持久化与旧接口
 

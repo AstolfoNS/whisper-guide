@@ -224,7 +224,7 @@ class LLMSemanticRefiner:
                 "ok": False,
                 "latency_ms": elapsed,
                 "message": _safe_error(error),
-                "error_code": _test_error_code(error),
+                "error_code": connection_error_code(error),
             }
             if isinstance(error, httpx.HTTPStatusError):
                 result["http_status"] = error.response.status_code
@@ -281,7 +281,7 @@ def _parse_json_object(content: str) -> Mapping[str, Any] | None:
     return parsed if isinstance(parsed, Mapping) else None
 
 
-def _test_error_code(error: Exception) -> str:
+def connection_error_code(error: Exception) -> str:
     """Classify failures without returning exception text or response content."""
 
     if isinstance(error, (TimeoutError, httpx.TimeoutException)):
@@ -303,4 +303,4 @@ def _safe_error(error: Exception) -> str:
     return "模型服务连接失败或响应格式无效。"
 
 
-__all__ = ["LLMSemanticRefiner", "SemanticRefinement"]
+__all__ = ["LLMSemanticRefiner", "SemanticRefinement", "connection_error_code"]

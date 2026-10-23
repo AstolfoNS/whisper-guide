@@ -7,8 +7,8 @@ import ModelConfigForm from '../components/models/ModelConfigForm.vue'
 import { modelConfigDraft, validateModelConfigDraft } from '../components/models/modelConfigForm.ts'
 import {
   activateModelConfig, createModelConfig, deleteModelConfig, duplicateModelConfig,
-  fetchModelConfig, ModelConfigError, testModelConfig, updateModelConfig,
-  type ModelConfig, type ModelConfigTestResult,
+  discoverModels, fetchModelConfig, ModelConfigError, testModelConfig, updateModelConfig,
+  type ModelConfig, type ModelConfigTestResult, type ModelDiscoveryResult,
 } from '../api/modelConfigs.ts'
 import { useModelConfigsStore } from '../stores/modelConfigs'
 import { useSessionStore } from '../stores/session'
@@ -24,6 +24,11 @@ const testingTarget = ref<'stt' | 'llm'>()
 const error = ref('')
 const notice = ref('')
 const testResult = ref<ModelConfigTestResult>()
+const discoveryBusy = ref(false)
+const discoveryResult = ref<ModelDiscoveryResult>()
+const discoveryError = ref('')
+let discoveryController: AbortController | undefined
+let discoveryGeneration = 0
 const showUnsaved = ref(false)
 let pendingDiscard: ((value: boolean) => void) | undefined
 let discardPromise: Promise<boolean> | undefined
@@ -35,6 +40,7 @@ const canActivate = computed(() => selected.value && !dirty.value && !locked.val
 const testVerification = computed(() => testResult.value?.ok === false ? '连通性测试失败' : testResult.value?.verified === 'network' ? '网络请求验证' : testResult.value?.verified === 'capability' ? '本地能力检查，未执行云端网络请求' : '未完成连通验证')
 
 function apply(profile?: ModelConfig) {
+  cancelDiscovery()
   selected.value = profile
   draft.value = modelConfigDraft(profile)
   baseline.value = JSON.stringify(draft.value)
@@ -68,6 +74,7 @@ async function selectProfile(id: string) {
   busy.value = true
   error.value = ''
   notice.value = ''
+  cancelDiscovery()
   controller?.abort()
   controller = new AbortController()
   try { apply(await fetchModelConfig(id, controller.signal)) }
@@ -100,6 +107,7 @@ async function save() {
   if (locked.value || !store.storeAvailable || selected.value?.is_default) return
   error.value = validateModelConfigDraft(draft.value)
   if (error.value) return
+  cancelDiscovery()
   busy.value = true
   notice.value = ''
   try {
@@ -166,6 +174,7 @@ async function testConnection(target: 'stt' | 'llm') {
     error.value = '请先授权发送音频片段，再测试云端语音接口。'
     return
   }
+  cancelDiscovery()
   testingTarget.value = target
   testResult.value = undefined
   try { testResult.value = await testModelConfig(input, target, selected.value?.id) }
@@ -173,6 +182,38 @@ async function testConnection(target: 'stt' | 'llm') {
   finally { testingTarget.value = undefined }
 }
 
+function cancelDiscovery() {
+  discoveryGeneration += 1
+  discoveryController?.abort()
+  discoveryController = undefined
+  discoveryBusy.value = false
+  discoveryResult.value = undefined
+  discoveryError.value = ''
+}
+
+async function discover() {
+  if (locked.value || discoveryBusy.value || selected.value?.is_default || !store.storeAvailable) return
+  cancelDiscovery()
+  const requestController = new AbortController()
+  discoveryController = requestController
+  const generation = discoveryGeneration
+  discoveryBusy.value = true
+  try {
+    const result = await discoverModels(draft.value, selected.value?.id, requestController.signal)
+    if (generation !== discoveryGeneration || requestController.signal.aborted) return
+    discoveryResult.value = result
+  } catch (reason) {
+    if (generation !== discoveryGeneration || requestController.signal.aborted) return
+    discoveryError.value = reason instanceof Error ? reason.message : '无法获取模型列表，请重试或手动填写模型名称。'
+  } finally {
+    if (generation === discoveryGeneration) {
+      discoveryBusy.value = false
+      discoveryController = undefined
+    }
+  }
+}
+
+watch(() => [selected.value?.id, draft.value.settings.llm_base_url, draft.value.settings.llm_api_key, draft.value.settings.clear_llm_api_key, draft.value.settings.llm_provider_preset], cancelDiscovery, { flush: 'sync' })
 watch(draft, () => { testResult.value = undefined }, { deep: true })
 
 function beforeUnload(event: BeforeUnloadEvent) {
@@ -183,10 +224,13 @@ function beforeUnload(event: BeforeUnloadEvent) {
 
 onBeforeRouteLeave(async () => {
   if (locked.value) { error.value = '操作正在进行，请等待完成后再切换页面。'; return false }
-  return confirmDiscard()
+  const discard = await confirmDiscard()
+  if (discard) cancelDiscovery()
+  return discard
 })
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void refresh() })
 onBeforeUnmount(() => {
+  cancelDiscovery()
   controller?.abort()
   window.removeEventListener('beforeunload', beforeUnload)
   pendingDiscard?.(false)
@@ -211,7 +255,7 @@ onBeforeUnmount(() => {
           <div class="profile-editor__tags"><NTag v-if="dirty" size="small" :bordered="false" type="warning">未保存</NTag><NTag v-if="selected?.is_active" size="small" :bordered="false" type="success">当前生效</NTag></div>
         </header>
         <NAlert v-if="selected?.is_default" type="info" :show-icon="false" class="profile-session-notice">内置本地方案用于恢复离线识别。请复制后编辑自定义方案。</NAlert><NAlert v-if="!store.storeAvailable" type="error" :show-icon="false" class="profile-session-notice">配置存储当前不可写。原文件已保留，请检查服务端日志并恢复配置后刷新。</NAlert><NAlert v-if="session.active" type="info" :show-icon="false" class="profile-session-notice">当前会话尚未结束，可编辑和测试方案。结束会话后才能激活配置。</NAlert>
-        <ModelConfigForm v-model="draft" :profile="selected" :presets="store.presets" :busy="locked || !store.storeAvailable" @save="save" />
+        <ModelConfigForm v-model="draft" :profile="selected" :presets="store.presets" :busy="locked || !store.storeAvailable" :discovery-busy="discoveryBusy" :discovery-result="discoveryResult" :discovery-error="discoveryError" @save="save" @discover="discover" />
         <div class="profile-test" aria-label="配置连通性测试">
           <div class="profile-test__buttons"><NButton :disabled="locked" :loading="testingTarget === 'stt'" @click="testConnection('stt')">{{ draft.settings.stt_provider === 'local' ? '检查本地 STT' : '测试云端 STT' }}</NButton><NButton :disabled="locked || draft.settings.llm_align_mode === 'off'" :loading="testingTarget === 'llm'" @click="testConnection('llm')">测试大模型连通性</NButton></div>
           <p class="profile-meta">测试使用当前表单，不保存或激活配置。</p>

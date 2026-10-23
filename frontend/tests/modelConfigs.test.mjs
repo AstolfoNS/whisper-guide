@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   normalizeModelConfig, sanitizeModelConfigInput, updateModelConfig,
   duplicateModelConfig, activateModelConfig, deleteModelConfig,
-  testModelConfig, ModelConfigError,
+  testModelConfig, discoverModels, ModelConfigError,
 } from '../src/api/modelConfigs.ts'
 import { modelConfigDraft, validateModelConfigDraft } from '../src/components/models/modelConfigForm.ts'
 
@@ -83,5 +83,36 @@ test('revision and session conflicts retain structured server reasons', async ()
   globalThis.fetch = async () => Response.json({ detail: { code: 'SESSION_ACTIVE', message: '请先结束当前会话' } }, { status: 409 })
   try {
     await assert.rejects(() => activateModelConfig('a', 3), (error) => error instanceof ModelConfigError && error.status === 409 && error.code === 'SESSION_ACTIVE' && /结束/.test(error.message))
+  } finally { globalThis.fetch = original }
+})
+
+test('model discovery uses the draft without requiring a model, preserving saved credentials and supporting cancellation', async () => {
+  const original = globalThis.fetch
+  const calls = []
+  const signal = new AbortController().signal
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, ...init, data: JSON.parse(init.body) })
+    return Response.json({ ok: true, models: [{ id: 'available-model' }], latency_ms: 3, message: '已获取模型列表', truncated: false })
+  }
+  try {
+    const draft = modelConfigDraft(profile())
+    draft.settings.llm_align_mode = 'off'
+    draft.settings.llm_model = ''
+    const result = await discoverModels(draft, 'a', signal)
+    assert.match(calls[0].url, /\/discover-models$/)
+    assert.equal(calls[0].method, 'POST')
+    assert.equal(calls[0].signal, signal)
+    assert.equal(calls[0].data.id, 'a')
+    assert.equal(calls[0].data.settings.llm_model, '')
+    assert.equal('llm_api_key' in calls[0].data.settings, false)
+    assert.deepEqual(result.models, [{ id: 'available-model' }])
+    draft.settings.llm_api_key = 'draft-only-key'
+    await discoverModels(draft)
+    assert.equal(calls[1].data.settings.llm_api_key, 'draft-only-key')
+    assert.equal(calls[1].data.id, undefined)
+    draft.settings.clear_llm_api_key = true
+    await discoverModels(draft, 'a')
+    assert.equal(calls[2].data.settings.clear_llm_api_key, true)
+    assert.equal('llm_api_key' in calls[2].data.settings, false)
   } finally { globalThis.fetch = original }
 })

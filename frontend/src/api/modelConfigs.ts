@@ -43,6 +43,21 @@ export interface ModelConfigTestResult {
   http_status?: number
 }
 
+export interface DiscoveredModel {
+  id: string
+  name?: string
+}
+
+export interface ModelDiscoveryResult {
+  ok: boolean
+  models: DiscoveredModel[]
+  latency_ms: number | null
+  message: string
+  truncated: boolean
+  error_code?: 'CONFIG_INCOMPLETE' | 'TIMEOUT' | 'HTTP_ERROR' | 'NETWORK_ERROR' | 'INVALID_RESPONSE' | 'RESPONSE_TOO_LARGE' | 'UNKNOWN_ERROR'
+  http_status?: number
+}
+
 export class ModelConfigError extends Error {
   code: string
   status: number
@@ -136,4 +151,10 @@ export async function activateModelConfig(id: string, revision: number): Promise
 export async function testModelConfig(input: ModelConfigInput, target: 'stt' | 'llm', id?: string): Promise<ModelConfigTestResult> {
   const payload = sanitizeModelConfigInput(input)
   return await request('/test', json('POST', { id, target, settings: payload.settings })) as ModelConfigTestResult
+}
+
+/** Queries the backend with the current draft; never persists or activates it. */
+export async function discoverModels(input: ModelConfigInput, id?: string, signal?: AbortSignal): Promise<ModelDiscoveryResult> {
+  const payload = sanitizeModelConfigInput(input)
+  return await request('/discover-models', { ...json('POST', { id, settings: payload.settings }), signal }) as ModelDiscoveryResult
 }

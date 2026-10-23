@@ -57,6 +57,38 @@ describe('model configuration editor controls', () => {
     wrapper.unmount()
   })
 
+  it('filters discovered models and changes only the editable model ID until an explicit save', async () => {
+    const draft = modelConfigDraft(profile())
+    const wrapper = mount(ModelConfigForm, { props: { modelValue: draft, presets: defaultLlmPresets(), discoveryResult: { ok: true, models: [{ id: 'doubao-model', name: '豆包文本模型' }, { id: 'other-model' }], latency_ms: 8, message: '已获取 2 个模型', truncated: true } } })
+    await wrapper.get('#profile-llm-model-search').setValue('豆包')
+    expect(wrapper.findAll('#profile-discovered-model option').map((option) => option.attributes('value'))).toEqual(['', 'doubao-model'])
+    await wrapper.get('#profile-discovered-model').setValue('doubao-model')
+    expect(draft.settings.llm_model).toBe('doubao-model')
+    expect(wrapper.get<HTMLInputElement>('#profile-llm-model').element.value).toBe('doubao-model')
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.text()).toContain('当前仅显示部分条目')
+    await wrapper.get('#profile-llm-model-search').setValue('missing')
+    expect(wrapper.text()).toContain('没有匹配的模型')
+    await wrapper.get('#profile-llm-model').setValue('manual-id')
+    expect(draft.settings.llm_model).toBe('manual-id')
+    wrapper.unmount()
+  })
+
+  it('allows discovery with alignment disabled and an empty model, requiring only a valid Base URL', async () => {
+    const draft = modelConfigDraft()
+    const wrapper = mount(ModelConfigForm, { props: { modelValue: draft, presets: defaultLlmPresets() } })
+    const button = () => wrapper.findAll('button').find((item) => item.text() === '获取模型列表')!
+    expect(button().attributes('disabled')).toBeDefined()
+    await wrapper.get('#profile-llm-url').setValue('https://example.test/v1')
+    expect(button().attributes('disabled')).toBeUndefined()
+    await button().trigger('click')
+    expect(wrapper.emitted('discover')).toHaveLength(1)
+    expect(draft.settings.llm_model).toBe('')
+    expect(draft.settings.llm_align_mode).toBe('off')
+    expect(wrapper.emitted('save')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('protects the built-in local recovery profile from editing', () => {
     const selected = profile({ is_default: true })
     const wrapper = mount(ModelConfigForm, { props: { modelValue: modelConfigDraft(selected), profile: selected, presets: defaultLlmPresets() } })

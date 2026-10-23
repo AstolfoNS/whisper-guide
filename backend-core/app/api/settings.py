@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import Settings, clone_model_settings, persist_model_settings, persist_private_bytes
 from app.infrastructure.llm import LLMSemanticRefiner
+from app.infrastructure.model_catalog import discover_models
 from app.repositories.model_configs import ModelConfigError, ModelConfigRepository
 
 
@@ -329,7 +330,9 @@ async def test_model_settings(
     return _public_llm_test_result(result)
 
 
-def _public_llm_test_result(result: Any, *, success_message: str = "连接成功。") -> dict[str, Any]:
+def _public_llm_test_result(
+    result: Any, *, success_message: str = "连接成功。", discovery: bool = False
+) -> dict[str, Any]:
     """Expose only controlled diagnostics; upstream messages may echo secrets."""
 
     values = result if isinstance(result, dict) else {}
@@ -350,6 +353,14 @@ def _public_llm_test_result(result: Any, *, success_message: str = "连接成功
         "UNKNOWN_ERROR": "模型测试失败，请检查接口配置或服务端运行环境。",
         "HTTP_ERROR": "模型服务拒绝请求，请核对接口配置。",
     }
+    if discovery:
+        messages.update(
+            {
+                "CONFIG_INCOMPLETE": "请先填写 Base URL，再获取模型列表。",
+                "INVALID_RESPONSE": "模型列表响应格式不兼容，可手动填写模型 ID。",
+                "RESPONSE_TOO_LARGE": "模型列表响应超过安全大小限制，请手动填写模型 ID。",
+            }
+        )
     code = values.get("error_code")
     if not isinstance(code, str) or code not in messages:
         code = "UNKNOWN_ERROR"
@@ -366,6 +377,9 @@ def _public_llm_test_result(result: Any, *, success_message: str = "连接成功
         404: "接口或模型不存在，或密钥无访问权限；请核对 Base URL、模型 ID 及开通状态。",
         429: "请求受限，请检查额度、余额或限流状态，稍后重试。",
     }
+    if discovery:
+        suggestions[404] = "服务未提供此模型列表接口，请核对 Base URL，或手动填写模型 ID。"
+        suggestions[405] = "服务不支持获取模型列表，请手动填写模型 ID。"
     advice = suggestions.get(status)
     if advice is None:
         advice = "模型服务暂时异常，请稍后重试。" if status >= 500 else "请核对模型服务的接口配置。"
@@ -417,10 +431,13 @@ class ProfileActivation(BaseModel):
     revision: int | None = Field(default=None, ge=1, strict=True)
 
 
-class ProfileTest(BaseModel):
+class ProfileDiscovery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str | None = None
     settings: ModelSettingsUpdate | None = None
+
+
+class ProfileTest(ProfileDiscovery):
     target: Literal["llm", "stt"] = "llm"
 
 
@@ -515,18 +532,34 @@ def create_model_config(request: Request, payload: ProfileCreate) -> dict[str, A
         return _profile_payload(repository, profile)
 
 
-@router.post("/model-configs/test")
-async def test_model_config(request: Request, payload: ProfileTest) -> dict[str, Any]:
+def _profile_candidate(request: Request, payload: ProfileDiscovery) -> Settings:
     repository = request.app.state.model_configs
     with _repository_errors(), repository.lock:
-        values = (
-            repository.get(payload.id)["settings"]
-            if payload.id
-            else repository.get("local-default")["settings"]
-        )
+        values = repository.get(payload.id or "local-default")["settings"]
         candidate = clone_model_settings(repository.base_settings, values)
-        if payload.settings is not None:
-            candidate = _apply_update(payload.settings, candidate)
+        return _apply_update(payload.settings, candidate) if payload.settings else candidate
+
+
+@router.post("/model-configs/discover-models")
+async def discover_model_config(request: Request, payload: ProfileDiscovery) -> dict[str, Any]:
+    candidate = _profile_candidate(request, payload)
+    result = await discover_models(candidate)
+    public = _public_llm_test_result(
+        result, success_message="模型列表已获取；选择后仍需测试模型调用权限。", discovery=True
+    )
+    models = result.get("models", []) if public["ok"] else []
+    if public["ok"] and not models:
+        public["message"] = "接口返回的模型列表为空，可手动填写模型 ID。"
+    return {
+        **public,
+        "models": models,
+        "truncated": result.get("truncated") is True,
+    }
+
+
+@router.post("/model-configs/test")
+async def test_model_config(request: Request, payload: ProfileTest) -> dict[str, Any]:
+    candidate = _profile_candidate(request, payload)
     if payload.target == "stt":
         return await _test_speech_config(request, candidate)
     try:

@@ -1,12 +1,35 @@
 <script setup lang="ts">
-import { NButton } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
+import { NAlert, NButton } from 'naive-ui'
 import type { LlmPreset } from '../../api/models.ts'
-import type { ModelConfig } from '../../api/modelConfigs.ts'
+import type { ModelConfig, ModelDiscoveryResult } from '../../api/modelConfigs.ts'
 import type { ModelConfigDraft } from './modelConfigForm.ts'
 
 const draft = defineModel<ModelConfigDraft>({ required: true })
-const props = defineProps<{ profile?: ModelConfig; presets: LlmPreset[]; busy?: boolean }>()
-const emit = defineEmits<{ save: [] }>()
+const props = defineProps<{
+  profile?: ModelConfig
+  presets: LlmPreset[]
+  busy?: boolean
+  discoveryBusy?: boolean
+  discoveryResult?: ModelDiscoveryResult
+  discoveryError?: string
+}>()
+const emit = defineEmits<{ save: []; discover: [] }>()
+const modelSearch = ref('')
+const filteredModels = computed(() => {
+  const query = modelSearch.value.trim().toLocaleLowerCase()
+  return (props.discoveryResult?.models ?? []).filter((model) => `${model.id} ${model.name ?? ''}`.toLocaleLowerCase().includes(query))
+})
+const canDiscover = computed(() => {
+  try { return ['http:', 'https:'].includes(new URL(draft.value.settings.llm_base_url.trim()).protocol) }
+  catch { return false }
+})
+watch(() => props.discoveryResult, () => { modelSearch.value = '' })
+
+function chooseDiscoveredModel(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  if (value) draft.value.settings.llm_model = value
+}
 
 function choosePreset(event: Event) {
   const preset = props.presets.find((item) => item.id === (event.target as HTMLSelectElement).value)
@@ -61,18 +84,41 @@ function clearSecret(kind: 'llm' | 'stt') {
       <legend>大模型语义对齐</legend>
       <label for="profile-align-mode">对齐模式</label>
       <select id="profile-align-mode" v-model="draft.settings.llm_align_mode"><option value="off">关闭</option><option value="fallback">低分兜底</option><option value="hybrid">混合校准</option></select>
-      <template v-if="draft.settings.llm_align_mode !== 'off'">
-        <p class="field-help">讲稿窗口与识别文字会发送至模型接口。游标仍由本地对齐器校验后更新。</p>
+      <div class="llm-settings">
+        <p v-if="draft.settings.llm_align_mode !== 'off'" class="field-help">讲稿窗口与识别文字会发送至模型接口。游标仍由本地对齐器校验后更新。</p>
+        <p v-else class="field-help">当前关闭会话中的大模型调用。仍可填写接口并获取模型列表，选好模型后再启用对齐。</p>
         <div class="profile-form__columns">
           <div><label for="profile-llm-preset">服务商预设</label><select id="profile-llm-preset" :value="draft.settings.llm_provider_preset" @change="choosePreset"><option v-for="preset in presets" :key="preset.id" :value="preset.id">{{ preset.label }}</option></select></div>
           <div><label for="profile-llm-model">模型名称</label><input id="profile-llm-model" v-model="draft.settings.llm_model" autocomplete="off" placeholder="模型名或接入点 ID" /></div>
         </div>
         <label for="profile-llm-url">Base URL</label>
         <input id="profile-llm-url" v-model="draft.settings.llm_base_url" type="url" autocomplete="url" placeholder="https://host/v1" />
+        <p class="field-help">获取列表时，后端会将 API Key 发送至此地址。修改地址前请确认目标服务可信。</p>
         <div class="secret-label"><label for="profile-llm-key">API Key</label><NButton v-if="profile?.settings.llm_api_key_configured" text size="small" :type="draft.settings.clear_llm_api_key ? 'default' : 'error'" @click="clearSecret('llm')">{{ draft.settings.clear_llm_api_key ? '撤销清除' : '清除凭据' }}</NButton></div>
         <input id="profile-llm-key" v-model="draft.settings.llm_api_key" type="password" autocomplete="new-password" :disabled="draft.settings.clear_llm_api_key" :placeholder="profile?.settings.llm_api_key_configured ? '已保存，留空保留' : '尚未配置'" aria-describedby="llm-key-help" />
-        <p id="llm-key-help" class="field-help">{{ draft.settings.clear_llm_api_key ? '保存后将删除已存 API Key。' : '留空保留原凭据；输入新值将在保存后替换。' }}</p>
-      </template>
+        <p id="llm-key-help" class="field-help">{{ draft.settings.clear_llm_api_key ? '保存后将删除已存 API Key；本次获取列表也不会使用该凭据。' : '留空保留原凭据；获取列表可复用已存密钥，新输入的密钥仅在保存后替换。' }}</p>
+        <div class="model-discovery">
+          <NButton :disabled="busy || profile?.is_default || !canDiscover || discoveryBusy" :loading="discoveryBusy" @click="emit('discover')">获取模型列表</NButton>
+          <p class="field-help">使用当前 Base URL 和凭据查询，不保存或激活配置；不支持列表接口时可手动填写模型名称。</p>
+          <p v-if="discoveryBusy" role="status" class="field-help">正在获取模型列表…修改接口或凭据将取消此次请求。</p>
+          <NAlert v-if="discoveryError" type="error" :show-icon="false" role="alert">{{ discoveryError }}</NAlert>
+          <NAlert v-if="discoveryResult" :type="discoveryResult.ok ? 'success' : 'error'" :show-icon="false" :role="discoveryResult.ok ? 'status' : 'alert'">
+            {{ discoveryResult.message }}<span v-if="discoveryResult.latency_ms !== null">（{{ discoveryResult.latency_ms }} ms）</span>
+            <p v-if="discoveryResult.truncated">模型列表较长，当前仅显示部分条目；未找到时请手动填写完整模型 ID。</p>
+          </NAlert>
+          <template v-if="discoveryResult?.ok && discoveryResult.models.length">
+            <label for="profile-llm-model-search">筛选模型</label>
+            <input id="profile-llm-model-search" v-model="modelSearch" type="search" autocomplete="off" placeholder="按模型 ID 或名称搜索" />
+            <label for="profile-discovered-model">从模型列表选择</label>
+            <select id="profile-discovered-model" :value="draft.settings.llm_model" @change="chooseDiscoveredModel">
+              <option value="">选择模型以填入名称</option>
+              <option v-for="model in filteredModels" :key="model.id" :value="model.id">{{ model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id }}</option>
+            </select>
+            <p class="field-help">显示 {{ filteredModels.length }} / {{ discoveryResult.models.length }} 个模型。选择后仅修改当前草稿。</p>
+            <p v-if="!filteredModels.length" role="status" class="field-help">没有匹配的模型；可清空筛选或直接手动输入。</p>
+          </template>
+        </div>
+      </div>
       <label for="profile-timeout">请求超时（ms）</label>
       <input id="profile-timeout" v-model.number="draft.settings.llm_timeout_ms" class="timeout-input" type="number" min="1" step="1" inputmode="numeric" required />
     </fieldset>
@@ -90,10 +136,15 @@ input:disabled,select:disabled { opacity:.6; }
 .optional { color:var(--muted); font-size:12px; font-weight:400; margin-left:6px; }
 .field-help { font-size:12px; line-height:1.7; color:var(--muted); margin:7px 0 0; }
 .profile-form__columns { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+.profile-form__columns + label { margin-top:16px; }
 .secret-label { display:flex; justify-content:space-between; align-items:center; margin:16px 0 7px; }
 .secret-label label { margin:0; }
 .check-field { display:flex; align-items:flex-start; gap:9px; font-weight:400; line-height:1.7; }
 .check-field input { margin-top:5px; accent-color:var(--accent); }
 .timeout-input { max-width:220px; }
+.llm-settings { margin-top:16px; }
+.model-discovery { margin-top:16px; }
+.model-discovery :deep(.n-alert) { margin-top:12px; }
+.model-discovery :deep(.n-alert p) { margin:6px 0 0; }
 @media (max-width:600px) { .profile-form__columns { grid-template-columns:1fr; } }
 </style>
