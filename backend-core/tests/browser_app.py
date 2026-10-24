@@ -119,6 +119,8 @@ def mock_asr_frame(payload, final=False):
 @app.websocket("/mock/asr/bigmodel_async")
 @app.websocket("/mock/asr/revising/bigmodel_async")
 @app.websocket("/mock/asr/noise/bigmodel_async")
+@app.websocket("/mock/asr/boundary/bigmodel_async")
+@app.websocket("/mock/asr/complete/bigmodel_async")
 async def mock_asr(socket: WebSocket):
     if socket.headers.get("x-api-key") != "synthetic-browser-asr-key":
         await socket.close(code=1008)
@@ -134,6 +136,30 @@ async def mock_asr(socket: WebSocket):
                 await socket.send_bytes(mock_asr_frame({}, final=True))
                 return
             packets += 1
+            if "/boundary/" in socket.url.path or "/complete/" in socket.url.path:
+                if packets <= 2:
+                    text = (
+                        "大家好。谢谢大家。"
+                        if "/complete/" in socket.url.path
+                        else "大家好，我宣布，从今天开始，我要好好调整自己，认真奔赴目标"
+                    )
+                    await socket.send_bytes(
+                        mock_asr_frame(
+                            {
+                                "result": {
+                                    "utterances": [
+                                        {
+                                            "text": text,
+                                            "start_time": 0,
+                                            "end_time": 600,
+                                            "definite": packets == 2,
+                                        }
+                                    ]
+                                }
+                            }
+                        )
+                    )
+                continue
             if "/noise/" in socket.url.path:
                 if packets in {1, 3, 6}:
                     noise = packets == 6

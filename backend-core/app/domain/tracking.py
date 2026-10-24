@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - optional during bootstrap
 BOUNDARIES = frozenset("，,。.？?！!；;")
 _WORD = re.compile(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*")
 _NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:[%％])?")
+_PARAGRAPH_BREAK = re.compile(r"(?:\r\n|\n)[ \t]*(?:\r\n|\n)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +67,9 @@ def content_units(text: str) -> list[ContentUnit]:
 
 def _is_boundary(text: str, position: int) -> bool:
     character = text[position]
+    if character in "\r\n":
+        # Blank lines split paragraphs; a single LF or CRLF remains a soft wrap.
+        return _PARAGRAPH_BREAK.match(text, position) is not None
     if character not in BOUNDARIES:
         return False
     if character == "." and 0 < position < len(text) - 1:
@@ -94,6 +98,16 @@ class ScriptTracker:
             raise ValueError("重新定位的位置超出讲稿范围。")
         index = self.unit_index_at(position)
         return self.units[index].start if index < len(self.units) else len(self.text)
+
+    def prompt_position_after_reading(self, position: int) -> int:
+        """Repeat the last whole unit only while its fragment is unfinished."""
+        index = self.unit_index_at(position)
+        if index >= len(self.units) - 1:
+            return len(self.text)
+        unit, following = self.units[index : index + 2]
+        if any(_is_boundary(self.text, offset) for offset in range(unit.end, following.start)):
+            return following.start
+        return unit.start
 
     def segment(self, position: int) -> PromptSegment | None:
         start = self.snap_position(position)

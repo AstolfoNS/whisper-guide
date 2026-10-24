@@ -79,7 +79,7 @@ def test_partial_only_settles_at_silence_deadline_and_filler_never_mismatches():
         assert runtime.session.reading_position is None
         await runtime.tick(3100)
         assert runtime.session.reading_position == 2
-        assert runtime.session.prompt.text.startswith("好")
+        assert runtime.session.prompt.text == "欢迎来到演讲测试。"
         runtime.cancel_prompt()
         await runtime.control({"type": "interrupt"})
         runtime.last_text = "嗯"

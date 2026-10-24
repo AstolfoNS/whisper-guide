@@ -143,7 +143,8 @@ def test_relocation_and_reliable_user_speech_restore_automatic_prompt(session) -
     session.handle("interrupt", 3003)
     session.handle("transcript", 3004, text="接着介绍应用场景")
     assert session.reliable
-    assert session.prompt_position == SCRIPT.index("景")
+    assert session.reading_position == SCRIPT.index("景")
+    assert session.prompt_position == len(SCRIPT)
 
 
 def test_stale_recognition_results_cannot_modify_position_after_pause(session) -> None:

@@ -165,7 +165,7 @@ def test_delayed_cloud_fallback_uses_old_valid_local_interval_but_filters_new_si
         assert runtime.session.state.value == "LISTENING"
         await runtime.tick(7000)
         assert runtime.session.state.value == "PROMPTING"
-        assert runtime.session.prompt.text == "好。"
+        assert runtime.session.prompt.text == "继续下一句。"
         runtime.cancel_prompt()
         runtime.release_stream()
 

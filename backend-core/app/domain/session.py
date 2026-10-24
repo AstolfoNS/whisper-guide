@@ -288,7 +288,9 @@ class SpeechSession:
                     result = self.aligner.align(text, self.prompt_position)
                 if result:
                     self.reading_position = result.position
-                    self.prompt_position = result.position
+                    self.prompt_position = self.tracker.prompt_position_after_reading(
+                        result.position
+                    )
                     self.reliable = True
                     self._last_reliable = True
                     self.match_confidence = result.confidence
