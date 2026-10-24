@@ -15,7 +15,7 @@ test('stopping an audio decode prevents stale playback and completion', async ()
     close() { return Promise.resolve() }
   }
   const player = new PromptPlayer()
-  const pending = player.play('YQ==', 'old', () => ended++, () => {})
+  const pending = player.play('YQ==', () => ended++, () => {})
   await new Promise(resolve => setImmediate(resolve))
   player.stop()
   finishDecode({})
@@ -37,7 +37,7 @@ test('manual stop detaches completion callback', async () => {
     close() { return Promise.resolve() }
   }
   const player = new PromptPlayer()
-  await player.play('YQ==', 'current', () => completed++, () => {})
+  await player.play('YQ==', () => completed++, () => {})
   player.stop()
   assert.equal(completed, 0)
   assert.equal(source.onended, null)

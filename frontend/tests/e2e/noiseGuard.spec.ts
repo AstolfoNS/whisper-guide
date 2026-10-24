@@ -1,24 +1,11 @@
+import { useSyntheticMicrophone } from './syntheticMicrophone'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
-const screenshots = '../docs/screenshots/noise-guard-2026-10-24'
+const screenshots = 'test-results/screenshots/noise-guard'
 
 test('a silent hallucinated 点 cannot invalidate the matched phrase or stop the next automatic prompt', async ({ page }) => {
-  await page.addInitScript(() => {
-    let frameIndex = 0
-    const original = WebSocket.prototype.send
-    WebSocket.prototype.send = function (data) {
-      if (data instanceof ArrayBuffer) {
-        const pcm = new Int16Array(data.byteLength / 2)
-        if (frameIndex < 30) {
-          for (let index = 0; index < pcm.length; index++) pcm[index] = Math.round(600 * Math.sin(2 * Math.PI * 220 * (frameIndex * pcm.length + index) / 16000))
-        }
-        frameIndex++
-        return original.call(this, pcm.buffer)
-      }
-      return original.call(this, data)
-    }
-  })
+  await useSyntheticMicrophone(page)
   const created = await page.request.post('/api/settings/model-configs', { data: { name: '无声单字防误停验证', settings: {
     stt_provider: 'cloud', cloud_opt_in: true, cloud_stt_protocol: 'volcengine-ws', cloud_stt_auth_mode: 'api-key',
     cloud_stt_resource_id: 'volc.seedasr.sauc.duration', cloud_stt_endpoint: 'ws://127.0.0.1:8010/mock/asr/noise/bigmodel_async',

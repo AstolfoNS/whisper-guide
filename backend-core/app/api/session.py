@@ -61,7 +61,6 @@ class SessionRuntime:
         self.model_config_name = (model_config or {}).get("name", "")
         self.model_config_revision = (model_config or {}).get("revision", 0)
         self.refinement: asyncio.Task[None] | None = None
-        self.transcript_revision = 0
         self.committed_revision = 0
         self.stream_epoch = 0
         self.voice_activity_revision = 0
@@ -75,7 +74,6 @@ class SessionRuntime:
         self.preview_since_ms = 0
         self.preview_observations = 0
         self.acoustic_segments: deque[int] = deque(maxlen=32)
-        self.last_filler_only = False
         self.settled_hypothesis: tuple[int, str] | None = None
         # A single accepted hypothesis survives VAD display resets until settled.
         self.pending_hypothesis: tuple[int, str] | None = None
@@ -149,7 +147,6 @@ class SessionRuntime:
 
     def release_stream(self) -> None:
         self.cancel_refinement()
-        self.transcript_revision += 1
         self.stream_epoch += 1
         self.voice_activity_revision = 0
         self.settled_activity_revision = 0
@@ -161,7 +158,6 @@ class SessionRuntime:
         self.pending_hypothesis = None
         self.raw_transcript_is_current = False
         self.finalized_segment_id = -1
-        self.last_filler_only = False
         self.ready_generation = -1
         while not self.audio_queue.empty():
             self.audio_queue.get_nowait()
@@ -595,7 +591,6 @@ class SessionRuntime:
                 if not self.session.speaking:
                     # Voice activity changes display state, not the immutable
                     # settled evidence owned by an in-flight recovery request.
-                    self.transcript_revision += 1
                     self.last_text = ""
                     self.last_update_final = False
                     self.raw_transcript_is_current = False
@@ -660,13 +655,11 @@ class SessionRuntime:
             if update.segment_id > self.last_segment_id:
                 self.last_text = ""
             if update.text != self.last_text or update.segment_id != self.last_segment_id:
-                self.transcript_revision += 1
                 self.clear_preview()
             self.last_segment_id = update.segment_id
             self.last_update_final = update.is_final
             if update.is_final:
                 self.finalized_segment_id = update.segment_id
-            self.last_filler_only = update.is_filler_only
             if update.text.strip() and not update.is_filler_only:
                 hypothesis = (update.segment_id, update.text)
                 original = next(

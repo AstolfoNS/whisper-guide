@@ -52,8 +52,6 @@ class Settings(BaseSettings):
     )
     speech_sample_rate: int = 16_000
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
-    server_host: str = "127.0.0.1"
-    server_port: int = Field(default=8000, gt=0, le=65535)
     stt_provider: str = "local"
     stt_provider_configs: list[dict[str, Any]] = Field(default_factory=list)
     # Legacy cloud aliases remain supported by existing installations.

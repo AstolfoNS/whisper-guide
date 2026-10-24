@@ -94,7 +94,7 @@ export class SessionController {
     }
     if (event.type === 'audio' && this.inStudio && this.store.state === 'PROMPTING' && event.prompt_id === this.expectedPrompt) {
       const id = event.prompt_id
-      void this.player.play(event.data, id, () => {
+      void this.player.play(event.data, () => {
         if (id === this.expectedPrompt && this.client.connected) {
           this.expectedPrompt = ''
           useHealthStore().playback = 'success'

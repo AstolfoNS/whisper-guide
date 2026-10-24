@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { useSyntheticMicrophone } from './syntheticMicrophone'
 
-const screenshots = '../docs/screenshots/prompt-boundary-2026-10-24'
+const screenshots = 'test-results/screenshots/prompt-boundary'
 test.beforeEach(async ({ page }) => { await useSyntheticMicrophone(page) })
 
 async function activateScenario(page: Page, scenario: 'boundary' | 'complete') {

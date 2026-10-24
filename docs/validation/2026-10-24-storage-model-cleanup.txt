@@ -1,3 +1,0 @@
-Model already present: /home/timeleafing/projects/whisper-guide/backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20
-Validated native INT8 model before cleanup: {"tokens": "tokens.txt", "encoder": "encoder-epoch-99-avg-1.int8.onnx", "decoder": "decoder-epoch-99-avg-1.int8.onnx", "joiner": "joiner-epoch-99-avg-1.int8.onnx"}
-{"before_bytes": 556522064, "after_bytes": 198271089, "removed_bytes": 358250975, "core_bytes": 198270793, "native_int8_load_before_and_after": "passed"}

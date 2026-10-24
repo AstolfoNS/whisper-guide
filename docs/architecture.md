@@ -1,87 +1,77 @@
 # 架构说明
 
+核心行为见[行为规范](requirements.md)，数据契约见[接口参考](speech-provider-interface.md)，使用与限制见[使用指南](user-guide.md)。
+
 ## 模块与数据流
 
 ```mermaid
 flowchart LR
-  V[Vue Router 三视图] --> C[应用级 SessionController]
-  C --> S[Pinia 会话快照]
-  C <-->|WebSocket| A[SessionRuntime]
-  A --> P[VAD 与 SpeechProvider]
-  P --> R[RecognitionUpdate partial/final]
-  R --> E[AudioEvidence 分段人声证据]
-  E --> L[本地 ScriptAligner]
-  L --> D[五状态机与双游标]
-  D --> T[edge-tts 内存 MP3]
-  E -.有效文本.-> M[可选 LLMSemanticRefiner]
-  M -.讲稿原文子串经本地校验.-> L
-  F[多配置管理 API] --> Q[私有版本化模型仓储]
-  Q -->|显式激活| A
-  A --> B[(SQLite 讲稿)]
+  V[Vue工作台] --> C[SessionController]
+  C <-->|WebSocket| R[SessionRuntime]
+  R --> A[VAD与SpeechProvider]
+  A --> E[分段声学证据]
+  E --> L[本地匹配与全文恢复]
+  L --> S[双游标和五状态机]
+  S --> T[内存TTS与浏览器播放]
+  E -.有效文本.-> M[可选LLM]
+  M -.原文经本地验证.-> L
+  P[模型方案仓储] --> R
+  D[(SQLite讲稿)] --> R
 ```
 
-后端边界：
-
-| 模块 | 职责 |
+| 文件/目录 | 职责 |
 |---|---|
-| `app/api/session.py` | WebSocket 命令、归属校验、音频有界队列、识别与合成任务、会话快照 |
-| `app/api/recovery.py` | 断线会话的只读元数据列表和用户明确结束操作 |
-| `app/api/settings.py` | 多方案 CRUD、复制、测试、激活、旧接口兼容与固定密钥脱敏 |
-| `app/domain/session.py` | 五状态机、双游标、批事件优先级、最近 10 条流转记录 |
-| `app/domain/tracking.py` | ScriptAligner、讲稿内容单位、字符偏移、英文数字完整边界 |
-| `app/infrastructure/speech.py` | 本地/通用云端 STT、VAD、内存 TTS、失败回退 |
-| `app/infrastructure/audio_evidence.py` | 连接 PCM 时钟与有界声学特征、分段结果门控；不保存音频 |
-| `app/infrastructure/llm.py` | 轻量 OpenAI 兼容文本校准，厂商无关 |
-| `app/repositories/model_configs.py` | 模型方案草稿、生效快照、修订号、锁和原子私有文件保存 |
-| `app/repositories/scripts.py`、`app/models/` | SQLite 讲稿持久化 |
-| `app/config.py` | 环境默认值、路径及旧单套配置兼容读取 |
+| backend-core/app/api/session.py | WebSocket、连接归属、音频队列、识别/合成任务与快照 |
+| app/domain/session.py | 五状态、双游标、对齐证据、事件优先级与最近10条流转 |
+| app/domain/tracking.py | 原文单位边界、附近评分、全文字面/拼音trigram索引 |
+| app/infrastructure/audio_evidence.py | 有界声学特征、噪声底与分段证据，不保存PCM |
+| app/infrastructure/speech.py | 本地/HTTP识别、VAD、热备回退、内存TTS |
+| app/infrastructure/speech_websocket.py / speech_protocols.py | 有界传输与厂商协议适配 |
+| app/infrastructure/llm.py / model_catalog.py | 语义原文建议、模型目录与受控失败 |
+| app/repositories/ | SQLite讲稿、私有版本化模型方案 |
+| frontend/src/services/sessionController.ts | 应用级唯一采音、连接与播放器所有者 |
+| frontend/src/stores/ | 可展示快照、讲稿、模型方案与主题 |
+| frontend/src/views/ / components/ | 三视图、讲稿显示、模型表单与诊断 |
+| frontend/src/audio/ / public/pcm-capture.js | PCM采集/重采样、播放与取消令牌 |
 
-前端边界：
+## 声音、识别与位置
 
-- `layouts/AppLayout.vue`：统一导航、主题选择、服务入口和未结束会话提示。
-- `views/`：概览 `/`、工作台 `/studio`、模型管理 `/settings/models`。
-- `stores/`：可展示的会话快照、讲稿、健康状态、配置和主题；不保存音频帧或 API 密钥。
-- `services/sessionController.ts`：应用级唯一麦克风、WebSocket 与播放器资源所有者；视图不再分别创建它们。
-- `services/healthMonitor.ts`：可见页面每约 10 秒检查服务状态，隐藏时停止发起轮询；不自动产生付费模型或 TTS 探测。
-- `api/`、`audio/`：协议客户端与采集/播放基础设施；保留取消令牌和连接归属保护。
-- `components/studio/`：讲稿高亮、操作区、raw/final 对比与折叠状态机诊断。
+浏览器请求回声消除、降噪和自动增益，支持时请求voiceIsolation；可选getSettings仅在内存保留实际处理设置，不存设备标识。PCM为16kHz单声道PCM16，20ms一帧。
 
-## 流式识别与位置提交
+AudioEvidence在流内累计音频时钟，不保留PCM。VAD阳性需AC RMS至少16、持续60ms；纯能量兜底需至少64、持续80ms。连续600ms、VAD阴性且能量相对稳定时学习底噪，纯能量门槛收紧为至少底噪1.5倍；VAD轻声通道不变。
 
-VAD 不等同于完整声学降噪；非人声帧仍保持流式传输，原始 ASR 可能产生误转写。接收侧 AudioEvidence 以有界声学特征和可选分段音频时间审核文本；缺少证据的结果只作过滤诊断，不交给定位器。VAD 信号独立用于打断和计时，可能在结果过滤前已将位置置为待确认。最近真实对齐结论不再被 VAD 覆盖；有声而无有效文字时仍保留待确认保护，详见[状态修复记录](alignment-state-2026-10-24.md)及[已知问题](known-issues.md#噪声被过滤后自动提示仍暂缓)；已有门控回归及其边界见[无声识别门控记录](noise-guard-2026-10-24.md)。云端音频每块 200 ms，发送周期从实际发送开始计算，包含发送耗时；持续链路慢于实时音频时仍由一秒有界缓冲触发保护回退。
+只保留30秒/最多1500帧标量与32个已授权分段。迟到final可包含原声音锚点和尾静音，但不能直接将授权搬到后续静音。底噪学习可撤回早期纯能量证据，Runtime同步撤回pending、临时位置和依赖的模型历史。确认位置若依赖被撤回的证据，降为不可靠，保留偏移作历史，不猜测回滚。
 
-AudioEvidence从连续600ms平稳VAD阴性帧学习底噪，仅收紧纯能量兜底，保留VAD轻声门限。锚点被撤回时Runtime清理pending、preview及模型历史，不能再在静音截止提交。
+同段partial为完整修订，覆盖显示。两次相同或保持300ms可显示临时位置；final或静音截止结算才提交确认位置。pending假设独立于VAD显示，已有有效partial跨VAD起落仍可结算。空final/filler撤回同段假设，None不撤回；重复final不重复提交。只有声音无可用文字仍pending。
 
-同一 `segment_id` 的 partial 是分段的完整假设，覆盖前次文本；endpoint 产生 final 后重置流并递增分段号。VAD 有效人声或有效 partial 立即取消静音计时或打断提示，但 partial 不正常提交 `reading_position`。已接受而未结算的假设独立保存为单条有界候选，VAD 显示重置不会清除；静音截止前先结算，再决定提示起点。同段修订为填充词或显式空 final 会撤回候选，None 不改变候选，重复 final 不重复提交。填充词不进入定位器造成失配。
+## 本地定位与自动恢复
 
-`ScriptAligner` 默认搜索游标前 40、后 80 个内容单位。评分为字面连续匹配 0.35、拼音/近音匹配 0.40、游标邻近 0.18、方向/上下文一致性 0.07；邻近距离根据候选完整范围与当前游标的关系计算，覆盖游标或从下一单位顺延的长句不因句末较远而受罚；真实远跳超过 8 单位施加最高 0.25 惩罚，低于 0.68 保留最后可靠位置。超过 64 单位的识别段先在附近验证其省略前缀原文，只有证据成立才扩到末尾的 64 单位进行模糊比较；单段最大 256 单位，超限保守不提交，避免扩大控制锁内计算。`reading_position` 保留最后确认朗读的内容单位。可靠朗读提交后，`prompt_position` 在片段中间保留该完整单位作提示上下文，遇真正分段标点或空行则移至下一片段；全文完成置为正文长度。手动定位保留所选起点，播放完成仍只推进提示游标。
+正常匹配搜索游标前40/后80内容单位，并按片段长度调整。评分组合字面0.35、拼音0.40、邻近0.18和上下文0.07；远跳有最高0.25惩罚，可靠门槛0.68。用候选完整范围计算距离，连续长句不因句末较远受罚。
 
-失锁时使用预建全文字面/拼音trigram索引。重复候选等后文；远跳需两份独立、连续且各不少于6单位的证据。同段修订、重复final与LLM引用不算第二份证据。失锁后的普通匹配也不能绕过歧义规则。
+模糊比较最多末64单位；更长片段先验证附近省略前缀，单段上限256单位。英文单词、数字和原文偏移保持完整。
 
-partial两次相同或保持300ms可更新provisional位置；reading/prompt仍由final或静音结算确认。临时结果不放行自动提示。底噪撤权或空/filler修订会清理对应暂定锚点。
+失锁后通过预建全文规范字/拼音trigram索引查询强锚点。附近唯一正文可恢复；远处位置须两份独立、推进连续且各不少于6单位的证据。多处重复等后文消歧，不凭离旧游标近解除失锁；过多重复候选保守等待。
 
-LLM fallback用于失锁，hybrid在有效句末异步校准；不足6完整单位不请求。失锁从全稿召回最多4段原文、总计4096字符。输出仍为原文quote与confidence，需字面/拼音依据再走领域确认。任务绑定已结算版本及stream_epoch，新partial不取消；最多追赶4条定稿，在副本验证后提交。暂停、定位、播报、重建流与同段撤回使旧结果失效。
+同段partial/final、重复文字和LLM纠错不是独立第二证据。证据身份含generation与段号，重建流清暂定链；确认远跳记录前后来源，任一来源撤回都取消可靠性。可信的短失配仍禁止自动提示，不能按文本长度猜成噪声。
 
-## 路由与会话生命周期
+reading_position仅表示确认用户位置；prompt_position为下一提示起点。句中保留完整已读单位，分段末尾跳到下一片段，全文读完不重复末字。临时位置只显示，不移动双游标、不触发确认位置跟随。
 
-工作台离开守卫立即停止本地采集/播放，并请求服务端暂停活动会话。守卫等待确认；失败则断开连接并明确显示连接中断，不能把本地停止伪装成服务端已确认。返回工作台不会自动启用麦克风，由用户点击继续。
+## LLM与并发边界
 
-刷新浏览器后可根据保留的会话标识重新连接；遗留断线会话可由恢复入口列出并明确结束。恢复列表只包含 ID、讲稿名称、状态和配置名称，不返回讲稿正文或识别文本。结束接口先等待运行时控制锁，再复查连接归属和注册表身份；已被其他连接接管的会话返回 409。终止通过领域 `end` 事件增加轮次，取消合成/语义任务、关闭流并清空内存音频队列。
+可选fallback只在本地不可靠时调用，hybrid也校准有效句末；不足6单位不请求。失锁上下文用全文trigram召回最多4段原文、合计4096字符。模型只给原文quote与置信度，需通过字面/拼音支持、子串、全稿歧义与领域恢复规则，不能直接给游标。
 
-后端重启会丢失活跃会话，前端必须重新准备。运行时始终单进程、单 Uvicorn worker。
+请求绑定结算版本、generation与stream_epoch。新partial不反复取消请求；最多追赶4条后续结算证据，在会话副本验证后一次性提交。人工定位、暂停、播报、同段修订/撤回、流重建使旧返回失效。旧结论不能替新VAD活动或待结算partial放行，当前活动仍pending。
 
-## 多模型方案与并发
+本地推理和外部网络不占用会话控制锁；控制与游标提交串行。浏览器20ms常规采音使用最多50项Runtime队列；云端每200ms发送，传输层音频最多1秒、结果32项、最多4个活跃线程。发送周期包括send耗时，真实慢链路或溢出保护性回退本地。
 
-方案草稿和生效快照分开保存：编辑或测试方案不会更新当前运行设置；显式激活才更新生效版本。会话准备时记录配置 ID、名称、版本及参数快照。任何未终止会话，包括 READY 与 PAUSED，都阻止配置激活；服务器返回 `409 SESSION_ACTIVE`。
+## 生命周期与持久化
 
-仓储使用同一个配置锁串行化保存和激活；会话准备在共享锁内捕获配置并登记运行时，避免激活与准备竞争。方案更新需要修订号，冲突返回 `409 REVISION_CONFLICT`。前端禁用只用于交互，后端仍执行保护。
+主状态仅READY/LISTENING/PROMPTING/PAUSED/TERMINATED。alignment_status、recovery_status、说话与静音均为诊断或内部信息。结束/暂停/开口等优先级见行为规范，旧generation和旧连接不能提交。
 
-`WHISPER_GUIDE_DATA_DIR/.model-configs.json` 保存方案和生效快照，使用临时文件、fsync、原子替换和 `0600`。加载旧 `.model-settings.json` 后生成“现有配置”及无凭据的“默认本地离线模式”；新仓储存在时其生效快照优先。旧 PUT 接口继续显式保存并激活，写入失败回滚兼容文件，避免失败操作在重启后生效。
+离开工作台立即停采音/播放并请求暂停；返回和断线恢复都由用户主动继续。播放完成通知只推进提示位置。5秒无PCM为设备断流，不能当静音提示。
 
-凭据只由密码输入向后端提交，GET 恒定返回 `****` 与存在标记；空白保留、明确清除才删除。复制不携带凭据。私有文件损坏时显示仓储不可用，不把异常文件静默覆盖。
+实时会话由单个后端进程持有，必须一个Uvicorn worker。服务重启丢失会话，SQLite讲稿与私有模型方案保留。
 
-## 状态与隐私
+模型方案编辑和实际生效快照分开；准备会话与激活使用同一锁。任何未终止会话阻止激活。仓储原子保存、版本冲突检查、0600权限；旧配置首次迁移后新仓储优先，损坏不静默覆盖。
 
-五状态保持 `READY`、`LISTENING`、`PROMPTING`、`PAUSED`、`TERMINATED`，共 10 条合法连线。`alignment_status=reliable/pending/mismatch` 是独立对齐诊断，不增加会话状态；真实失配优先锁存，只有有效匹配或手动定位才解除。`raw_transcript_is_current` 标记当前/历史原始结果。快照增加上一状态、触发原因、ISO 时间、允许目标和最多 10 条历史；遥测不改变事件优先级。PAUSED 恢复先进入 LISTENING，不直接恢复旧播报。
-
-PCM 队列与提示 MP3 均不写入 SQLite、文件或日志。SQLite 保存讲稿，私有 JSON 保存模型凭据。云端 STT 需要音频授权和可用密钥；语义 LLM 发送讲稿窗口和文本，不发送录音。当前无用户身份隔离，配置与恢复接口只面向可信访问者。
+音频队列、录音与TTS仅内存；云端ASR发送音频，LLM发送原文窗口和转写。当前没有身份/讲稿隔离，需可信访问或部署外部认证层。

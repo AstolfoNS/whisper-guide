@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import type { SessionSnapshot } from '../../src/api/session'
 
-const screenshots = '../docs/screenshots/auto-recovery-2026-10-25'
+const screenshots = 'test-results/screenshots/auto-recovery'
 const first = '我们继续介绍实时讲稿定位的工作流程'
 const second = '系统需要根据后续正文恢复可靠位置'
 const script = `开场白。${'甲'.repeat(600)}${first}。${second}。接下来开始演示。`

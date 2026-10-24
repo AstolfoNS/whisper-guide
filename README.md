@@ -1,177 +1,33 @@
 # 芯创客无障碍语音提示助手
 
-实时讲稿追踪与语音提示工作台。第一版需求基线为 [AC-01 至 AC-27](docs/requirements-v1.md)。
+面向照稿演讲的实时语音追踪与提示工作台。浏览器采集音频，服务端识别并跟踪讲稿；停顿后通过耳机提示后续内容，支持打断、暂停、回读和失锁自动恢复。
 
 ## 文档入口
 
-| 需求 | 文档 |
+| 任务 | 文档 |
 |---|---|
-| 部署到已有 Docker 的新服务器、离线包传输、远程访问 | [新服务器部署手册](DEPLOY.md) |
-| 本地开发、模型准备、镜像构建、环境变量参考 | [开发与构建说明](docs/deployment.md) |
-| 更新、讲稿和模型配置备份、恢复与故障排查 | [运维手册](docs/operations.md) |
-| 当前功能限制及未修复问题 | [已知问题](docs/known-issues.md) |
-| 查阅规范、架构和带日期的验收证据 | [文档索引](docs/README.md) |
+| 讲稿、快捷键、实时定位、自动恢复与限制 | [使用指南](docs/user-guide.md) |
+| 本地/云端识别、大模型、模型发现与诊断 | [模型配置](docs/model-configuration.md) |
+| 新服务器、离线发布、升级、迁移与回滚 | [部署手册](DEPLOY.md) |
+| 源码开发、模型准备、构建与环境变量 | [开发指南](docs/development.md) |
+| 健康检查、备份恢复、故障排查与缓存 | [运维指南](docs/maintenance.md) |
+| 模块边界、定位、并发与存储 | [架构说明](docs/architecture.md) |
+| HTTP、WebSocket、识别事件与模型方案契约 | [接口参考](docs/speech-provider-interface.md) |
+| 状态机、双游标、隐私与行为基线 | [行为规范](docs/requirements.md) |
+| 检查命令、测试范围与当前验证结果 | [测试指南](docs/testing.md) |
 
-新服务器优先使用离线发布包：模型与生产依赖已在镜像内，不需要安装 uv、Node.js 或 pnpm。默认通过 SSH 隧道访问服务器上的 localhost 服务；完整命令和联网要求见部署手册。
+## 运行与目录
 
-## 页面与使用
+已有Docker的服务器使用离线包，目标机不需要Python、uv、Node.js或pnpm；源码开发在WSL/Linux分别启动前后端。完整步骤分别维护在部署手册和开发指南。
 
-前端使用 Vue 3、TypeScript、Naive UI、Vue Router 和 Pinia，分为三个视图：
-
-| 地址 | 用途 |
-|---|---|
-| `/`（`/dashboard` 同样可用） | 最近讲稿、当前生效模型方案与快捷入口 |
-| `/studio` | 讲稿选择、实时提词、会话控制、识别对比、五状态机诊断 |
-| `/settings/models` | 模型方案的新建、复制、编辑、测试、激活与删除 |
-
-工作台以大字号讲稿为主，分别标记已确认朗读位置和下一次提示起点；raw partial/final 与讲稿校准结果独立显示。顶栏统一显示服务状态，诊断面板区分后端能力、连接、麦克风和实际播放结果。五状态图用不交叉、不共线重叠的直线/折线展示全部合法迁移，并高亮最近一次变化。支持亮色、暗色、跟随系统及全键盘操作。
-
-**离开工作台会立即停止浏览器采集与播放，并请求暂停会话；返回后点击“继续”。** 路由切换保留同一会话及双游标，不自动恢复麦克风。连接异常时保留本地进度并明确提示重连。浏览器刷新后的断线会话可在工作台恢复或明确结束；服务重启仍会清空实时会话。
-
-静音等待默认 `3000 ms`，允许不小于 `1000 ms` 的整数。麦克风就绪且持续传输静音帧时，识别状态在等待到期后自动切换为播报；提示播完后重新开始等待并提示下一句。麦克风断流与定位不可靠时保留暂停/禁止自动提示保护，详见[静音与状态图验收记录](docs/silence-state-2026-10-24.md)。快捷键为 `Alt+Shift+P` 暂停/继续、`Alt+Shift+I` 打断、`Alt+Shift+E` 结束、`Alt+Shift+H` 手动提示；编辑表单时不会触发会话快捷键。
-
-## 处理链路
+默认容器入口为localhost:8080。麦克风需要localhost或HTTPS；当前没有用户认证和讲稿权限隔离，远程部署需要HTTPS和认证层。
 
 ```text
-浏览器内存 PCM16 → WebRTC VAD → SpeechProvider → RecognitionUpdate(partial/final)
-                                                       ↓
-                                    AudioEvidence 分段人声证据
-                                                       ↓
-                               本地 ScriptAligner → 双游标与五状态机 → edge-tts 内存 MP3
-                                                       ↑
-                              可选 LLMSemanticRefiner（OpenAI 兼容文本接口）
+backend-core/  FastAPI、语音适配、定位与状态机
+frontend/      Vue工作台、采音、播放和浏览器测试
+deploy/        Nginx、离线打包与部署脚本
+scripts/       SQLite备份工具
+docs/          按用途维护的现行文档
 ```
 
-- 平稳VAD阴性底噪学习收紧纯能量兜底，并撤回失去声学支持的待结算partial；VAD轻声通道保留。ASR 结果先通过有界分段声学证据检查；缺少对应人声的原始结果标为“已过滤”，不送入讲稿对齐器。该检查不能代替完整降噪。已接受的待定稿文本独立保存并在静音截止结算；只有 VAD 活动却没有有效转写时，仍保留待确认保护，见[状态修复记录](docs/alignment-state-2026-10-24.md)及[已知问题](docs/known-issues.md#噪声被过滤后自动提示仍暂缓)。
-- partial两次相同或保持300ms后显示虚线临时位置，final或静音结算才提交确认游标。失锁后持续检索全稿字面/拼音锚点；远跳需两个独立连续片段，重复句等待后文消歧，恢复后正常自动提示。详见[自动恢复记录](docs/auto-recovery-2026-10-25.md)。
-- `ScriptAligner` 结合字面、拼音/近音、游标邻近与上下文，保持英文单词及数字边界；按候选范围判断连续阅读，避免长句句末被误罚为远跳。
-- STT 默认本地 `sherpa-onnx`；云端可选 HTTP JSON 网关或通用 WebSocket 传输配合火山流式 ASR 协议适配器。云端 STT 与文本 LLM 独立配置，厂商预设仅帮助填表；它们不能直接指定游标偏移。
-- 提示起点区分句中与段末：句中保留最后一个完整已读单位，读完分段后提示下一段，全文读完不重复末字。
-- 活跃会话、PCM 有界队列与提示音频仅在内存；讲稿保存在 SQLite。后端必须单个 Uvicorn worker。
-
-## 目录
-
-```text
-whisper-guide/
-├── backend-core/
-│   ├── app/api/                 # HTTP、WebSocket、模型管理、断线会话恢复
-│   ├── app/domain/              # 五状态机、双游标、ScriptAligner
-│   ├── app/infrastructure/      # speech / speech_websocket / speech_protocols / llm
-│   ├── app/repositories/        # SQLite 讲稿、私有版本化模型方案
-│   ├── app/config.py            # 环境默认值与兼容配置迁移
-│   ├── scripts/                 # 模型下载与语音验证
-│   └── models/                  # 瘦身后的本地 STT 模型（不入 Git）
-├── frontend/src/
-│   ├── layouts/                 # 统一导航与主题
-│   ├── views/                   # Dashboard / Studio / ModelConfigs
-│   ├── components/              # health / scripts / studio / models
-│   ├── stores/                  # 可展示的跨页面状态
-│   ├── services/                # 应用级会话资源管理、轻量健康轮询
-│   ├── router/                  # 路由、离开工作台保护与焦点管理
-│   ├── api/                     # HTTP / WebSocket 类型与客户端
-│   ├── audio/                   # PCM 采集、内存播放与取消令牌
-│   └── styles/                  # 亮暗色设计变量与基础布局
-├── docs/
-├── deploy/                      # 部署与离线打包脚本
-├── scripts/                     # SQLite 备份入口
-├── Dockerfile
-└── docker-compose.yml
-```
-
-## 本地启动
-
-在 WSL Linux 路径下使用 Python 3.12、`uv`、Node.js `^22.18.0` 或 `>=24.12.0` 与 `pnpm`。不要混用 Windows 与 WSL 虚拟环境或 node_modules。
-
-```bash
-cd backend-core
-uv sync --locked
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-```
-
-另开终端：
-
-```bash
-cd frontend
-pnpm install --frozen-lockfile
-pnpm dev
-```
-
-浏览器打开 `http://localhost:5173`。开发和预览服务代理 `/api` 与 WebSocket 到后端 `8000`；采音需要 localhost 或 HTTPS。
-
-## 管理模型方案
-
-在 `/settings/models` 新建方案，选择本地/云端 STT，再独立设置 `off/fallback/hybrid` 语义校准、服务商预设、Base URL、模型名、API Key 和超时。
-
-1. **保存**只更新方案草稿，不改变生效版本。
-2. **测试**对当前表单发起临时请求，不保存、不激活；可以分别测试 STT 与 LLM。 LLM 失败显示安全错误类别与 HTTP 状态，排查见[运维手册](docs/operations.md#大模型连通性测试失败)。
-3. **激活**明确更新默认运行方案。任何未终止会话（含暂停）存在时，后端返回 `409 SESSION_ACTIVE`；请先结束或恢复断线会话。
-4. **复制**只复制非敏感参数，密钥留空。默认本地方案受保护，当前生效方案不可删除。
-5. 密码框留空保留已有凭据，输入新值替换，独立的清除操作才删除凭据；`****` 只是掩码。
-
-填写 Base URL 与 API Key 后，点击**获取模型列表**，使用“筛选模型”和“从模型列表选择”填入真实模型 ID；已有密钥可留空复用。获取列表不要求先填写模型名称或开启对齐模式，不保存、不激活配置。选中后仍需测试调用权限；服务不提供列表时可以手动填写。操作与验收见 [模型发现记录](docs/model-discovery-2026-10-24.md)。
-
-### 豆包流式 ASR + 方舟文本模型
-
-同一方案可以同时配置两个云端环节：STT 选择 `cloud`、协议选择 `volcengine-ws`，填写 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`、语音资源 ID `volc.seedasr.sauc.duration`（ASR 2.0 小时版）及独立语音凭据，并开启音频云端授权。新 `api-key` 鉴权只需**语音服务 API Key**，无需 App ID；旧 `app-token` 模式仍需 App ID 与 Access Token。方舟文本 API Key 不会自动用于语音接口。
-
-语义校准独立选择 `hybrid`，Base URL 填 `https://ark.cn-beijing.volces.com/api/v3`，通过“获取模型列表”选择账号实际可用的 Seed 模型，填写**方舟文本 API Key**。分别测试两个接口，通过后保存、结束已有会话并激活。语音超时独立于 LLM，默认 `5000 ms`，范围 `200–30000 ms`；二次识别 `enable_nonstream` 仅用于 `bigmodel_async`。
-
-语音测试只发送内存短静音，等待最终协议响应；若返回已知空音频码 `45000002`，仅说明鉴权与协议可达，仍需在工作台真实朗读。原生协议自动化使用本地 WebSocket 模拟服务；后续实际配置的协议和数字静音检查见[云端静音检查记录](docs/cloud-silence-2026-10-24.md)。上述结果均不能替代真实中文准确率及目标麦克风的长时验收。
-
-完整接口见 [Provider 与模型方案协议](docs/speech-provider-interface.md)。模型方案与生效快照原子保存于 `WHISPER_GUIDE_DATA_DIR/.model-configs.json`，权限 `0600`。旧 `.model-settings.json` 自动迁移为“现有配置”；新仓储存在后，以其生效快照为准。两种文件都含后端凭据，不能进入 Git、日志或发布包。浏览器不持久化密钥。
-
-云端 STT 接收音频片段，语义 LLM 接收讲稿窗口和识别文本。本服务不保存录音；云端服务的数据处理政策需另行确认。预设不代表账号、配额或真实模型已经可用，需提供有效凭据后测试。
-
-## 容器更新与启动
-
-```bash
-test -f .env || cp .env.example .env
-mkdir -p data/sqlite data/backups
-sudo chown -R 10001:10001 data/sqlite data/backups
-sudo chmod -R u+rwX data/sqlite data/backups
-docker compose config --quiet
-docker compose build && docker compose up -d --force-recreate --wait --wait-timeout 180
-```
-
-访问 `http://localhost:8080`；直接刷新 `/studio` 或 `/settings/models` 由 Nginx 回退到同一前端入口。SQLite、模型方案与旧兼容配置持久化到 `./data/sqlite`，备份到 `./data/backups`；更新镜像保留这些目录。STT 核心模型内置镜像，后端始终单 worker。`edge-tts` 仍需服务器联网。模型准备脚本只提取运行时使用的 tokens 与三份权重；已就绪目录再次执行脚本会离线清理冗余权重和官方测试音频。当前本地模型目录为 198,271,089 字节，清理前后原生识别器均可加载。构建和开发缓存的清理方式见[瘦身记录](docs/storage-slim-2026-10-24.md)，不要删除数据挂载目录。
-
-## 检查与验收
-
-```bash
-cd backend-core
-uv run ruff check .
-uv run ruff format --check .
-uv run pytest
-```
-
-```bash
-cd frontend
-pnpm test
-pnpm typecheck
-pnpm build
-# 可选：首次安装浏览器后执行端到端验收
-pnpm exec playwright install --with-deps chromium
-pnpm test:e2e
-```
-
-最新自动恢复回归：后端 **614项**、前端 **107项**、Chromium **16项**通过，Ruff、TypeScript与前端生产构建通过，见[自动恢复记录](docs/auto-recovery-2026-10-25.md)。本轮未构建或切换Docker镜像；运行服务需结束演讲后更新。此前状态与镜像验收保留在[历史记录](docs/alignment-state-2026-10-24.md)，真实云端准确率、目标麦克风与长时设备组合仍需单独验收。
-
-- [架构](docs/architecture.md)
-- [部署](docs/deployment.md)
-- [运维与恢复](docs/operations.md)
-- [模型、依赖与 Docker 瘦身记录](docs/storage-slim-2026-10-24.md)
-- [新服务器部署与迁移](DEPLOY.md)
-- [已知问题与验收边界](docs/known-issues.md)
-- [全部文档索引](docs/README.md)
-
-当前没有用户认证和讲稿权限隔离，默认监听 localhost；公开配置接口前需设置 HTTPS、认证和访问控制。
-
-原生流式语音与双云配置、协议边界、最新测试日志见[实现与验收记录](docs/cloud-asr-2026-10-24.md)。
-
-云端静音等待、弱人声超时与当前方舟模型延迟排查见[专项检查记录](docs/cloud-silence-2026-10-24.md)。
-
-持续识别变乱的长句评分、云端发送节拍修复及尚存的抗噪边界见[连续识别排查记录](docs/asr-drift-2026-10-24.md)。
-
-无声孤立转写防误停、轻声/迟到 final 与云端热备回归见[实现与验收记录](docs/noise-guard-2026-10-24.md)。
-
-句末/段末只播末字的问题与边界修复见[提示起点验收记录](docs/prompt-boundary-2026-10-24.md)。
+讲稿和私有模型方案位于数据目录；会话、录音帧和提示音频仅在内存。提交源码或构建镜像不会自动更新运行容器。旧实现过程、验收日志与截图可通过Git历史查阅。

@@ -35,15 +35,17 @@ def test_slow_recovery_survives_partial_and_catches_up_final(monkeypatch):
         original = runtime.refinement
         assert original is not None
         await entered.wait()
-        revision = runtime.transcript_revision
+        revision = runtime.committed_revision
         clock[0] = 200
         runtime.stream.updates.append(RecognitionUpdate(following, segment_id=1))
         await runtime.audio(VOICE_PCM)
-        assert runtime.transcript_revision > revision
+        assert runtime.committed_revision == revision
+        assert runtime.pending_hypothesis == (1, following)
         assert runtime.refinement is original
         clock[0] = 300
         runtime.stream.updates.append(RecognitionUpdate(following, segment_id=1, is_final=True))
         await runtime.audio(VOICE_PCM)
+        assert runtime.committed_revision == revision + 1
         assert runtime.refinement is original
         finish.set()
         await original

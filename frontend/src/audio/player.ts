@@ -16,7 +16,7 @@ export class PromptPlayer {
       this.source = undefined
     }
   }
-  async play(encoded: string, _id: string, ended: () => void, failed: () => void) {
+  async play(encoded: string, ended: () => void, failed: () => void) {
     this.stop()
     const generation = this.generation
     try {

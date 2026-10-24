@@ -2,10 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton } from 'naive-ui'
 import { DEFAULT_STT_RESOURCE_ID, VOLCENGINE_STT_ENDPOINT, type LlmPreset } from '../../api/models.ts'
-import type { ModelConfig, ModelDiscoveryResult } from '../../api/modelConfigs.ts'
-import type { ModelConfigDraft } from './modelConfigForm.ts'
+import type { ModelConfig, ModelConfigInput, ModelDiscoveryResult } from '../../api/modelConfigs.ts'
 
-const draft = defineModel<ModelConfigDraft>({ required: true })
+const draft = defineModel<ModelConfigInput>({ required: true })
 const props = defineProps<{
   profile?: ModelConfig
   presets: LlmPreset[]

@@ -1,7 +1,0 @@
-{
-  "markdown_files": 9,
-  "bash_blocks_syntax_passed": 29,
-  "local_links_passed": 112,
-  "live_service_changes": "none",
-  "scope": "documentation and artifact consistency only"
-}

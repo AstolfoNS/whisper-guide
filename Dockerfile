@@ -29,16 +29,14 @@ COPY --chown=appuser:appuser backend-core/models/sherpa-onnx-streaming-zipformer
     backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.int8.onnx \
     /models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/
 # Runtime needs the application and installed environment only. Download tools,
-# lockfiles and the development entry point stay in the source checkout.
+# lockfiles and tests stay outside the runtime image.
 COPY backend-core/app ./app
 RUN mkdir -p /data /backups \
     && chown appuser:appuser /data /backups
 USER appuser
 ENV WHISPER_GUIDE_DATA_DIR=/data \
     WHISPER_GUIDE_BACKUP_DIR=/backups \
-    WHISPER_GUIDE_SPEECH_MODEL_DIR=/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20 \
-    WHISPER_GUIDE_SERVER_HOST=0.0.0.0 \
-    WHISPER_GUIDE_SERVER_PORT=8000
+    WHISPER_GUIDE_SPEECH_MODEL_DIR=/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20
 # Catch ignored Python packages and incomplete bundled models before tagging an image.
 RUN /app/backend-core/.venv/bin/python -c "from app.main import app; from app.config import get_settings; from app.infrastructure.speech import SpeechServices; assert SpeechServices(get_settings()).status()['stt'] == 'ready', 'Bundled STT model unavailable'"
 EXPOSE 8000

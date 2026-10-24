@@ -1,4 +1,4 @@
-# 语音与语义 Provider 接口
+# HTTP、会话与语音接口参考
 
 语音识别与大模型语义校准独立配置。两者均不能直接修改 `reading_position` 或 `prompt_position`；本地 `ScriptAligner` 是游标提交入口。
 
@@ -11,6 +11,25 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
                          ↑ 经本地验证的讲稿原文
                  LLMSemanticRefiner（可选 OpenAI 兼容接口）
 ```
+
+## 讲稿HTTP接口
+
+
+| 接口 | 功能 |
+| --- | --- |
+| `GET /api/scripts` | 返回讲稿元数据数组，不返回全文 |
+| `POST /api/scripts/upload` | 以 multipart 的重复 `files` 字段上传一份或多份讲稿，返回新增讲稿全文数组 |
+| `GET /api/scripts/{id}` | 读取一份讲稿全文，用于演讲前选择和预览 |
+
+讲稿元数据包含 `id`、`name`、`character_count` 和 UTC `created_at`；全文响应增加 `content`。
+
+- 支持 `.txt`、`.text` 和 `.md` 纯文本。Markdown 作为普通讲稿文本处理，不执行或渲染 HTML。
+- 支持 UTF-8（含 BOM）、带 BOM 的 UTF-16 和 GB18030。空白文件、包含二进制控制字符的内容及不支持的文件类型会返回 422。
+- 默认单文件最多 2 MiB、每批最多 10 份，分别由 `WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES` 和 `WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES` 配置。文件超限返回 413。
+- 整批校验后一次写入；一份无效则整批不保存。同名文件创建独立 ID，不覆盖已有讲稿。
+- SQLite 保存解码后的完整文本和元数据，不额外保存原始上传文件。用户录音只用于实时处理，不持久化。
+- 本次演讲由前端准备流程选择讲稿，并通过 WebSocket `prepare` 将讲稿绑定到会话；会话开始前必须完成讲稿选择。
+
 
 ## STT 统一事件
 
@@ -65,8 +84,6 @@ class RecognitionUpdate:
 
 `target=stt` 的测试使用当前草稿和独立语音超时，建立真实协议连接、发送短静音与结束包，并等到服务端最终包；初始 ACK 不能单独判定成功。已知空音频业务码 `45000002` 可返回 `ok=true, verified=network, probe_empty_audio=true`，固定提示只确认鉴权和协议可达。其他错误仍失败并以受控类别/数字状态码展示，绝不透传上游正文。测试不保存、不激活，也不允许本地回退伪装成云端通过。
 
-本轮自动化验证使用本地 WebSocket 模拟服务，覆盖帧协议、partial/final、回退、取消与配置安全；本轮未使用真实语音 API Key，**未完成真实火山 ASR 准确率和生产账号验收**。本地 sherpa 此前真实识别结果不替代云端验收。
-
 ## 通用语义校准
 
 `LLMSemanticRefiner` 使用 `httpx.AsyncClient` 调用 OpenAI 兼容 `POST {base_url}/chat/completions`。主机根地址会补 `/v1`，已含路径的 Base URL 直接追加 `/chat/completions`；也可填写完整 endpoint。
@@ -83,23 +100,23 @@ class RecognitionUpdate:
 
 ## 识别与对齐快照状态
 
-会话快照新增 `alignment_status`：`reliable` 可使用已确认位置、`pending` 等待本轮有效结果、`mismatch` 为最近有效转写已真正对齐失败。该字段不增加五状态机状态；真实失配不会因 VAD 起落或填充词解除，需有效匹配或手动定位恢复。
+会话快照包含 `alignment_status`：`reliable` 可使用已确认位置、`pending` 等待本轮有效结果、`mismatch` 为最近有效转写已真正对齐失败。该字段不增加五状态机状态；真实失配不会因 VAD 起落或填充词解除，需有效匹配或手动定位恢复。
 
 `raw_transcript_is_current` 为显示新旧标记：最近一次显示重置后是否已收到非空原始结果；它不替代分段时间、声学证据或轮次校验。新 VAD 起音而无新文本时，可能仍显示历史 raw/final，但值为 false；前端仅标记“上次结果”，不将历史 partial/final 当作本轮端点结果；显式空修订回退历史文本时也标 false。`match_confidence` 仍是最近保存的讲稿对齐评分，位置待确认时标“上次匹配”，不能当成当前 ASR 置信度。
 
-声学过滤不提交该条文本，也不保证当前声音是噪声。没有有效转写/可结算候选时继续 pending；不能以过滤或等待到期强制恢复可靠性。详细行为与验证边界见[状态修复记录](alignment-state-2026-10-24.md)。
+声学过滤不提交该条文本，也不保证当前声音是噪声。没有有效转写/可结算候选时继续 pending；不能以过滤或等待到期强制恢复可靠性。行为与限制见[使用指南](user-guide.md)。
 
 ## 实时临时位置与自动恢复
 
-快照新增可选provisional_position（整数或null）、provisional_transcript、provisional_confidence、recovery_status（idle/searching/ambiguous/confirming）、recovery_attempts。临时位置来自稳定partial，仅供高亮，不改变reading/prompt游标或放行播报。字段不增加主状态，旧快照兼容。
+快照包含可选provisional_position（整数或null）、provisional_transcript、provisional_confidence、recovery_status（idle/searching/ambiguous/confirming）、recovery_attempts。临时位置来自稳定partial，仅供高亮，不改变reading/prompt游标或放行播报。字段不增加主状态，旧快照兼容。
 
 失锁后全文检索强字面/拼音锚点，附近唯一正文可恢复；远跳需两份独立连续且各至少6单位的证据。同段修订、重复文字及LLM纠错不重复计数。重复句等后文，确认后恢复原静音提示资格。
 
 ## 识别过滤诊断
 
-会话快照新增 `recognition_filtered`、`recognition_filter_reason`、`recognition_filtered_count`。无声学支持的文本仍可在 `raw_transcript` 展示并保留自己的 `raw_transcript_is_final`，该过滤分支本身不改变已接受假设、游标、可靠性、静音时钟或 LLM 任务；此前 VAD 已使位置待确认的情况仍须单独处理。计数及单条过滤文本仅存于本轮有界内存，换轮清零，不写日志/SQLite。前端应将“已过滤”与“无法匹配讲稿”分开；过滤噪声不能自动恢复原已不可靠的位置。
+会话快照包含 `recognition_filtered`、`recognition_filter_reason`、`recognition_filtered_count`。无声学支持的文本仍可在 `raw_transcript` 展示并保留自己的 `raw_transcript_is_final`，该过滤分支本身不改变已接受假设、游标、可靠性、静音时钟或 LLM 任务；此前 VAD 已使位置待确认的情况仍须单独处理。计数及单条过滤文本仅存于本轮有界内存，换轮清零，不写日志/SQLite。前端应将“已过滤”与“无法匹配讲稿”分开；过滤噪声不能自动恢复原已不可靠的位置。
 
-连续600ms平稳VAD阴性底噪会收紧纯能量兜底，Runtime可撤回失去支持的partial、临时锚点和相关模型历史。同段迟到final保留原声学锚点，但不能将授权迁到后续静音。详见[自动恢复记录](auto-recovery-2026-10-25.md)，历史门控见[原记录](noise-guard-2026-10-24.md)。
+连续600ms平稳VAD阴性底噪会收紧纯能量兜底，Runtime可撤回失去支持的partial、临时锚点和相关模型历史。同段迟到final保留原声学锚点，但不能将授权迁到后续静音。细节见[架构说明](architecture.md)。
 
 ## 多方案管理 API
 
@@ -143,7 +160,7 @@ class RecognitionUpdate:
 
 返回 `ok`、`latency_ms`、安全消息和 `verified`：`network` 表示完成真实协议请求；`capability` 仅表示本地模型能力可用；`none` 表示未通过。本地 STT 测试不验证识别准确率；云端 STT 按所选 HTTP/WebSocket 协议发送短静音 PCM 并验证响应，不等价于真实朗读验收。WebSocket 的空音频结果说明见上文。
 
-LLM 测试失败时额外返回受控 `error_code`：`CONFIG_INCOMPLETE`、`TIMEOUT`、`HTTP_ERROR`、`NETWORK_ERROR`、`INVALID_RESPONSE` 或 `UNKNOWN_ERROR`。`HTTP_ERROR` 可包含 `http_status`；`message` 由本服务的固定诊断文案生成，不透传上游正文、异常或凭据。`verified=none` 表示未通过本次验证，界面明确显示失败。实际排查见 [运维手册](operations.md#大模型连通性测试失败)。
+LLM 测试失败时额外返回受控 `error_code`：`CONFIG_INCOMPLETE`、`TIMEOUT`、`HTTP_ERROR`、`NETWORK_ERROR`、`INVALID_RESPONSE` 或 `UNKNOWN_ERROR`。`HTTP_ERROR` 可包含 `http_status`；`message` 由本服务的固定诊断文案生成，不透传上游正文、异常或凭据。`verified=none` 表示未通过本次验证，界面明确显示失败。实际排查见 [模型诊断](model-configuration.md)。
 
 更新必须携带当前 `revision`，冲突为 `409 REVISION_CONFLICT`。激活遇到 READY/LISTENING/PROMPTING/PAUSED 为 `409 SESSION_ACTIVE`，不能通过暂停绕过；同一锁保护会话准备与激活。默认本地方案只读；当前生效方案不可删除。选中、保存、测试、激活四种动作互不隐式替代。
 
@@ -181,6 +198,6 @@ API 接受平面模型字段，也兼容嵌套 `stt`/`llm`；显式平面字段�
 
 ## 断线恢复
 
-`GET /api/sessions/recoverable` 仅列出无连接的未终止会话元数据。`POST /api/sessions/{id}/terminate` 是用户明确结束操作，已被其他连接接管返回 409，不存在返回 404。终止通过领域事件增加 generation、取消异步任务并清空内存队列，不保存音频。协议及使用说明见 [运维手册](operations.md)。
+`GET /api/sessions/recoverable` 仅列出无连接的未终止会话元数据。`POST /api/sessions/{id}/terminate` 是用户明确结束操作，已被其他连接接管返回 409，不存在返回 404。终止通过领域事件增加 generation、取消异步任务并清空内存队列，不保存音频。协议及使用说明见 [运维指南](maintenance.md)。
 
 云端 STT 发送音频片段，文本 LLM 只发送讲稿窗口及转写。麦克风 PCM 和 TTS MP3 不写 SQLite、临时文件或日志。真实厂商账号仍需有效凭据和独立验收。

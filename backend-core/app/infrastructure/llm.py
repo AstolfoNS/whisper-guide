@@ -91,23 +91,8 @@ class LLMSemanticRefiner:
         self._client_factory = client_factory or httpx.AsyncClient
 
     @classmethod
-    def from_settings(cls, settings: Any) -> LLMSemanticRefiner:
-        return cls(
-            align_mode=str(getattr(settings, "llm_align_mode", "off")),
-            provider_preset=str(getattr(settings, "llm_provider_preset", "custom")),
-            base_url=str(getattr(settings, "llm_base_url", "")),
-            model=str(getattr(settings, "llm_model", "")),
-            api_key=str(getattr(settings, "llm_api_key", "")),
-            timeout_ms=int(getattr(settings, "llm_timeout_ms", 1500)),
-        )
-
-    @classmethod
     def presets(cls) -> list[dict[str, str]]:
         return [{"id": key, **value} for key, value in cls.PRESETS.items()]
-
-    @classmethod
-    def preset_defaults(cls, name: str) -> dict[str, str]:
-        return dict(cls.PRESETS.get(name, cls.PRESETS["custom"]))
 
     @property
     def enabled(self) -> bool:
@@ -188,9 +173,6 @@ class LLMSemanticRefiner:
         ):
             return None
         return SemanticRefinement(quote, confidence)
-
-    async def align(self, *args: Any, **kwargs: Any) -> SemanticRefinement | None:
-        return await self.refine(*args, **kwargs)
 
     async def test_connection(self) -> dict[str, Any]:
         if not self.base_url or not self.model:

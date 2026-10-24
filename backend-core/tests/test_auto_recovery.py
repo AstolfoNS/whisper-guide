@@ -47,8 +47,9 @@ def test_unique_nearby_text_recovers_without_reposition():
 def test_index_finds_unique_anchor_outside_the_old_512_unit_window():
     script, first, _ = distant_script()
     aligner = ScriptAligner(ScriptTracker(script))
-    result = aligner.recover(first, None)
-    assert result is not None
+    candidates = aligner.recovery_candidates(first)
+    assert len(candidates) == 1
+    result = candidates[0]
     assert result.position == script.index(first) + len(first) - 1
 
 
@@ -149,11 +150,12 @@ def test_mixed_units_and_phonetic_anchor_keep_original_boundaries():
     phrase = "欢迎使用 FastAPI 2026.10 完成实时定位"
     script = "开场。" + "甲" * 600 + phrase + "。"
     aligner = ScriptAligner(ScriptTracker(script))
-    result = aligner.recover(phrase, None)
-    assert result is not None
+    candidates = aligner.recovery_candidates(phrase)
+    assert len(candidates) == 1
+    result = candidates[0]
     assert result.matched_text == phrase
     phonetic = ScriptAligner(ScriptTracker("我们会坚持自律好好吃饭。"))
-    assert phonetic.recover("我们会坚持自绿好好吃饭", None) is not None
+    assert len(phonetic.recovery_candidates("我们会坚持自绿好好吃饭")) == 1
 
 
 def test_refinement_context_retrieves_distant_candidate_without_oversized_requests():

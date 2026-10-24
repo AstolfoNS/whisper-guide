@@ -2,7 +2,7 @@ import { useSyntheticMicrophone } from './syntheticMicrophone'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
-const screenshots = '../docs/screenshots/cloud-speech-2026-10-24'
+const screenshots = 'test-results/screenshots/cloud-speech'
 
 test.beforeEach(async ({ page }) => { await useSyntheticMicrophone(page) })
 

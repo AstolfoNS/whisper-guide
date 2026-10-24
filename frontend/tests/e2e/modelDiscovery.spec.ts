@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
-const screenshots = '../docs/screenshots/model-discovery-2026-10-24'
+const screenshots = 'test-results/screenshots/model-discovery'
 
 test('discovers draft models, searches and selects, then reuses a saved key without exposing it', async ({ page }) => {
   await page.goto('/settings/models')

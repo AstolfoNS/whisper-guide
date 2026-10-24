@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
-const screenshots = '../docs/screenshots/silence-state-2026-10-24'
+const screenshots = 'test-results/screenshots/silence-state'
 
 test('continuous microphone silence automatically prompts, finishes, and prompts the next sentence', async ({ page }) => {
   await page.addInitScript(() => {

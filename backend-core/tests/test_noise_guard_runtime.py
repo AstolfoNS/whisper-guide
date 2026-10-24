@@ -263,7 +263,7 @@ def test_unsupported_update_does_not_cancel_refinement_or_advance_revision(monke
         runtime, speech, clock = await listening(monkeypatch)
         pending = asyncio.create_task(asyncio.Event().wait())
         runtime.refinement = pending
-        revision = runtime.transcript_revision
+        revision = runtime.committed_revision
         await frame(
             runtime,
             speech,
@@ -274,7 +274,7 @@ def test_unsupported_update_does_not_cancel_refinement_or_advance_revision(monke
         )
         assert runtime.refinement is pending
         assert not pending.cancelled()
-        assert runtime.transcript_revision == revision
+        assert runtime.committed_revision == revision
         assert runtime.session.raw_transcript == ""
         assert runtime.session.reliable
         runtime.release_stream()

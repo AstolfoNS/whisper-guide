@@ -228,7 +228,7 @@ def _model_payload(settings: Settings) -> dict[str, Any]:
         "api_key": key_hint,
         "has_api_key": bool(key),
         "timeout_ms": settings.llm_timeout_ms,
-        "enabled": LLMSemanticRefiner.from_settings(settings).enabled,
+        "enabled": LLMSemanticRefiner(settings).enabled,
     }
     stt = {
         "protocol": settings.cloud_stt_protocol,
@@ -399,7 +399,7 @@ async def test_model_settings(
 ) -> dict[str, Any]:
     settings = request.app.state.settings
     candidate = _apply_update(payload, settings) if payload is not None else settings
-    refiner = LLMSemanticRefiner.from_settings(candidate)
+    refiner = LLMSemanticRefiner(candidate)
     try:
         result = await refiner.test_connection()
     except Exception:
@@ -647,7 +647,7 @@ async def test_model_config(request: Request, payload: ProfileTest) -> dict[str,
             return _public_speech_test_result({"ok": False, "error_code": "CLOUD_OPT_IN_REQUIRED"})
         return await _test_speech_config(request, candidate)
     try:
-        result = await LLMSemanticRefiner.from_settings(candidate).test_connection()
+        result = await LLMSemanticRefiner(candidate).test_connection()
     except Exception:
         result = {"ok": False, "latency_ms": 0}
     public_result = _public_llm_test_result(result, success_message="模型接口请求成功。")

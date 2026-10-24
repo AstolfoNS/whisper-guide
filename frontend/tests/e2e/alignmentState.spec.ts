@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
-const screenshots = '../docs/screenshots/alignment-state-2026-10-24'
+const screenshots = 'test-results/screenshots/alignment-state'
 
 /** Two synthetic acoustic bursts; microphone audio is replaced in memory. */
 test('an accepted cloud partial survives a second VAD onset and settles before the automatic prompt', async ({ page }) => {

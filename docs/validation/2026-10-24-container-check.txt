@@ -1,9 +1,0 @@
-NAME                       IMAGE                          COMMAND                  SERVICE    CREATED              STATUS                        PORTS
-whisper-guide-backend-1    whisper-guide-backend:0.1.0    "/app/backend-core/.…"   backend    About a minute ago   Up About a minute (healthy)   8000/tcp
-whisper-guide-frontend-1   whisper-guide-frontend:0.1.0   "/docker-entrypoint.…"   frontend   About a minute ago   Up About a minute (healthy)   127.0.0.1:8080->8080/tcp
-{"status":"ok","service":"whisper-guide-backend","version":"0.1.0"}{"detail":"","stt":"ready","vad":"ready","tts":"ready","provider":"local","requested_provider":"local","cloud_enabled":false,"cloud_notice":false,"providers":[{"id":"local","label":"本地 sherpa-onnx","kind":"local","model":"sherpa-onnx","available":true,"configured":true,"supports_streaming":true,"requires_opt_in":false,"privacy":"音频只在本地服务处理"},{"id":"hybrid","label":"混合模式（云端优先，失败回退本地）","kind":"hybrid","model":"","available":true,"configured":false,"supports_streaming":true,"requires_opt_in":true,"privacy":"优先发送到已配置云端；超时或断网自动回退本地"}]}frontend_http=200
-/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.int8.onnx
-/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt
-/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.int8.onnx
-/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.int8.onnx
-backend_image_bytes=827524723

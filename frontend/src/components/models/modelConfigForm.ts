@@ -1,12 +1,8 @@
 import { normalizeModelSettings } from '../../api/models.ts'
 import type { ModelConfig, ModelConfigInput } from '../../api/modelConfigs.ts'
 
-export interface ModelConfigDraft extends ModelConfigInput {
-  settings: ModelConfigInput['settings']
-}
-
 /** Keep drafts and their secrets in the mounted editor, outside shared/persisted stores. */
-export function modelConfigDraft(profile?: ModelConfig): ModelConfigDraft {
+export function modelConfigDraft(profile?: ModelConfig): ModelConfigInput {
   const settings = profile?.settings ?? normalizeModelSettings({})
   return {
     name: profile?.name ?? '',
@@ -36,7 +32,7 @@ export function modelConfigDraft(profile?: ModelConfig): ModelConfigDraft {
 }
 
 /** Cloud ASR can be tested before a draft has a name or is saved. */
-export function validateCloudSttDraft(draft: ModelConfigDraft, profile?: ModelConfig): string {
+export function validateCloudSttDraft(draft: ModelConfigInput, profile?: ModelConfig): string {
   const settings = draft.settings
   if (settings.stt_provider !== 'cloud') return ''
   if (!settings.cloud_opt_in) return '启用云端识别前，请授权发送麦克风音频片段。'
@@ -59,7 +55,7 @@ export function validateCloudSttDraft(draft: ModelConfigDraft, profile?: ModelCo
   return ''
 }
 
-export function validateModelConfigDraft(draft: ModelConfigDraft, profile?: ModelConfig): string {
+export function validateModelConfigDraft(draft: ModelConfigInput, profile?: ModelConfig): string {
   if (!draft.name.trim()) return '请填写配置名称。'
   if (draft.name.trim().length > 100) return '配置名称不能超过 100 个字符。'
   if (!Number.isInteger(draft.settings.llm_timeout_ms) || draft.settings.llm_timeout_ms < 1) return '超时阈值必须是大于 0 的整数毫秒。'

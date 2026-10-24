@@ -1,8 +1,0 @@
-Final source container smoke check, 2026-10-24
-Existing runtime image used with final app source bind-mounted read-only; no user data mounted.
-Application imports and OpenAPI routes passed.
-Bundled local STT model readiness passed.
-WebSocket dependency: websockets=17.3.
-Docker compose config --quiet passed with five new ASR environment mappings.
-Temporary --rm container exited; existing 8080 service was not restarted.
-No image was rebuilt or exported. No live ASR credentials or user recordings were sent.

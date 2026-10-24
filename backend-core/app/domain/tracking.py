@@ -407,12 +407,6 @@ class ScriptAligner:
             for start, end, confidence in sorted(matches.values())
         )
 
-    def recover(self, transcript: str, reading_position: int | None) -> MatchResult | None:
-        """Return only a globally unique strong phrase; session confirms distant moves."""
-        del reading_position
-        matches = self.recovery_candidates(transcript)
-        return matches[0] if len(matches) == 1 else None
-
     def align(self, transcript: str, reading_position: int | None) -> MatchResult | None:
         recognized = content_units(transcript)
         if not recognized:
@@ -517,9 +511,6 @@ class ScriptAligner:
             confidence=max(0.0, min(1.0, best.score)),
             matched_text=self.tracker.text[start_unit.start : unit.end],
         )
-
-    def match(self, transcript: str, reading_position: int | None) -> MatchResult | None:
-        return self.align(transcript, reading_position)
 
 
 def _pinyin_key(text: str) -> tuple[str, ...]:
