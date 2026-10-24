@@ -73,7 +73,7 @@ long-script characters=6000; pause-and-navigation=176ms
   ✓  16 tests/e2e/workbench.spec.ts:134:1 › long script keeps cursor actions responsive without rebuilding the whole transcript (2.9s)
 
 
-  1) tests/e2e/cloudSilence.spec.ts:9:1 › cloud revisions recover from an unreliable partial and automatically prompt after silence 
+  1) tests/e2e/cloudSilence.spec.ts:9:1 › cloud revisions recover from an unreliable partial and automatically prompt after silence
 
     Error: expect(locator).toBeVisible() failed
 
@@ -106,7 +106,7 @@ long-script characters=6000; pause-and-navigation=176ms
 
     ────────────────────────────────────────────────────────────────────────────────────────────────
 
-  2) tests/e2e/noiseGuard.spec.ts:6:1 › a silent hallucinated 点 cannot invalidate the matched phrase or stop the next automatic prompt 
+  2) tests/e2e/noiseGuard.spec.ts:6:1 › a silent hallucinated 点 cannot invalidate the matched phrase or stop the next automatic prompt
 
     Error: expect(locator).toContainText(expected) failed
 
@@ -146,8 +146,8 @@ long-script characters=6000; pause-and-navigation=176ms
     ────────────────────────────────────────────────────────────────────────────────────────────────
 
   2 failed
-    tests/e2e/cloudSilence.spec.ts:9:1 › cloud revisions recover from an unreliable partial and automatically prompt after silence 
-    tests/e2e/noiseGuard.spec.ts:6:1 › a silent hallucinated 点 cannot invalidate the matched phrase or stop the next automatic prompt 
+    tests/e2e/cloudSilence.spec.ts:9:1 › cloud revisions recover from an unreliable partial and automatically prompt after silence
+    tests/e2e/noiseGuard.spec.ts:6:1 › a silent hallucinated 点 cannot invalidate the matched phrase or stop the next automatic prompt
   14 passed (55.6s)
 
 Historical screenshot preservation: 19 files restored; byte verification=True.
