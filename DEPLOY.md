@@ -1,6 +1,6 @@
 # 新服务器部署指南（已安装 Docker）
 
-适用日期：2026-10-24。面向 Linux 服务器，使用两份已构建镜像运行 Whisper Guide。本文可随交付目录或离线发布包单独阅读。
+适用日期：2026-10-24。面向 Linux 服务器，使用两份已构建镜像运行 芯创客无障碍语音提示助手。本文可随交付目录或离线发布包单独阅读。
 
 目标服务器需要 Docker、Compose 插件、Bash 及常见系统工具（gzip、tar、sha256sum）；远程传输/访问示例使用 SSH/SCP，HTTP 检查示例使用 curl。导入镜像运行时不需要安装 Python、uv、Node.js、pnpm，也不需要下载 STT 模型。`scripts/backup.py` 使用容器内 Python 执行。
 

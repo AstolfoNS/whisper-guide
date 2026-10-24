@@ -1,4 +1,4 @@
-# Whisper Guide
+# 芯创客无障碍语音提示助手
 
 实时讲稿追踪与语音提示工作台。第一版需求基线为 [AC-01 至 AC-27](docs/requirements-v1.md)。
 

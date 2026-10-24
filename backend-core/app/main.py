@@ -39,7 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             engine.dispose()
 
     application = FastAPI(
-        title="Whisper Guide API",
+        title="芯创客无障碍语音提示助手 API",
         description="Server-side speech tracking and prompting application.",
         version="0.1.0",
         lifespan=lifespan,

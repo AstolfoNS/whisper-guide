@@ -1,4 +1,4 @@
-# Whisper Guide 后端
+# 芯创客无障碍语音提示助手 后端
 
 Python 3.12 + FastAPI，使用 uv 管理依赖、SQLAlchemy 连接服务端本地 SQLite。
 

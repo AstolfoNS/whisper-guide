@@ -17,7 +17,7 @@ router.beforeEach(async (to, from) => {
   if (to.path === '/studio') getSessionController().enterStudio()
 })
 router.afterEach(async (to, from) => {
-  document.title = `${String(to.meta.title ?? 'Whisper Guide')} · Whisper Guide`
+  document.title = to.meta.title ? `${String(to.meta.title)} · 芯创客无障碍语音提示助手` : '芯创客无障碍语音提示助手'
   if (to.path !== from.path) {
     await nextTick()
     document.querySelector<HTMLElement>('#page-title')?.focus()

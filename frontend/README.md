@@ -1,4 +1,4 @@
-# Whisper Guide 前端
+# 芯创客无障碍语音提示助手 前端
 
 Vue 3 + TypeScript + Naive UI + Vue Router + Pinia 的三视图提词器工作台。
 
