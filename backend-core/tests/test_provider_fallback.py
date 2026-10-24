@@ -74,6 +74,8 @@ def test_remote_failure_uses_warm_local_and_monotonic_segment_ids():
         ]
     )
     stream = FallbackSpeechStream(remote, local)
+    # Existing providers need not implement the optional voice notification hook.
+    assert stream.is_speech(b"first")
     assert stream.accept_pcm(b"first").segment_id == 7
     recovered = stream.accept_pcm(b"second")
     assert recovered.text == "大家好"

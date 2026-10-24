@@ -110,16 +110,28 @@ class SpeechStream:
             return False
         if self._vad is not None:
             try:
-                return bool(self._vad.is_speech(pcm, self.sample_rate))
+                voiced = bool(self._vad.is_speech(pcm, self.sample_rate))
             except Exception:
                 pass
+            else:
+                if voiced:
+                    self.notify_voice()
+                return voiced
         if len(pcm) % 2:
             return False
         samples = array("h", pcm)
         if not samples:
             return False
         rms = math.sqrt(sum(value * value for value in samples) / len(samples))
-        return rms >= 500
+        voiced = rms >= 500
+        if voiced:
+            self.notify_voice()
+        return voiced
+
+    def notify_voice(self) -> None:
+        notify = getattr(self._recognizer, "notify_voice", None)
+        if not self._closed and callable(notify):
+            notify()
 
     def reset(self) -> None:
         reset = getattr(self._recognizer, "reset", None)
@@ -640,7 +652,12 @@ class FallbackSpeechStream:
         return self.active is self.local
 
     def is_speech(self, pcm: bytes) -> bool:
-        return self.local.is_speech(pcm)
+        voiced = self.local.is_speech(pcm)
+        if voiced and self.active is self.remote:
+            notify = getattr(self.remote, "notify_voice", None)
+            if callable(notify):
+                notify()
+        return voiced
 
     def accept_pcm(self, pcm: bytes) -> RecognitionUpdate | None:
         if self._closed:

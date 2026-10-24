@@ -16,6 +16,23 @@ const scripts = useScriptsStore()
 const libraryOpen = ref(false)
 const labels = { READY: '就绪', LISTENING: '识别中', PROMPTING: '提示播报', PAUSED: '已暂停', TERMINATED: '已结束' }
 const text = computed(() => session.active ? session.snapshot?.script_text ?? '' : scripts.selected?.content ?? '')
+const recoveredFeedback = ref<{ sessionId: string; feedbackId: number }>()
+watch(() => [session.snapshot?.id, session.snapshot?.reliable, session.snapshot?.feedback_id] as const, ([sessionId, reliable, feedbackId]) => {
+  if (sessionId && reliable && feedbackId != null) recoveredFeedback.value = { sessionId, feedbackId }
+}, { immediate: true })
+const sessionFeedback = computed(() => {
+  const snapshot = session.snapshot
+  if (!snapshot) return ''
+  if (snapshot.state === 'PAUSED' && snapshot.transition_trigger !== 'user_paused') {
+    return snapshot.pause_reason || snapshot.message || session.notice
+  }
+  if (snapshot.state === 'LISTENING' && !snapshot.reliable && !snapshot.speaking && snapshot.last_transcript?.trim()) {
+    const recovered = recoveredFeedback.value
+    if (recovered?.sessionId === snapshot.id && snapshot.feedback_id <= recovered.feedbackId) return ''
+    return snapshot.message || session.notice
+  }
+  return ''
+})
 async function queryChanged() {
   if (route.query.panel === 'scripts') libraryOpen.value = true
   const id = route.query.script
@@ -31,6 +48,7 @@ watch(() => scripts.selected, script => { if (!session.active) session.selectedS
   <section class="studio-page">
   <div class="studio-heading"><div><h1 id="page-title" tabindex="-1">演讲工作台</h1><p>{{ session.active ? session.snapshot?.script_name : scripts.selected?.name ?? '选择讲稿后开始演讲' }}</p></div><div class="studio-actions"><NTag :type="session.state === 'LISTENING' ? 'success' : session.state === 'PROMPTING' ? 'warning' : 'default'" role="status">{{ labels[session.state] }}</NTag><NButton class="library-trigger" @click="libraryOpen = true">讲稿库</NButton></div></div>
   <NAlert v-if="session.error" type="error" closable :show-icon="false" @close="session.error = ''">{{ session.error }}</NAlert>
+  <NAlert v-if="sessionFeedback" type="warning" :show-icon="false" role="alert">{{ sessionFeedback }}</NAlert>
   <div class="studio-grid">
     <aside class="library-column"><ScriptLibraryPanel /></aside>
     <div class="studio-main">

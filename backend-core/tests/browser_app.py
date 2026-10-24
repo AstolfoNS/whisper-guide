@@ -117,6 +117,7 @@ def mock_asr_frame(payload, final=False):
 
 
 @app.websocket("/mock/asr/bigmodel_async")
+@app.websocket("/mock/asr/revising/bigmodel_async")
 async def mock_asr(socket: WebSocket):
     if socket.headers.get("x-api-key") != "synthetic-browser-asr-key":
         await socket.close(code=1008)
@@ -132,6 +133,27 @@ async def mock_asr(socket: WebSocket):
                 await socket.send_bytes(mock_asr_frame({}, final=True))
                 return
             packets += 1
+            if "/revising/" in socket.url.path:
+                if packets in {1, 15}:
+                    await socket.send_bytes(
+                        mock_asr_frame(
+                            {
+                                "result": {
+                                    "utterances": [
+                                        {
+                                            "text": "完全不相干的文字"
+                                            if packets == 1
+                                            else "大甲好",
+                                            "start_time": 0,
+                                            "end_time": 600,
+                                            "definite": False,
+                                        }
+                                    ]
+                                }
+                            }
+                        )
+                    )
+                continue
             if packets <= 2:
                 await socket.send_bytes(
                     mock_asr_frame(

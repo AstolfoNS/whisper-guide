@@ -1,11 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { SessionSnapshot } from '../../api/session'
-defineProps<{ snapshot?: SessionSnapshot }>()
+const props = defineProps<{ snapshot?: SessionSnapshot }>()
+const alignmentStatus = computed(() => {
+  const snapshot = props.snapshot
+  if (!snapshot || snapshot.state !== 'LISTENING' || snapshot.reliable) return ''
+  if (snapshot.speaking) return '正在接收语音，等待稳定识别结果后确认讲稿位置。'
+  if (!snapshot.raw_transcript?.trim()) return '尚未获得有效识别文本，自动播报暂缓；可继续朗读或手动定位。'
+  if (!snapshot.raw_transcript_is_final && snapshot.raw_transcript.trim() !== snapshot.last_transcript?.trim()) return '正在等待识别定稿与讲稿对齐，自动播报暂缓。'
+  return '未能可靠匹配讲稿，自动播报已暂停；可继续朗读、手动提示或重新定位。'
+})
 </script>
 <template>
   <div class="transcript-comparison">
     <section aria-label="实时语音识别"><div class="transcript-heading">实时识别 <small>{{ snapshot?.raw_transcript_is_final ? 'final · 已定稿' : 'partial · 修订中' }}</small></div><p>{{ snapshot?.raw_transcript || '等待语音输入' }}</p></section>
-    <section aria-label="讲稿匹配"><div class="transcript-heading">讲稿匹配 <small v-if="snapshot?.match_confidence != null">{{ Math.round(snapshot.match_confidence * 100) }}%</small></div><p>{{ snapshot?.aligned_transcript || '尚未确认位置' }}</p><small v-if="snapshot && !snapshot.reliable">保留上次确认位置；可继续朗读或手动定位。</small></section>
+    <section aria-label="讲稿匹配"><div class="transcript-heading">讲稿匹配 <small v-if="snapshot?.match_confidence != null">{{ Math.round(snapshot.match_confidence * 100) }}%</small></div><p>{{ snapshot?.aligned_transcript || '尚未确认位置' }}</p><small v-if="alignmentStatus" role="status" aria-live="polite">{{ alignmentStatus }}</small></section>
   </div>
 </template>
 <style scoped>

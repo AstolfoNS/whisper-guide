@@ -1,0 +1,84 @@
+import { afterEach, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { createPinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import StudioView from '../../src/views/StudioView.vue'
+import TranscriptComparison from '../../src/components/studio/TranscriptComparison.vue'
+import { useSessionStore } from '../../src/stores/session'
+import { useScriptsStore } from '../../src/stores/scripts'
+import type { SessionSnapshot } from '../../src/api/session'
+
+vi.mock('../../src/services/sessionController', () => ({ getSessionController: () => ({ enterStudio: vi.fn() }) }))
+
+let mounted: VueWrapper | undefined
+const mismatchMessage = '暂时无法可靠定位讲稿，自动提示已暂停；可手动提示或重新定位。'
+function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
+  return {
+    id: 'session-feedback', script_id: 'script', script_name: '测试讲稿', state: 'LISTENING',
+    silence_timeout_ms: 1000, reading_position: null, prompt_position: 0, generation: 1,
+    prompt: null, reliable: false, speaking: false, pause_reason: null, message: null,
+    feedback_id: 1, last_transcript: '', raw_transcript: '', aligned_transcript: '',
+    match_confidence: null, at_end: false, units: [], ...overrides,
+  }
+}
+async function studio(current: SessionSnapshot) {
+  const pinia = createPinia()
+  const session = useSessionStore(pinia)
+  session.snapshot = current
+  session.notice = current.message ?? ''
+  vi.spyOn(useScriptsStore(pinia), 'refresh').mockResolvedValue(undefined)
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/studio', component: StudioView }] })
+  await router.push('/studio')
+  await router.isReady()
+  mounted = mount(StudioView, { global: { plugins: [pinia, router], stubs: { ScriptLibraryPanel: true, TeleprompterView: true, SessionControls: true, StateMachineMonitor: true } } })
+  await flushPromises()
+  return { wrapper: mounted, session }
+}
+afterEach(() => { mounted?.unmount(); mounted = undefined; vi.restoreAllMocks() })
+
+it('shows an alignment failure and removes stale feedback as soon as the position is reliable again', async () => {
+  const { wrapper, session } = await studio(snapshot({ raw_transcript: '无关内容', raw_transcript_is_final: true, last_transcript: '无关内容', message: mismatchMessage }))
+  expect(wrapper.get('[role="alert"]').text()).toBe(mismatchMessage)
+  expect(wrapper.get('.transcript-comparison [role="status"]').text()).toContain('自动播报已暂停')
+  session.snapshot = { ...session.snapshot!, reliable: true, aligned_transcript: '大家好', match_confidence: 0.95 }
+  await wrapper.vm.$nextTick()
+  expect(session.notice).toBe(mismatchMessage)
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  expect(wrapper.find('.transcript-comparison [role="status"]').exists()).toBe(false)
+  expect(wrapper.text()).not.toContain(mismatchMessage)
+  session.snapshot = { ...session.snapshot!, reliable: false, speaking: false, raw_transcript: '今天', raw_transcript_is_final: false }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  expect(wrapper.get('.transcript-comparison [role="status"]').text()).toContain('等待识别定稿')
+  session.snapshot = { ...session.snapshot!, feedback_id: 2, raw_transcript: '再次无关', raw_transcript_is_final: true, last_transcript: '再次无关' }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.get('[role="alert"]').text()).toBe(mismatchMessage)
+})
+
+it('explains missing recognition text without claiming that existing text failed alignment', () => {
+  mounted = mount(TranscriptComparison, { props: { snapshot: snapshot() } })
+  expect(mounted.get('[role="status"]').text()).toContain('尚未获得有效识别文本')
+  expect(mounted.text()).toContain('自动播报暂缓')
+  expect(mounted.text()).not.toContain('未能可靠匹配讲稿')
+})
+
+it('distinguishes pending partial recognition from a final alignment failure', async () => {
+  mounted = mount(TranscriptComparison, { props: { snapshot: snapshot({ raw_transcript: '大家', raw_transcript_is_final: false }) } })
+  expect(mounted.get('[role="status"]').text()).toContain('等待识别定稿')
+  await mounted.setProps({ snapshot: snapshot({ raw_transcript: '无关内容', raw_transcript_is_final: true, last_transcript: '无关内容' }) })
+  expect(mounted.get('[role="status"]').text()).toContain('未能可靠匹配讲稿')
+})
+
+it('treats ongoing speech as waiting for stable recognition', () => {
+  mounted = mount(TranscriptComparison, { props: { snapshot: snapshot({ speaking: true }) } })
+  expect(mounted.get('[role="status"]').text()).toContain('正在接收语音')
+  expect(mounted.text()).not.toContain('自动播报已暂停')
+})
+
+it('shows a service pause reason but hides the stale reason after resuming', async () => {
+  const { wrapper, session } = await studio(snapshot({ state: 'PAUSED', reliable: true, transition_trigger: 'service_fault', pause_reason: '麦克风数据中断，已暂停。', message: '麦克风数据中断，已暂停。' }))
+  expect(wrapper.get('[role="alert"]').text()).toContain('麦克风数据中断')
+  session.snapshot = { ...session.snapshot!, state: 'LISTENING', pause_reason: null, transition_trigger: 'user_resumed' }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+})

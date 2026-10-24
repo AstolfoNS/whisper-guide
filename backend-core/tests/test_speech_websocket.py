@@ -334,3 +334,49 @@ def test_fallback_without_new_text_is_published_without_changing_domain_position
         )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("with_fallback", [False, True])
+def test_low_energy_vad_voice_starts_cloud_deadline(with_fallback):
+    """A session VAD hit must not wait forever below the transport RMS gate."""
+
+    class QuietVoiceVad:
+        def is_speech(self, pcm, sample_rate):
+            return True
+
+    async def scenario():
+        async def handler(socket):
+            await socket.recv()
+            await socket.send(server_frame({}))
+            try:
+                async for frame in socket:
+                    if frame[1] & 2:
+                        return
+            except ConnectionClosed:
+                return
+
+        async with serve(handler, "127.0.0.1", 0) as server:
+            recognizer = WebSocketStreamingRecognizer(
+                config(server.sockets[0].getsockname()[1], timeout_seconds=0.25), 16000
+            )
+            remote = SpeechStream(recognizer=recognizer, provider_name="cloud", vad=QuietVoiceVad())
+            local = SpeechStream(recognizer=lambda pcm: None, vad=QuietVoiceVad())
+            stream = FallbackSpeechStream(remote, local) if with_fallback else remote
+            try:
+                pcm = array("h", [50] * 320).tobytes()
+                assert stream.is_speech(pcm)
+                assert recognizer._pending_voice_at is not None
+                async with asyncio.timeout(2):
+                    while recognizer._failure is None:
+                        recognizer(pcm)
+                        await asyncio.sleep(0.02)
+                assert recognizer._failure.error_code == "TIMEOUT"
+                if with_fallback:
+                    stream.accept_pcm(pcm)
+                    assert stream.fallback_active
+                    assert stream.effective_provider == "local"
+            finally:
+                stream.close()
+                assert await asyncio.to_thread(recognizer._done.wait, 2)
+
+    asyncio.run(scenario())

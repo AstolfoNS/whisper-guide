@@ -46,7 +46,8 @@ class SessionRuntime:
         self.refinement: asyncio.Task[None] | None = None
         self.transcript_revision = 0
         self.last_filler_only = False
-        self.settled_segment_id = -1
+        self.settled_hypothesis: tuple[int, str] | None = None
+        self.finalized_segment_id = -1
         self.stream: Any = None
         self.socket: WebSocket | None = None
         self.lock = asyncio.Lock()
@@ -105,7 +106,8 @@ class SessionRuntime:
     def release_stream(self) -> None:
         self.cancel_refinement()
         self.transcript_revision += 1
-        self.settled_segment_id = -1
+        self.settled_hypothesis = None
+        self.finalized_segment_id = -1
         self.last_filler_only = False
         self.ready_generation = -1
         while not self.audio_queue.empty():
@@ -137,7 +139,7 @@ class SessionRuntime:
         anchor = self.session.reading_position
         window = self.session.aligner.script_window(anchor)
         self.session.handle("transcript", timestamp, text=text)
-        self.settled_segment_id = self.last_segment_id
+        self.settled_hypothesis = (self.last_segment_id, text)
         settings = self.model_settings
         refiner = LLMSemanticRefiner(settings)
         if not refiner.enabled:
@@ -198,7 +200,9 @@ class SessionRuntime:
             and self.last_text
             and not self.last_update_final
             and not self.last_filler_only
-            and self.settled_segment_id != self.last_segment_id
+            # A late cloud revision can correct a previously unmatched partial.
+            # Identical hypotheses stay settled even after a new VAD onset.
+            and self.settled_hypothesis != (self.last_segment_id, self.last_text)
         ):
             self.commit_transcript(self.last_text, timestamp)
         before = self.session.state
@@ -373,17 +377,22 @@ class SessionRuntime:
                 await self.publish()
             if not update:
                 return
-            if update.segment_id < self.last_segment_id:
+            # VAD clears transient display state, but must never make an old
+            # finalized segment eligible for alignment as a fresh readback.
+            if (
+                update.segment_id < self.last_segment_id
+                or update.segment_id <= self.finalized_segment_id
+            ):
                 return
             if update.segment_id > self.last_segment_id:
                 self.last_text = ""
-            if update.segment_id == self.last_segment_id and self.last_update_final:
-                return
             if update.text != self.last_text or update.segment_id != self.last_segment_id:
                 self.transcript_revision += 1
                 self.cancel_refinement()
             self.last_segment_id = update.segment_id
             self.last_update_final = update.is_final
+            if update.is_final:
+                self.finalized_segment_id = update.segment_id
             self.last_filler_only = update.is_filler_only
             previous_text = self.last_text
             self.last_text = update.text

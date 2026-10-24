@@ -225,6 +225,12 @@ class WebSocketStreamingRecognizer:
             _STREAM_SLOTS.release()
             raise
 
+    def notify_voice(self) -> None:
+        """Start the bounded result wait from the same VAD used by the session."""
+        with self._lock:
+            if not self._closed and self._failure is None and self._pending_voice_at is None:
+                self._pending_voice_at = time.monotonic()
+
     def __call__(self, pcm: bytes) -> ProtocolTranscript | None:
         failure = None
         with self._lock:
