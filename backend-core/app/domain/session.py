@@ -156,6 +156,13 @@ class SpeechSession:
             "reading_position": self.reading_position,
             "prompt_position": self.prompt_position,
             "reliable": self.reliable,
+            "alignment_status": (
+                "mismatch"
+                if self._location_warning_reported
+                else "reliable"
+                if self.reliable
+                else "pending"
+            ),
             "generation": self.generation,
             "prompt": asdict(self.prompt) if self.prompt else None,
             "speaking": self.speaking,
@@ -259,8 +266,8 @@ class SpeechSession:
                 self._listen(now_ms, "prompt_audio_finished")
         elif event == "speech_start":
             if self.state == SessionState.LISTENING:
-                if not self.speaking:
-                    self._last_reliable = self.reliable
+                # VAD marks this activity pending, not a new alignment verdict.
+                # Repeated onsets must not overwrite the last committed verdict.
                 self.reliable = False
                 self.speaking = True
                 self.silence_since_ms = None

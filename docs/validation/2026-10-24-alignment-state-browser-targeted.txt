@@ -1,0 +1,15 @@
+[WebServer] INFO:     Started server process [119173]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8010 (Press CTRL+C to quit)
+
+Running 1 test using 1 worker
+
+[WebServer] INFO:     127.0.0.1:60894 - "WebSocket /api/session" [accepted]
+[WebServer] INFO:     connection open
+[WebServer] INFO:     127.0.0.1:60896 - "WebSocket /mock/asr/pending/bigmodel_async" [accepted]
+[WebServer] INFO:     connection open
+accepted cloud partial survived a second confirmed VAD onset without final text; aligned 大家好 at silence deadline; PROMPTING and in-memory audio received without AC-14
+  ✓  1 tests/e2e/alignmentState.spec.ts:7:1 › an accepted cloud partial survives a second VAD onset and settles before the automatic prompt (4.2s)
+
+  1 passed (6.8s)

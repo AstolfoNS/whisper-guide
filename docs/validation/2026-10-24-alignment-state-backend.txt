@@ -1,0 +1,54 @@
+Resolved 49 packages in 1ms
+Checked 47 packages in 0.62ms
+All checks passed!
+60 files already formatted
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.7.0
+rootdir: /home/timeleafing/projects/whisper-guide/backend-core
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.15.1
+collected 563 items
+
+tests/test_alignment_state_regressions.py ..................             [  3%]
+tests/test_audio_evidence.py ............................                [  8%]
+tests/test_cloud_silence_regressions.py .......                          [  9%]
+tests/test_health.py ..                                                  [  9%]
+tests/test_llm_diagnostics.py .......................................... [ 17%]
+.........                                                                [ 18%]
+tests/test_llm_protocol.py ...........                                   [ 20%]
+tests/test_llm_settings.py .................                             [ 23%]
+tests/test_local_evidence_clock.py ..                                    [ 24%]
+tests/test_long_script_alignment.py ............                         [ 26%]
+tests/test_model_configs.py .......................                      [ 30%]
+tests/test_model_discovery.py .......................................... [ 37%]
+.                                                                        [ 38%]
+tests/test_model_download.py .................................           [ 43%]
+tests/test_noise_guard_runtime.py ...............                        [ 46%]
+tests/test_prompt_boundaries.py .................................        [ 52%]
+tests/test_provider_fallback.py ...........................              [ 57%]
+tests/test_runtime.py ...                                                [ 57%]
+tests/test_scripts.py ..............                                     [ 60%]
+tests/test_semantic_runtime.py .....                                     [ 61%]
+tests/test_session.py ......................                             [ 65%]
+tests/test_session_api.py .........                                      [ 66%]
+tests/test_session_options.py ...............                            [ 69%]
+tests/test_session_profiles.py .                                         [ 69%]
+tests/test_session_recovery.py .....                                     [ 70%]
+tests/test_silence_prompting.py ..........                               [ 72%]
+tests/test_speech.py ...........                                         [ 74%]
+tests/test_speech_protocols.py ......................................... [ 81%]
+..............                                                           [ 83%]
+tests/test_speech_websocket.py ...................                       [ 87%]
+tests/test_stream_pacing.py .....                                        [ 88%]
+tests/test_stt_settings.py ............................................  [ 95%]
+tests/test_tracking.py .....................                             [ 99%]
+tests/test_transition_monitor.py ..                                      [100%]
+
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/timeleafing/projects/whisper-guide/backend-core/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 563 passed, 1 warning in 12.47s ========================

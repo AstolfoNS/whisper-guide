@@ -7,6 +7,7 @@ import os
 import struct
 import tempfile
 import wave
+from array import array
 from pathlib import Path
 
 from fastapi import Request, WebSocket, WebSocketDisconnect
@@ -28,8 +29,16 @@ class BrowserStream:
     def __init__(self, *, silent=False):
         self.frames = 0
         self.silent = silent
+        self.acoustic_vad = False
 
     def is_speech(self, pcm):
+        if self.acoustic_vad:
+            # Only the pending-hypothesis browser scenario uses real PCM energy;
+            # all other deterministic doubles retain their existing behavior.
+            samples = array("h", pcm)
+            return (
+                bool(samples) and sum(value * value for value in samples) >= len(samples) * 500**2
+            )
         return not self.silent and self.frames < 8
 
     def accept_pcm(self, pcm):
@@ -60,6 +69,7 @@ class BrowserSpeech(ProviderSpeechServices):
         remote = self.registry.provider(provider_name or self.provider_name)
         if remote is None or not remote.configured:
             return local
+        local.acoustic_vad = "/mock/asr/pending/" in remote.config.endpoint
         return FallbackSpeechStream(remote.create_stream(vad=None, turn_token=turn_token), local)
 
     async def synthesize(self, text):
@@ -119,6 +129,7 @@ def mock_asr_frame(payload, final=False):
 @app.websocket("/mock/asr/bigmodel_async")
 @app.websocket("/mock/asr/revising/bigmodel_async")
 @app.websocket("/mock/asr/noise/bigmodel_async")
+@app.websocket("/mock/asr/pending/bigmodel_async")
 @app.websocket("/mock/asr/boundary/bigmodel_async")
 @app.websocket("/mock/asr/complete/bigmodel_async")
 async def mock_asr(socket: WebSocket):
@@ -136,6 +147,25 @@ async def mock_asr(socket: WebSocket):
                 await socket.send_bytes(mock_asr_frame({}, final=True))
                 return
             packets += 1
+            if "/pending/" in socket.url.path:
+                if packets <= 2:
+                    await socket.send_bytes(
+                        mock_asr_frame(
+                            {
+                                "result": {
+                                    "utterances": [
+                                        {
+                                            "text": "大家好",
+                                            "start_time": 0,
+                                            "end_time": 400,
+                                            "definite": False,
+                                        }
+                                    ]
+                                }
+                            }
+                        )
+                    )
+                continue
             if "/boundary/" in socket.url.path or "/complete/" in socket.url.path:
                 if packets <= 2:
                     text = (

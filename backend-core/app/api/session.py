@@ -48,6 +48,9 @@ class SessionRuntime:
         self.transcript_revision = 0
         self.last_filler_only = False
         self.settled_hypothesis: tuple[int, str] | None = None
+        # A single accepted hypothesis survives VAD display resets until settled.
+        self.pending_hypothesis: tuple[int, str] | None = None
+        self.raw_transcript_is_current = False
         self.finalized_segment_id = -1
         self.stream: Any = None
         self.socket: WebSocket | None = None
@@ -94,6 +97,7 @@ class SessionRuntime:
             model_config_name=self.model_config_name,
             model_config_revision=self.model_config_revision,
             recognition_is_final=self.last_update_final,
+            raw_transcript_is_current=self.raw_transcript_is_current,
             raw_transcript_is_final=(
                 self.filtered_final
                 if self.filtered_text
@@ -118,6 +122,8 @@ class SessionRuntime:
         self.cancel_refinement()
         self.transcript_revision += 1
         self.settled_hypothesis = None
+        self.pending_hypothesis = None
+        self.raw_transcript_is_current = False
         self.finalized_segment_id = -1
         self.last_filler_only = False
         self.ready_generation = -1
@@ -154,7 +160,11 @@ class SessionRuntime:
         anchor = self.session.reading_position
         window = self.session.aligner.script_window(anchor)
         self.session.handle("transcript", timestamp, text=text)
-        self.settled_hypothesis = (self.last_segment_id, text)
+        pending = self.pending_hypothesis
+        self.settled_hypothesis = (
+            pending if pending and pending[1] == text else (self.last_segment_id, text)
+        )
+        self.pending_hypothesis = None
         settings = self.model_settings
         refiner = LLMSemanticRefiner(settings)
         if not refiner.enabled:
@@ -212,16 +222,11 @@ class SessionRuntime:
             and self.session.silence_since_ms is not None
             and timestamp - self.session.silence_since_ms >= self.session.options.silence_timeout_ms
         )
-        if (
-            due
-            and self.last_text
-            and not self.last_update_final
-            and not self.last_filler_only
-            # A late cloud revision can correct a previously unmatched partial.
-            # Identical hypotheses stay settled even after a new VAD onset.
-            and self.settled_hypothesis != (self.last_segment_id, self.last_text)
-        ):
-            self.commit_transcript(self.last_text, timestamp)
+        pending = self.pending_hypothesis
+        if due and pending and pending != self.settled_hypothesis:
+            # Settle accepted text, even if a later VAD onset cleared its display.
+            # Revisions can repair a mismatch; identical settled text cannot replay.
+            self.commit_transcript(pending[1], timestamp)
         before = self.session.state
         self.session.handle("tick", timestamp)
         if self.session.state != before:
@@ -373,8 +378,8 @@ class SessionRuntime:
                     self.transcript_revision += 1
                     self.cancel_refinement()
                     self.last_text = ""
-                    self.last_segment_id = -1
                     self.last_update_final = False
+                    self.raw_transcript_is_current = False
                     self.session.handle("speech_start", received)
                     changed = True
             elif self.session.speaking and self.last_voice_ms is not None:
@@ -416,14 +421,18 @@ class SessionRuntime:
             ):
                 # A cloud hypothesis alone cannot turn live silence into speech
                 # or disable prompting at the last reliable script position.
+                self.raw_transcript_is_current = True
                 self.filtered_text = update.text
                 self.filtered_final = update.is_final
                 self.filtered_count += 1
                 await self.publish()
                 return
             if update.text.strip():
+                self.raw_transcript_is_current = True
                 self.filtered_text = ""
                 self.filtered_final = False
+            else:
+                self.raw_transcript_is_current = False
             if update.segment_id > self.last_segment_id:
                 self.last_text = ""
             if update.text != self.last_text or update.segment_id != self.last_segment_id:
@@ -434,6 +443,14 @@ class SessionRuntime:
             if update.is_final:
                 self.finalized_segment_id = update.segment_id
             self.last_filler_only = update.is_filler_only
+            if update.text.strip() and not update.is_filler_only:
+                hypothesis = (update.segment_id, update.text)
+                self.pending_hypothesis = (
+                    hypothesis if hypothesis != self.settled_hypothesis else None
+                )
+            elif self.pending_hypothesis and self.pending_hypothesis[0] == update.segment_id:
+                # A full revision to filler/empty retracts this segment's old words.
+                self.pending_hypothesis = None
             previous_text = self.last_text
             self.last_text = update.text
             if update.text.strip() and not update.is_filler_only and update.text != previous_text:
@@ -450,7 +467,8 @@ class SessionRuntime:
                 return
             if not update.is_final or not update.text.strip():
                 return
-            self.commit_transcript(update.text, received)
+            if self.settled_hypothesis != (update.segment_id, update.text):
+                self.commit_transcript(update.text, received)
             await self.publish()
 
 

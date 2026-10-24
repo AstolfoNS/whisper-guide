@@ -82,3 +82,32 @@ it('shows a service pause reason but hides the stale reason after resuming', asy
   await wrapper.vm.$nextTick()
   expect(wrapper.find('[role="alert"]').exists()).toBe(false)
 })
+
+
+it('keeps confirmed mismatch feedback stable while VAD speech starts and ends', async () => {
+  const { wrapper, session } = await studio(snapshot({ alignment_status: 'mismatch', raw_transcript: '来', raw_transcript_is_final: true, raw_transcript_is_current: true, last_transcript: '来', aligned_transcript: '我要', message: mismatchMessage }))
+  for (const speaking of [false, true, false, true]) {
+    session.snapshot = { ...session.snapshot!, speaking }
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[role="alert"]').text()).toBe(mismatchMessage)
+    const alignment = wrapper.get('[aria-label="讲稿匹配"]')
+    expect(alignment.text()).toContain('最近一次有效识别未能可靠匹配讲稿')
+    expect(alignment.text()).toContain('自动提示暂缓')
+    expect(alignment.text()).not.toContain('正在接收语音')
+  }
+})
+
+it('clears confirmed mismatch feedback after recovery and does not revive it during a new pending utterance', async () => {
+  const { wrapper, session } = await studio(snapshot({ alignment_status: 'mismatch', raw_transcript: '来', raw_transcript_is_final: true, last_transcript: '来', message: mismatchMessage }))
+  session.snapshot = { ...session.snapshot!, alignment_status: 'reliable', reliable: true, last_transcript: '大家好', raw_transcript: '大家好', raw_transcript_is_current: true, aligned_transcript: '大家好', match_confidence: 1 }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  expect(wrapper.get('[aria-label="讲稿匹配"]').text()).not.toContain('自动提示暂缓')
+  session.snapshot = { ...session.snapshot!, alignment_status: 'pending', reliable: false, speaking: false, raw_transcript_is_current: false }
+  await wrapper.vm.$nextTick()
+  expect(session.notice).toBe(mismatchMessage)
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  expect(wrapper.get('[aria-label="讲稿匹配"]').text()).toContain('等待本轮有效识别结果')
+  expect(wrapper.get('[aria-label="讲稿匹配"]').text()).toContain('上次匹配 100%')
+  expect(wrapper.get('[aria-label="实时语音识别"] .transcript-heading small').text()).toBe('上次结果')
+})

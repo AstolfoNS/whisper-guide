@@ -37,3 +37,28 @@ it('does not claim that an already unreliable position resumes automatically aft
   expect(wrapper.text()).not.toContain('静音等待继续')
   wrapper.unmount()
 })
+
+
+it('does not turn a filtered final into a confirmed mismatch while the position is pending', () => {
+  const wrapper = mount(TranscriptComparison, { props: { snapshot: { ...snapshot, alignment_status: 'pending', reliable: false, speaking: false, raw_transcript_is_current: true, match_confidence: 1 } } })
+  const alignment = wrapper.get('[aria-label="讲稿匹配"]')
+  expect(wrapper.get('[aria-label="实时语音识别"]').text()).toContain('final · 已过滤')
+  expect(alignment.text()).toContain('上次匹配 100%')
+  expect(alignment.text()).toContain('等待本轮有效识别结果')
+  expect(alignment.text()).not.toContain('未能可靠匹配讲稿')
+  expect(wrapper.text()).not.toContain('自动播报已暂停')
+  wrapper.unmount()
+})
+
+it('labels an older final as the previous result while current speech has no new hypothesis', () => {
+  const wrapper = mount(TranscriptComparison, { props: { snapshot: { ...snapshot, alignment_status: 'pending', reliable: false, speaking: true, recognition_filtered: false, raw_transcript: '来', raw_transcript_is_current: false, match_confidence: 0.98 } } })
+  const raw = wrapper.get('[aria-label="实时语音识别"]')
+  expect(raw.text()).toContain('来')
+  expect(raw.get('.transcript-heading small').text()).toBe('上次结果')
+  expect(raw.get('.transcript-heading').text()).not.toContain('final')
+  expect(raw.get('.transcript-heading').text()).not.toContain('partial')
+  expect(raw.text()).not.toContain('已定稿')
+  expect(wrapper.get('[aria-label="讲稿匹配"]').text()).toContain('上次匹配 98%')
+  expect(wrapper.get('[aria-label="讲稿匹配"]').text()).toContain('正在接收语音')
+  wrapper.unmount()
+})

@@ -26,6 +26,10 @@ const sessionFeedback = computed(() => {
   if (snapshot.state === 'PAUSED' && snapshot.transition_trigger !== 'user_paused') {
     return snapshot.pause_reason || snapshot.message || session.notice
   }
+  if (snapshot.state === 'LISTENING' && snapshot.alignment_status) {
+    if (snapshot.alignment_status !== 'mismatch') return ''
+    return snapshot.message || session.notice || '最近一次有效识别未能可靠匹配讲稿，自动提示暂缓；请继续朗读或手动定位。'
+  }
   if (snapshot.state === 'LISTENING' && !snapshot.reliable && !snapshot.speaking && snapshot.last_transcript?.trim()) {
     const recovered = recoveredFeedback.value
     if (recovered?.sessionId === snapshot.id && snapshot.feedback_id <= recovered.feedbackId) return ''

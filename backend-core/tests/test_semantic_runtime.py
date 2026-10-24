@@ -68,28 +68,43 @@ def test_cancelled_model_return_cannot_overwrite_reposition_or_pause(monkeypatch
     asyncio.run(scenario())
 
 
-def test_partial_only_settles_at_silence_deadline_and_filler_never_mismatches():
+def test_partial_only_settles_at_silence_deadline_and_filler_never_mismatches(monkeypatch):
+    from test_noise_guard_runtime import ControlledStream
+
+    import app.api.session as runtime_api
+    from app.infrastructure.speech import RecognitionUpdate
+
     async def scenario():
+        clock = [100]
+        monkeypatch.setattr(runtime_api, "now_ms", lambda: clock[0])
         runtime = make_runtime("off")
         await runtime.control({"type": "start"})
-        runtime.last_text = "大家好"
-        runtime.last_segment_id = 0
-        runtime.session.silence_since_ms = 100
+        runtime.stream = ControlledStream()
+        await runtime.control({"type": "audio_ready"})
+        runtime.stream.updates.append(RecognitionUpdate("大家好", segment_id=0))
+        await runtime.audio(VOICE_PCM)
+        clock[0] = 350
+        await runtime.audio(bytes(8000))
         await runtime.tick(3099)
         assert runtime.session.reading_position is None
         await runtime.tick(3100)
         assert runtime.session.reading_position == 2
         assert runtime.session.prompt.text == "欢迎来到演讲测试。"
         runtime.cancel_prompt()
+        clock[0] = 4000
         await runtime.control({"type": "interrupt"})
-        runtime.last_text = "嗯"
-        runtime.last_filler_only = True
-        runtime.last_segment_id = 1
-        runtime.session.silence_since_ms = 0
+        runtime.stream = ControlledStream()
+        await runtime.control({"type": "audio_ready"})
+        runtime.stream.updates.append(RecognitionUpdate("嗯", segment_id=1, is_filler_only=True))
         old_feedback = runtime.session.feedback_id
-        await runtime.tick(3000)
+        await runtime.audio(VOICE_PCM)
+        clock[0] = 4250
+        await runtime.audio(bytes(8000))
+        await runtime.tick(7000)
         assert runtime.session.feedback_id == old_feedback
+        assert runtime.session.reading_position == 2
         runtime.cancel_prompt()
+        runtime.release_stream()
 
     asyncio.run(scenario())
 

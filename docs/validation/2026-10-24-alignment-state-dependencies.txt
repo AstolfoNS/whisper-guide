@@ -1,0 +1,39 @@
+{
+  "inspection": "Isolated local native imports/silence; public status and nonsecret active settings only. No recording, cloud inference or service restart.",
+  "health": {
+    "status": "ok"
+  },
+  "speech/status": {
+    "stt": "ready",
+    "vad": "ready",
+    "tts": "ready",
+    "provider": "cloud",
+    "requested_provider": "cloud",
+    "cloud_enabled": true
+  },
+  "active_settings": {
+    "stt_provider": "cloud",
+    "cloud_stt_protocol": "volcengine-ws",
+    "cloud_stt_auth_mode": "api-key",
+    "cloud_stt_timeout_ms": 5000,
+    "cloud_opt_in": true,
+    "llm_align_mode": "hybrid",
+    "llm_timeout_ms": 5000
+  },
+  "isolated_native_check": {
+    "python": "3.12.15",
+    "versions": {
+      "sherpa-onnx": "1.13.8",
+      "sherpa-onnx-core": "1.13.8",
+      "webrtcvad-wheels": "2.0.14.post1",
+      "edge-tts": "7.3.1",
+      "httpx": "0.28.1",
+      "websockets": "17.3",
+      "numpy": "2.5.4"
+    },
+    "native_model_load": "passed",
+    "digital_silence_frames": 100,
+    "vad_positive_frames": 0,
+    "recognition_updates": 0
+  }
+}

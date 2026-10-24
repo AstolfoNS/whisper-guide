@@ -27,7 +27,7 @@ class RecognitionUpdate:
 
 可选 `start_ms/end_ms` 为本连接 PCM 音频时间，完整有效区间用于匹配人声特征；不完整/缺失时使用近期活动及新增证据水位。已认可段的迟到修订/定稿仍可使用已锁存证据。原生 sherpa 的累计时钟不随 endpoint/reset 归零，云端回退仅保留受信任的连接时钟，外部相对时间不混用。
 
-同一 `segment_id` 的 partial 覆盖前次假设，final 才正常提交位置。填充词不提交讲稿位置。本地 sherpa 端点后重置流并递增分段号；WebSocket 云端分句定稿只递增分段号，保留同一连接。默认 `local` 使用 `sherpa-onnx`；`cloud` 需选择语音协议、独立凭据与 `cloud_opt_in=true`，未授权时锁定本地。
+同一 `segment_id` 的 partial 覆盖前次假设，final 才正常提交位置。已接受的待提交候选不因 VAD 清显示而消失；静音截止前可结算最新候选。同段填充词或显式空 final 撤回旧候选，None 表示无新更新而保留候选；终止 ACK 省略文本时由协议层沿用当前文本，不应伪造空撤回。已结算同段同文本 final 不再重复提交，真实修订仍重新对齐。填充词不提交讲稿位置。本地 sherpa 端点后重置流并递增分段号；WebSocket 云端分句定稿只递增分段号，保留同一连接。默认 `local` 使用 `sherpa-onnx`；`cloud` 需选择语音协议、独立凭据与 `cloud_opt_in=true`，未授权时锁定本地。
 
 通用 HTTP 语音网关接收：
 
@@ -81,9 +81,17 @@ class RecognitionUpdate:
 
 内置预设为 `custom`、`deepseek`、`qwen`、`doubao`、`openai`、`ollama`。预设只填充推荐 URL 和示例模型名，用户可自由改写模型名与地址；它们不证明真实账号、配额或模型访问权限已经可用。
 
+## 识别与对齐快照状态
+
+会话快照新增 `alignment_status`：`reliable` 可使用已确认位置、`pending` 等待本轮有效结果、`mismatch` 为最近有效转写已真正对齐失败。该字段不增加五状态机状态；真实失配不会因 VAD 起落或填充词解除，需有效匹配或手动定位恢复。
+
+`raw_transcript_is_current` 为显示新旧标记：最近一次显示重置后是否已收到非空原始结果；它不替代分段时间、声学证据或轮次校验。新 VAD 起音而无新文本时，可能仍显示历史 raw/final，但值为 false；前端仅标记“上次结果”，不将历史 partial/final 当作本轮端点结果；显式空修订回退历史文本时也标 false。`match_confidence` 仍是最近保存的讲稿对齐评分，位置待确认时标“上次匹配”，不能当成当前 ASR 置信度。
+
+声学过滤不提交该条文本，也不保证当前声音是噪声。没有有效转写/可结算候选时继续 pending；不能以过滤或等待到期强制恢复可靠性。详细行为与验证边界见[状态修复记录](alignment-state-2026-10-24.md)。
+
 ## 识别过滤诊断
 
-会话快照新增 `recognition_filtered`、`recognition_filter_reason`、`recognition_filtered_count`。无声学支持的文本仍可在 `raw_transcript` 展示并保留自己的 `raw_transcript_is_final`，但不改变已接受假设、游标、可靠性、静音时钟或 LLM 任务。计数及单条过滤文本仅存于本轮有界内存，换轮清零，不写日志/SQLite。前端应将“已过滤”与“无法匹配讲稿”分开；过滤噪声不能自动恢复原已不可靠的位置。
+会话快照新增 `recognition_filtered`、`recognition_filter_reason`、`recognition_filtered_count`。无声学支持的文本仍可在 `raw_transcript` 展示并保留自己的 `raw_transcript_is_final`，该过滤分支本身不改变已接受假设、游标、可靠性、静音时钟或 LLM 任务；此前 VAD 已使位置待确认的情况仍须单独处理。计数及单条过滤文本仅存于本轮有界内存，换轮清零，不写日志/SQLite。前端应将“已过滤”与“无法匹配讲稿”分开；过滤噪声不能自动恢复原已不可靠的位置。
 
 完整规则、噪声能力边界与回归见[无声识别门控记录](noise-guard-2026-10-24.md)。
 

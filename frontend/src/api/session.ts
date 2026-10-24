@@ -11,6 +11,7 @@ export interface SessionSnapshot {
   id: string; script_id: string; script_name: string; script_text?: string; stt_provider?: string; state: SessionState; current_state?: SessionState
   stt_provider_active?: string; stt_fallback?: boolean
   recognition_filtered?: boolean; recognition_filter_reason?: string; recognition_filtered_count?: number
+  alignment_status?: 'reliable' | 'pending' | 'mismatch'; raw_transcript_is_current?: boolean
   model_config_id?: string; model_config_name?: string; model_config_revision?: number
   silence_timeout_ms: number; reading_position: number | null; prompt_position: number
   generation: number; prompt: PromptSegment | null; reliable: boolean; speaking: boolean

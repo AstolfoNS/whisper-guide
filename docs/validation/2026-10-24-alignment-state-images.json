@@ -1,0 +1,35 @@
+{
+  "pending_cache_and_status_in_image": "passed",
+  "real_mismatch_protection": "passed",
+  "source_hashes": {
+    "app/api/session.py": "d96cc8020d0d01441148f1fa13b71ee81e7a36ee5975900d63d78b8cf0f48967",
+    "app/domain/session.py": "5ff9c577d18558ed88631e9715764df6ef1d4f35a58b0c1804216b32b2e576bc"
+  },
+  "images": [
+    {
+      "name": "whisper-guide-backend:0.1.0",
+      "id": "sha256:64fc661cdb7455e1377968a122825c70fbbc3027b13afc50c6bda932a791fbd6",
+      "bytes": 780356360
+    },
+    {
+      "name": "whisper-guide-frontend:0.1.0",
+      "id": "sha256:1cc067ddfcc11769ec5d2cbbe08d07ce90a0ad89467be091a6145834c5d5605c",
+      "bytes": 93538369
+    }
+  ],
+  "preserved_running_services": [
+    {
+      "name": "whisper-guide-backend-1",
+      "image": "sha256:50841a17165112408ab835a799cfcf0fcae3555fc01643d56480474a29ad308d",
+      "created": "2026-10-24T10:43:22.993873955Z",
+      "health": "healthy"
+    },
+    {
+      "name": "whisper-guide-frontend-1",
+      "image": "sha256:fee51bc8a7415c9c03bb9978085af0a6308e55c267f6fd8e4d8d342ba9520aff",
+      "created": "2026-10-24T10:43:23.126071962Z",
+      "health": "healthy"
+    }
+  ],
+  "runtime_services_replaced": false
+}
