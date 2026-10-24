@@ -2,14 +2,19 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy.orm import Session
 
+from app.api.session import runtimes
 from app.database import get_database_session
+from app.domain.session import SessionState
 from app.models.script import Script
 from app.repositories.scripts import (
     add_scripts as persist_scripts,
+)
+from app.repositories.scripts import (
+    delete_script as remove_script,
 )
 from app.repositories.scripts import (
     get_script as find_script,
@@ -126,3 +131,30 @@ def read_script(script_id: str, session: DatabaseSession) -> Script:
     if script is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到该讲稿。")
     return script
+
+
+@router.delete("/{script_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_script(script_id: str, request: Request, session: DatabaseSession) -> Response:
+    # Preparing a session holds this same lock from its script lookup through
+    # registry insertion. No deletion can commit between those two operations.
+    with request.app.state.model_config_lock:
+        script = find_script(session, script_id)
+        if script is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "SCRIPT_NOT_FOUND", "message": "未找到该讲稿。"},
+            )
+        if any(
+            runtime.session.script_id == script_id
+            and runtime.session.state != SessionState.TERMINATED
+            for runtime in runtimes(request.app).values()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "SCRIPT_IN_USE",
+                    "message": "这份讲稿正被演讲会话使用，请先结束相关会话后再删除。",
+                },
+            )
+        remove_script(session, script)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

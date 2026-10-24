@@ -27,3 +27,8 @@ def add_scripts(session: Session, scripts: Sequence[Script]) -> list[Script]:
     for script in scripts:
         session.refresh(script)
     return list(scripts)
+
+
+def delete_script(session: Session, script: Script) -> None:
+    session.delete(script)
+    session.commit()

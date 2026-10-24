@@ -20,6 +20,7 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
 | `GET /api/scripts` | 返回讲稿元数据数组，不返回全文 |
 | `POST /api/scripts/upload` | 以 multipart 的重复 `files` 字段上传一份或多份讲稿，返回新增讲稿全文数组 |
 | `GET /api/scripts/{id}` | 读取一份讲稿全文，用于演讲前选择和预览 |
+| `DELETE /api/scripts/{id}` | 删除未使用讲稿，成功204空响应；不存在404；被未结束会话占用409 |
 
 讲稿元数据包含 `id`、`name`、`character_count` 和 UTC `created_at`；全文响应增加 `content`。
 
@@ -36,6 +37,12 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
 快照包含stt_ready:boolean。LISTENING且false表示仍在连接/初始化；客户端应等待true再启用PCM并发送audio_ready，服务端只从实际收音就绪后计算静音。旧客户端提前确认不会启动不就绪的传输，当前客户端不会丢弃首句。取消、暂停和新generation拒绝旧ready返回。
 
 stt_fallback_reason为null或受控对象，字段error_code、stage、http_status、provider_error_code、timeout_ms。stage为configuration/capacity/connect/initialize/send/result/buffer/receive/closed/unknown之一，数字字段可为null。不含URL、请求头、密钥、上游正文或异常对象。
+
+## 删除讲稿契约
+
+DELETE成功不返回JSON。404的detail为{code:SCRIPT_NOT_FOUND,message}，409为{code:SCRIPT_IN_USE,message}。READY/LISTENING/PROMPTING/PAUSED及断线未终止会话都算占用，TERMINATED不阻止删除。
+
+删除与prepare共用model_config_lock，覆盖数据库查找至删除提交，或查稿至会话登记，中间不await。删除先完成则prepare拒绝该ID；prepare先完成则删除409。已有会话正文与游标不变，客户端成功后清理选中稿/预览，失败不提前移除。
 
 ## STT 统一事件
 

@@ -812,7 +812,9 @@ class SessionRuntime:
 
 def runtimes(application: Any) -> dict[str, SessionRuntime]:
     if not hasattr(application.state, "sessions"):
-        application.state.sessions = {}
+        with application.state.model_config_lock:
+            if not hasattr(application.state, "sessions"):
+                application.state.sessions = {}
     return application.state.sessions
 
 
@@ -925,25 +927,25 @@ async def session_socket(socket: WebSocket) -> None:
                 if not isinstance(command, dict):
                     raise SessionError("会话命令必须为 JSON 对象。")
                 if command.get("type") == "prepare":
-                    if runtime and runtime.session.state != SessionState.TERMINATED:
-                        raise SessionError("请先结束当前会话再准备新的讲稿。")
-                    if runtime:
-                        registry.pop(runtime.session.id, None)
-                    with Session(socket.app.state.database_engine) as database:
-                        script = find_script(database, command.get("script_id"))
-                        if script is None:
-                            raise SessionError("请先选择一份有效讲稿。")
-                        engine = SpeechSession(
-                            script.id,
-                            script.content,
-                            command.get(
-                                "silence_timeout_ms",
-                                socket.app.state.settings.default_silence_timeout_ms,
-                            ),
-                        )
-                        # Capture configuration and register the new session as one
-                        # atomic operation with respect to profile activation.
-                        with socket.app.state.model_config_lock:
+                    # Serialize script lookup and registration with deletion and
+                    # profile activation. There is no await while this lock is held.
+                    with socket.app.state.model_config_lock:
+                        if runtime and runtime.session.state != SessionState.TERMINATED:
+                            raise SessionError("请先结束当前会话再准备新的讲稿。")
+                        if runtime:
+                            registry.pop(runtime.session.id, None)
+                        with Session(socket.app.state.database_engine) as database:
+                            script = find_script(database, command.get("script_id"))
+                            if script is None:
+                                raise SessionError("请先选择一份有效讲稿。")
+                            engine = SpeechSession(
+                                script.id,
+                                script.content,
+                                command.get(
+                                    "silence_timeout_ms",
+                                    socket.app.state.settings.default_silence_timeout_ms,
+                                ),
+                            )
                             profile = socket.app.state.model_configs.active_snapshot()
                             settings = clone_model_settings(
                                 socket.app.state.settings, profile["settings"]
@@ -966,10 +968,8 @@ async def session_socket(socket: WebSocket) -> None:
                             )
                             runtime.socket = socket
                             registry[engine.id] = runtime
-                    runtime.socket = socket
                     audio_task.cancel()
                     audio_task = asyncio.create_task(audio_worker())
-                    registry[engine.id] = runtime
                     await runtime.publish()
                 elif command.get("type") == "attach":
                     attached = registry.get(command.get("session_id"))
@@ -1012,7 +1012,8 @@ async def session_socket(socket: WebSocket) -> None:
                 transition_trigger="ws_disconnected",
             )
             if runtime.session.state == SessionState.TERMINATED:
-                registry.pop(runtime.session.id, None)
+                with socket.app.state.model_config_lock:
+                    registry.pop(runtime.session.id, None)
         timer.cancel()
         audio_task.cancel()
         await asyncio.gather(timer, audio_task, return_exceptions=True)

@@ -47,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.settings = configuration
     application.state.model_configs = model_configs
     application.state.model_config_lock = model_configs.lock
+    application.state.sessions = {}
     application.add_middleware(
         CORSMiddleware,
         allow_origins=configuration.cors_origins,

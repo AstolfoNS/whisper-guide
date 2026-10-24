@@ -27,12 +27,23 @@ function isDocument(value: unknown): value is ScriptDocument {
 
 async function request(path: string, options: RequestInit): Promise<unknown> {
   const response = await fetch(`${apiBaseUrl}${path}`, options)
-  const data: unknown = await response.json().catch(() => undefined)
+  const data: unknown = response.status === 204
+    ? undefined
+    : await response.json().catch(() => undefined)
   if (!response.ok) {
-    const message = typeof data === 'object' && data !== null &&
-      'detail' in data && typeof data.detail === 'string'
+    const detail = typeof data === 'object' && data !== null && 'detail' in data
       ? data.detail
-      : `请求失败（HTTP ${response.status}）`
+      : undefined
+    const message = typeof detail === 'string' ? detail
+      : typeof detail === 'object' && detail !== null &&
+        'message' in detail && typeof detail.message === 'string' ? detail.message
+      : '请求失败（HTTP ' + response.status + '）'
+    if (options.method === 'DELETE' && response.status === 409) {
+      throw new Error('讲稿正在会话中使用，请结束后再删除')
+    }
+    if (options.method === 'DELETE' && response.status === 404) {
+      throw new Error('讲稿不存在，可能已被其他页面删除，请刷新列表。')
+    }
     throw new Error(message)
   }
   return data
@@ -63,4 +74,9 @@ export async function uploadScripts(files: File[], signal: AbortSignal): Promise
     throw new Error('上传结果响应格式不正确')
   }
   return data
+}
+
+
+export async function deleteScript(id: string, signal: AbortSignal): Promise<void> {
+  await request('/api/scripts/' + encodeURIComponent(id), { method: 'DELETE', signal })
 }
