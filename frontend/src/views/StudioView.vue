@@ -27,6 +27,7 @@ const sessionFeedback = computed(() => {
   if (snapshot.state === 'PAUSED' && snapshot.transition_trigger !== 'user_paused') {
     return snapshot.pause_reason || snapshot.message || session.notice
   }
+  if (snapshot.state === 'LISTENING' && snapshot.stt_ready === false) return ''
   const recovery = recoveryFeedback(snapshot)
   if (recovery) return recovery
   if (snapshot.state === 'LISTENING' && snapshot.alignment_status) {
@@ -53,7 +54,7 @@ watch(() => scripts.selected, script => { if (!session.active) session.selectedS
 </script>
 <template>
   <section class="studio-page">
-  <div class="studio-heading"><div><h1 id="page-title" tabindex="-1">演讲工作台</h1><p>{{ session.active ? session.snapshot?.script_name : scripts.selected?.name ?? '选择讲稿后开始演讲' }}</p></div><div class="studio-actions"><NTag :type="session.state === 'LISTENING' ? 'success' : session.state === 'PROMPTING' ? 'warning' : 'default'" role="status">{{ labels[session.state] }}</NTag><NButton class="library-trigger" @click="libraryOpen = true">讲稿库</NButton></div></div>
+  <div class="studio-heading"><div><h1 id="page-title" tabindex="-1">演讲工作台</h1><p>{{ session.active ? session.snapshot?.script_name : scripts.selected?.name ?? '选择讲稿后开始演讲' }}</p></div><div class="studio-actions"><NTag :type="session.state === 'LISTENING' ? 'success' : session.state === 'PROMPTING' ? 'warning' : 'default'" role="status">{{ session.state === 'LISTENING' && session.snapshot?.stt_ready === false ? '连接识别中' : labels[session.state] }}</NTag><NButton class="library-trigger" @click="libraryOpen = true">讲稿库</NButton></div></div>
   <NAlert v-if="session.error" type="error" closable :show-icon="false" @close="session.error = ''">{{ session.error }}</NAlert>
   <NAlert v-if="sessionFeedback" type="warning" :show-icon="false" role="alert">{{ sessionFeedback }}</NAlert>
   <div class="studio-grid">

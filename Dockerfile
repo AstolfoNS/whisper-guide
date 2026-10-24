@@ -22,10 +22,11 @@ RUN apt-get update \
     && useradd --create-home --uid 10001 appuser
 WORKDIR /app/backend-core
 COPY --from=backend-deps /app/backend-core/.venv /app/backend-core/.venv
+# INT8 encoder/joiner retain speed; FP32 decoder avoids repeated-token errors.
 # Keep the model layer before application code so code changes do not invalidate it.
 COPY --chown=appuser:appuser backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt \
     backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.int8.onnx \
-    backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.int8.onnx \
+    backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.onnx \
     backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.int8.onnx \
     /models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/
 # Runtime needs the application and installed environment only. Download tools,

@@ -7,7 +7,6 @@ import logging
 import math
 import threading
 import time
-from array import array
 from collections import deque
 from contextlib import suppress
 from typing import Any
@@ -42,11 +41,29 @@ class WebSocketSpeechError(RuntimeError):
         *,
         http_status: int | None = None,
         provider_error_code: int | None = None,
+        stage: str = "unknown",
     ) -> None:
         super().__init__("云端语音连接不可用，已使用本地识别保护会话。")
         self.error_code = error_code
         self.http_status = http_status
         self.provider_error_code = provider_error_code
+        self.stage = (
+            stage
+            if stage
+            in {
+                "configuration",
+                "capacity",
+                "connect",
+                "initialize",
+                "send",
+                "result",
+                "buffer",
+                "receive",
+                "closed",
+                "unknown",
+            }
+            else "unknown"
+        )
 
 
 class _NoRedirectConnect(connect):
@@ -84,7 +101,7 @@ def websocket_configured(config: Any) -> bool:
 
 def _wire(config: Any, sample_rate: int = 16000) -> VolcengineSpeechProtocol:
     if not websocket_configured(config):
-        raise WebSocketSpeechError("CONFIG_INCOMPLETE")
+        raise WebSocketSpeechError("CONFIG_INCOMPLETE", stage="configuration")
     optimized = urlsplit(config.endpoint).path.rstrip("/").endswith("/bigmodel_async")
     return PROTOCOL_ADAPTERS[config.protocol](
         sample_rate=sample_rate,
@@ -122,21 +139,31 @@ def _connection(config: Any, protocol: VolcengineSpeechProtocol):
     )
 
 
-def _diagnostic(error: Exception) -> WebSocketSpeechError:
+def _diagnostic(error: Exception, *, stage: str = "unknown") -> WebSocketSpeechError:
     if isinstance(error, WebSocketSpeechError):
-        return error
+        if error.stage != "unknown" or stage == "unknown":
+            return error
+        return WebSocketSpeechError(
+            error.error_code,
+            http_status=error.http_status,
+            provider_error_code=error.provider_error_code,
+            stage=stage,
+        )
     if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
-        return WebSocketSpeechError("TIMEOUT")
+        return WebSocketSpeechError("TIMEOUT", stage=stage)
     if isinstance(error, SpeechProtocolError):
         return WebSocketSpeechError(
             "PROVIDER_ERROR" if error.code is not None else "INVALID_RESPONSE",
             provider_error_code=error.code,
+            stage=stage,
         )
     if isinstance(error, InvalidStatus):
-        return WebSocketSpeechError("HTTP_ERROR", http_status=error.response.status_code)
+        return WebSocketSpeechError(
+            "HTTP_ERROR", http_status=error.response.status_code, stage=stage
+        )
     if isinstance(error, (ConnectionClosed, InvalidHandshake, OSError)):
-        return WebSocketSpeechError("NETWORK_ERROR")
-    return WebSocketSpeechError("UNKNOWN_ERROR")
+        return WebSocketSpeechError("NETWORK_ERROR", stage=stage)
+    return WebSocketSpeechError("UNKNOWN_ERROR", stage=stage)
 
 
 async def _finish(socket: Any, protocol: VolcengineSpeechProtocol) -> None:
@@ -213,17 +240,65 @@ class WebSocketStreamingRecognizer:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[None] | None = None
         self._pending_voice_at: float | None = None
+        self._ready_event = threading.Event()
+        self._initialized = False
+        self._ready_stage = "connect"
         self._chunk_bytes = sample_rate * 2 // 5  # 200 ms PCM16
         self._max_buffer_bytes = sample_rate * 2
         self._done = threading.Event()
         if not _STREAM_SLOTS.acquire(blocking=False):
-            raise WebSocketSpeechError("NETWORK_ERROR")
+            raise WebSocketSpeechError("NETWORK_ERROR", stage="capacity")
         self._thread = threading.Thread(target=self._run_thread, name="cloud-stt-ws", daemon=True)
         try:
             self._thread.start()
         except Exception:
             _STREAM_SLOTS.release()
             raise
+
+    @property
+    def ready(self) -> bool:
+        """Read handshake readiness without performing network work or waiting."""
+        with self._lock:
+            return (
+                self._initialized and not self._closed and not self._ended and self._failure is None
+            )
+
+    async def wait_ready(self, timeout: float | None = None) -> bool:
+        """Await bounded handshake/initialization readiness without blocking the loop.
+
+        Cancellation stops only this wait. The stream owner closes the recognizer
+        when a session is cancelled, paused, or replaced.
+        """
+        try:
+            budget = _timeout(self.config) if timeout is None else float(timeout)
+        except (TypeError, ValueError):
+            raise WebSocketSpeechError("TIMEOUT", stage="connect") from None
+        if not math.isfinite(budget) or budget <= 0:
+            raise WebSocketSpeechError("TIMEOUT", stage="connect")
+        deadline = asyncio.get_running_loop().time() + min(budget, 30.0)
+        while not self._ready_event.is_set():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                with self._lock:
+                    stage = self._ready_stage
+                failure = WebSocketSpeechError("TIMEOUT", stage=stage)
+                self._fail(failure, before_ready=True)
+                with self._lock:
+                    actual_failure = self._failure
+                if actual_failure is not None:
+                    self._cancel()
+                    raise actual_failure
+                continue
+            # Event polling is cancellable and creates no blocked worker thread.
+            await asyncio.sleep(min(0.01, remaining))
+        with self._lock:
+            if self._failure is not None:
+                raise self._failure
+            if self._closed:
+                raise WebSocketSpeechError("NETWORK_ERROR", stage="closed")
+            if self._ended or not self._initialized:
+                raise WebSocketSpeechError("NETWORK_ERROR", stage="receive")
+            return True
 
     def notify_voice(self) -> None:
         """Start the bounded result wait from the same VAD used by the session."""
@@ -241,9 +316,9 @@ class WebSocketStreamingRecognizer:
             if self._ended:
                 if self._updates:
                     return self._updates.popleft()
-                failure = WebSocketSpeechError("NETWORK_ERROR")
+                failure = WebSocketSpeechError("NETWORK_ERROR", stage="receive")
             elif len(pcm) % 2 or len(self._buffer) + len(pcm) > self._max_buffer_bytes:
-                failure = WebSocketSpeechError("NETWORK_ERROR")
+                failure = WebSocketSpeechError("NETWORK_ERROR", stage="buffer")
             else:
                 self._buffer.extend(pcm)
                 return self._updates.popleft() if self._updates else None
@@ -266,14 +341,20 @@ class WebSocketStreamingRecognizer:
             self._buffer.clear()
             self._updates.clear()
             self._pending_voice_at = None
+            self._ready_event.set()
         self._cancel()
 
-    def _fail(self, failure: WebSocketSpeechError) -> None:
+    def _fail(self, failure: WebSocketSpeechError, *, before_ready: bool = False) -> None:
         with self._lock:
-            if not self._closed:
+            if (
+                not self._closed
+                and self._failure is None
+                and not (before_ready and self._initialized)
+            ):
                 self._failure = failure
                 self._buffer.clear()
                 self._updates.clear()
+                self._ready_event.set()
 
     def _run_thread(self) -> None:
         try:
@@ -283,6 +364,9 @@ class WebSocketStreamingRecognizer:
                 self._loop = None
                 self._task = None
                 self._buffer.clear()
+                if not self._initialized and not self._closed and self._failure is None:
+                    self._failure = WebSocketSpeechError("NETWORK_ERROR", stage=self._ready_stage)
+                self._ready_event.set()
             _STREAM_SLOTS.release()
             self._done.set()
 
@@ -293,19 +377,33 @@ class WebSocketStreamingRecognizer:
             self._task = asyncio.current_task()
             if self._closed or self._failure:
                 return
+        stage = "connect"
         try:
             async with _connection(self.config, self.protocol) as socket:
                 try:
+                    stage = "initialize"
+                    with self._lock:
+                        self._ready_stage = stage
                     async with asyncio.timeout(_timeout(self.config)):
                         await socket.send(self.protocol.initial_frame())
+                    with self._lock:
+                        if self._closed or self._failure is not None:
+                            return
+                        self._initialized = True
+                        self._ready_stage = "receive"
+                        self._ready_event.set()
                     tasks = [
                         asyncio.create_task(self._send(socket)),
                         asyncio.create_task(self._receive(socket)),
                         asyncio.create_task(self._watch()),
                     ]
+                    task_stages = dict(zip(tasks, ("send", "receive", "result"), strict=True))
                     done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                     for task in done:
-                        task.result()
+                        try:
+                            task.result()
+                        except Exception as error:
+                            raise _diagnostic(error, stage=task_stages[task]) from None
                 finally:
                     for task in tasks:
                         task.cancel()
@@ -315,7 +413,7 @@ class WebSocketStreamingRecognizer:
         except asyncio.CancelledError:
             pass
         except Exception as error:
-            self._fail(_diagnostic(error))
+            self._fail(_diagnostic(error, stage=stage))
 
     async def _send(self, socket: Any) -> None:
         sent_at = 0.0
@@ -328,8 +426,8 @@ class WebSocketStreamingRecognizer:
                     continue
                 chunk = bytes(self._buffer[: self._chunk_bytes])
                 del self._buffer[: self._chunk_bytes]
-                if self._pending_voice_at is None and _voiced(chunk):
-                    self._pending_voice_at = time.monotonic()
+                # PCM amplitude is not independent speech evidence. Only the
+                # runtime's AudioEvidence-confirmed notify_voice starts a result wait.
             # Measure the 200 ms cadence from send start. Waiting a full
             # interval after send completion permanently adds transport latency
             # to each chunk, eventually overflowing even a healthy live stream.
@@ -356,11 +454,11 @@ class WebSocketStreamingRecognizer:
                     else:
                         self._updates.append(update)
                     if len(self._updates) > _MAX_UPDATES:
-                        raise WebSocketSpeechError("NETWORK_ERROR")
+                        raise WebSocketSpeechError("NETWORK_ERROR", stage="buffer")
                 if self.protocol.last_package:
                     self._ended = True
                     return
-        raise WebSocketSpeechError("NETWORK_ERROR")
+        raise WebSocketSpeechError("NETWORK_ERROR", stage="receive")
 
     async def _watch(self) -> None:
         while True:
@@ -372,13 +470,4 @@ class WebSocketStreamingRecognizer:
             # Async ASR intentionally sends no message when silence doesn't
             # change a hypothesis. Only voiced audio starts a result deadline.
             if pending is not None and time.monotonic() - pending > _timeout(self.config):
-                raise WebSocketSpeechError("TIMEOUT")
-
-
-def _voiced(pcm: bytes) -> bool:
-    if not pcm:
-        return False
-    samples = array("h", pcm)
-    return bool(
-        samples and math.sqrt(sum(value * value for value in samples) / len(samples)) >= 500
-    )
+                raise WebSocketSpeechError("TIMEOUT", stage="result")

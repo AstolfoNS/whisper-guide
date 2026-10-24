@@ -5,9 +5,12 @@ import { useHealthStore } from '../../stores/health'
 import { useSessionStore } from '../../stores/session'
 import { refreshHealth } from '../../services/healthMonitor'
 import { getSessionController } from '../../services/sessionController'
+import { speechFallbackMessage } from '../../services/speechDiagnostics'
 const health = useHealthStore()
 const session = useSessionStore()
 const open = ref(false)
+const connecting = computed(() => session.state === 'LISTENING' && session.snapshot?.stt_ready === false)
+const fallbackReason = computed(() => session.snapshot?.stt_fallback ? speechFallbackMessage(session.snapshot.stt_fallback_reason) : '')
 const sessionProvider = computed(() => {
   const snapshot = session.snapshot
   if (!snapshot) return '未创建会话'
@@ -20,7 +23,7 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
 </script>
 <template>
   <NButton size="small" secondary aria-label="打开服务诊断" @click="open = true">
-    {{ session.snapshot?.stt_fallback ? '识别已回退本地' : '服务' }} <span class="health-summary">STT {{ session.snapshot?.stt_fallback ? '本地降级' : labels[health.stt] }} · VAD {{ labels[health.vad] }} · TTS {{ health.tts === 'ready' ? '已安装' : labels[health.tts] }}</span>
+    {{ connecting ? '连接语音识别中' : session.snapshot?.stt_fallback ? '识别已回退本地' : '服务' }} <span class="health-summary">STT {{ connecting ? '连接中' : session.snapshot?.stt_fallback ? '本地降级' : labels[health.stt] }} · VAD {{ labels[health.vad] }} · TTS {{ health.tts === 'ready' ? '已安装' : labels[health.tts] }}</span><span v-if="fallbackReason" class="fallback-summary" :title="fallbackReason">{{ fallbackReason }}</span>
   </NButton>
   <NDrawer v-model:show="open" :width="420" placement="right" :auto-focus="true">
     <NDrawerContent title="服务与连接诊断" closable>
@@ -30,6 +33,8 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
         <div><dt>麦克风</dt><dd>{{ { idle: '未采集', requesting: '等待授权', active: '采集中', error: '不可用' }[session.microphone] }}</dd></div>
         <div><dt>STT 服务能力</dt><dd>{{ health.provider }} · {{ labels[health.stt] }}</dd></div>
         <div><dt>当前会话 STT</dt><dd>{{ sessionProvider }}</dd></div>
+        <div v-if="session.snapshot?.state === 'LISTENING'"><dt>会话识别连接</dt><dd>{{ connecting ? '正在连接，请稍候再朗读' : session.snapshot.stt_ready === true ? '已就绪' : '未上报' }}</dd></div>
+        <div v-if="fallbackReason"><dt>本次回退原因</dt><dd data-testid="fallback-reason">{{ fallbackReason }}</dd></div>
         <div><dt>VAD</dt><dd>{{ labels[health.vad] }}</dd></div>
         <div><dt>TTS 依赖</dt><dd>{{ health.tts === 'ready' ? '已安装，合成时检查网络' : labels[health.tts] }}</dd></div>
         <div><dt>最近播放</dt><dd>{{ { unknown: '尚未播放', success: '播放完成', failed: '播放失败' }[health.playback] }}</dd></div>
@@ -50,5 +55,5 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
   </NDrawer>
 </template>
 <style scoped>
-.health-summary{margin-left:8px;font-size:12px}.health-details{display:grid;gap:16px}.health-details>div{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.health-details dt{color:var(--muted)}.health-details dd{margin:0;text-align:right;overflow-wrap:anywhere}.health-actions{display:flex;gap:8px;margin:24px 0}.muted{color:var(--muted);font-size:12px}@media(max-width:700px){.health-summary{display:none}}
+.fallback-summary{margin-left:8px;max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--warning);font-size:12px}.health-summary{margin-left:8px;font-size:12px}.health-details{display:grid;gap:16px}.health-details>div{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.health-details dt{color:var(--muted)}.health-details dd{margin:0;text-align:right;overflow-wrap:anywhere}.health-actions{display:flex;gap:8px;margin:24px 0}.muted{color:var(--muted);font-size:12px}@media(max-width:700px){.health-summary,.fallback-summary{display:none}}
 </style>

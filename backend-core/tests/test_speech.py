@@ -67,13 +67,14 @@ def test_tts_reports_missing_optional_dependency(monkeypatch) -> None:
         asyncio.run(SpeechServices().synthesize("你好"))
 
 
-def test_stream_normalizes_repeated_streaming_prefix() -> None:
-    stream = SpeechStream(recognizer=lambda pcm: "大大大大家好好好好")
-
+@pytest.mark.parametrize(
+    "text", ["大大大大家好好好好", "哈哈哈，哈哈哈。", "继续继续立足立立足岗位"]
+)
+def test_stream_preserves_recognizer_repetitions(text) -> None:
+    stream = SpeechStream(recognizer=lambda pcm: text)
     result = stream.accept_pcm(b"\x00\x00")
-
     assert result is not None
-    assert result.text == "大家好"
+    assert result.text == text
     assert not result.is_final
     assert result.segment_id == 0
 

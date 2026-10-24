@@ -67,6 +67,9 @@ def recognizer(clock):
     stream._ended = False
     stream._failure = None
     stream._pending_voice_at = None
+    stream._ready_event = threading.Event()
+    stream._initialized = True
+    stream._ready_stage = "receive"
     stream._chunk_bytes = 6400
     stream._max_buffer_bytes = 32000
     stream._loop = None

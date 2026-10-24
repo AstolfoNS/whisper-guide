@@ -7,9 +7,12 @@ export interface TransitionRecord {
 }
 export interface ScriptUnit { text: string; start: number; end: number }
 export interface PromptSegment { id: string; text: string; start: number; end: number; next_position: number }
+export interface SpeechFallbackReason {
+  error_code: string; stage?: string; http_status?: number; provider_error_code?: number; timeout_ms?: number
+}
 export interface SessionSnapshot {
   id: string; script_id: string; script_name: string; script_text?: string; stt_provider?: string; state: SessionState; current_state?: SessionState
-  stt_provider_active?: string; stt_fallback?: boolean
+  stt_provider_active?: string; stt_fallback?: boolean; stt_ready?: boolean; stt_fallback_reason?: SpeechFallbackReason | null
   recognition_filtered?: boolean; recognition_filter_reason?: string; recognition_filtered_count?: number
   alignment_status?: 'reliable' | 'pending' | 'mismatch'; raw_transcript_is_current?: boolean
   provisional_position?: number | null; provisional_transcript?: string; provisional_confidence?: number | null

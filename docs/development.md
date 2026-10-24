@@ -33,9 +33,9 @@ cd backend-core
 uv run python scripts/download_asr_model.py
 ```
 
-默认目录为models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20，不进Git。脚本验证归档路径、类型及重复项，只提取tokens.txt和encoder/decoder/joiner三份非空权重；INT8优先，缺少时选择对应FP32。
+默认目录为models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20，不进Git。脚本验证归档路径、类型及重复项，只保留tokens.txt、INT8 encoder、FP32 decoder和INT8 joiner。decoder必须优先FP32：现用模型的INT8 decoder在原始中文对照中会产生明显叠字，不能只按体积选择。
 
-下载中断保留断点，可通过--url或WHISPER_GUIDE_MODEL_URL指定可信镜像。完整目录重复执行会离线清除未使用权重、官方测试音频与本模型固定名称的残留归档，保留来源说明；不要手工按通配符删除onnx。
+下载中断保留断点，可通过--url或WHISPER_GUIDE_MODEL_URL指定归档镜像。已有旧INT8-only目录也应重新运行脚本：只补约13.9MB的FP32 decoder，校验大小和固定SHA-256后原子安装；失败保留旧可用模型。单文件镜像使用--decoder-url或WHISPER_GUIDE_DECODER_URL。已经有FP32 decoder时重复执行不联网，并清理未选权重、官方测试音频与固定残留归档。保留来源说明，不手工按通配符删除onnx。
 
 模型未就绪时讲稿功能仍可使用，开始识别明确失败。使用sherpa-onnx、WebRTC VAD与edge-tts，不需要torch、transformers或CUDA；edge-tts仍需网络。
 
@@ -52,7 +52,7 @@ docker compose build
 
 package.sh输出根目录whisper-guide-release.tar；生成外层包后删除release内的重复大镜像归档。交付、权限、初始化和回滚统一见部署手册。
 
-Docker前端构建先检查类型；后端只安装锁定生产依赖。运行层不含开发工具、测试和模型下载脚本，固定单worker。构建前准备模型，模型层位于业务源码之前。忽略规则不能误排除Python的app/models包；数据、凭据与测试产物不进入镜像。
+Docker前端构建先检查类型；后端只安装锁定生产依赖。运行层不含开发工具、测试和模型下载脚本，固定单worker。构建前准备模型，模型层位于业务源码之前。Docker固定复制FP32 decoder；旧模型目录缺此文件时先运行模型更新脚本，再构建镜像。忽略规则不能误排除Python的app/models包；数据、凭据与测试产物不进入镜像。
 
 ## 环境变量
 

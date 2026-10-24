@@ -20,6 +20,8 @@ export class SessionController {
   private player: Player
   private operation = 0
   private captureGeneration = -1
+  private captureSessionId = ''
+  private openingMicrophone?: Promise<void>
   private captureAttempt = 0
   private minimumGeneration = -1
   private pendingState: SessionSnapshot['state'] | undefined
@@ -42,6 +44,7 @@ export class SessionController {
   private stopCapture() {
     this.captureAttempt++
     this.captureGeneration = -1
+    this.captureSessionId = ''
     this.microphone.close()
     this.store.microphone = 'idle'
   }
@@ -63,6 +66,9 @@ export class SessionController {
     if (event.type === 'error') { this.store.error = event.message; return }
     if (event.type === 'snapshot') {
       const next = event.session
+      const current = this.store.snapshot
+      if (current && current.id !== next.id && current.state !== 'TERMINATED') return
+      if (current?.id === next.id && next.generation < current.generation) return
       if (next.generation < this.minimumGeneration) return
       if (this.pendingState && next.generation === this.minimumGeneration && next.state !== this.pendingState) return
       this.store.snapshot = next
@@ -80,8 +86,14 @@ export class SessionController {
       }
       if (next.state === 'LISTENING') {
         this.stopPrompt()
-        if (this.inStudio) void this.enableCapture(next)
-        else this.pause()
+        if (!this.inStudio) this.pause()
+        else if (next.stt_ready === false) {
+          this.captureAttempt++
+          this.captureGeneration = -1
+          this.captureSessionId = ''
+          this.microphone.setEnabled(false)
+          this.store.microphone = 'idle'
+        } else void this.enableCapture(next)
       } else {
         this.microphone.setEnabled(false)
         this.captureGeneration = -1
@@ -114,22 +126,41 @@ export class SessionController {
     try { await this.client.connect(); this.store.connection = 'connected' }
     catch (error) { this.store.connection = 'disconnected'; throw error }
   }
+  private sendFrame = (frame: ArrayBuffer) => {
+    const snapshot = this.store.snapshot
+    if (!this.destroyed && this.inStudio && this.store.state === 'LISTENING'
+      && this.store.microphone === 'active' && snapshot?.stt_ready !== false
+      && snapshot?.id === this.captureSessionId && snapshot.generation === this.captureGeneration) {
+      this.client.sendAudio(frame)
+    }
+  }
+  private async openMicrophone() {
+    if (this.microphone.isOpen) return
+    const opening = this.openingMicrophone ??= this.microphone.open(this.sendFrame, reason => this.pause(reason))
+    try { await opening }
+    finally { if (this.openingMicrophone === opening) this.openingMicrophone = undefined }
+  }
   private async enableCapture(next: SessionSnapshot) {
-    if (this.captureGeneration === next.generation || !this.inStudio || this.destroyed) return
+    if (next.stt_ready === false || (this.captureGeneration === next.generation && this.captureSessionId === next.id)
+      || !this.inStudio || this.destroyed) return
+    this.microphone.setEnabled(false)
+    this.store.microphone = 'idle'
     this.captureGeneration = next.generation
+    this.captureSessionId = next.id
     const attempt = ++this.captureAttempt
+    const current = () => attempt === this.captureAttempt && !this.destroyed && this.inStudio
+      && this.store.state === 'LISTENING' && this.store.snapshot?.id === next.id
+      && this.store.snapshot.generation === next.generation && this.store.snapshot.stt_ready !== false
     try {
-      if (!this.microphone.isOpen) await this.microphone.open(frame => {
-        if (this.inStudio && this.store.state === 'LISTENING') this.client.sendAudio(frame)
-      }, reason => this.pause(reason))
-      if (attempt !== this.captureAttempt || this.destroyed || !this.inStudio || this.store.state !== 'LISTENING') return
+      await this.openMicrophone()
+      if (!current()) return
       await this.microphone.resume()
-      if (attempt !== this.captureAttempt || this.destroyed || !this.inStudio || this.store.state !== 'LISTENING') return
+      if (!current()) return
       this.microphone.setEnabled(true)
       this.store.microphone = 'active'
       this.client.send({ type: 'audio_ready' })
     } catch (error) {
-      if (attempt === this.captureAttempt) {
+      if (current()) {
         this.store.microphone = 'error'
         this.pause(error instanceof Error ? error.message : '麦克风无法启用。')
       }
@@ -143,9 +174,7 @@ export class SessionController {
       this.validTimeout()
       await this.player.unlock(); this.ensure(operation)
       this.store.microphone = 'requesting'
-      await this.microphone.open(frame => {
-        if (this.inStudio && this.store.state === 'LISTENING') this.client.sendAudio(frame)
-      }, reason => this.pause(reason))
+      await this.openMicrophone()
       this.ensure(operation)
       if (!this.client.connected) await this.connect()
       this.ensure(operation)
@@ -183,9 +212,7 @@ export class SessionController {
     try {
       this.validTimeout()
       await this.player.unlock(); this.ensure(operation)
-      await this.microphone.open(frame => {
-        if (this.inStudio && this.store.state === 'LISTENING') this.client.sendAudio(frame)
-      }, reason => this.pause(reason))
+      await this.openMicrophone()
       this.ensure(operation)
       if (!this.client.connected) {
         await this.connect(); this.ensure(operation)
@@ -273,3 +300,5 @@ export class SessionController {
 let controller: SessionController | undefined
 export function getSessionController() { return controller ??= new SessionController(useSessionStore()) }
 export function disposeSessionController() { controller?.dispose(); controller = undefined }
+
+if (import.meta.hot) import.meta.hot.dispose(disposeSessionController)

@@ -1,5 +1,6 @@
 """Offline model-download, selective extraction and safe cleanup regressions."""
 
+import hashlib
 import io
 import sys
 import tarfile
@@ -21,6 +22,14 @@ def model_files(*, int8: bool = True) -> dict[str, bytes]:
             for part in ("encoder", "decoder", "joiner")
         },
     }
+
+
+def preferred_model_files(*, int8: bool = True) -> dict[str, bytes]:
+    files = model_files(int8=int8)
+    if int8:
+        del files["decoder-epoch-99-avg-1.int8.onnx"]
+        files[downloader.DECODER_NAME] = b"decoder"
+    return files
 
 
 def write_model(target: Path, files: dict[str, bytes]) -> None:
@@ -94,7 +103,7 @@ def test_archive_extracts_only_four_selected_core_files(tmp_path, int8):
         downloader._safe_extract(bundle, destination)
 
     target = destination / downloader.MODEL_NAME
-    assert {path.name for path in target.iterdir()} == set(model_files(int8=int8))
+    assert {path.name for path in target.iterdir()} == set(preferred_model_files(int8=int8))
     assert downloader._model_files(target) == runtime_model_files(target)
 
 
@@ -166,7 +175,7 @@ def test_ready_model_does_not_download_and_removes_only_its_fixed_residues(tmp_p
     assert not any((tmp_path / name).exists() for name in leftovers)
     assert (tmp_path / "another-model.tar.bz2").read_bytes() == b"other download"
     assert (other / "encoder.onnx").read_bytes() == b"unrelated"
-    assert {path.name for path in target.iterdir()} == set(model_files())
+    assert {path.name for path in target.iterdir()} == set(preferred_model_files())
 
 
 def test_download_success_selectively_extracts_and_removes_archive(tmp_path, monkeypatch):
@@ -181,7 +190,9 @@ def test_download_success_selectively_extracts_and_removes_archive(tmp_path, mon
     monkeypatch.setattr(downloader, "_download_with_resume", fake_download)
     downloader.main()
 
-    assert {path.name for path in (models / downloader.MODEL_NAME).iterdir()} == set(model_files())
+    assert {path.name for path in (models / downloader.MODEL_NAME).iterdir()} == set(
+        preferred_model_files()
+    )
     assert {path.name for path in models.iterdir()} == {downloader.MODEL_NAME}
 
 
@@ -369,3 +380,229 @@ def test_samples_directory_cleanup_does_not_follow_nested_links(tmp_path):
 
     assert not samples.exists()
     assert (external / "keep.wav").read_bytes() == b"keep"
+
+
+@pytest.fixture
+def verified_decoder(monkeypatch):
+    payload = b"synthetic verified FP32 decoder weights"
+    monkeypatch.setattr(downloader, "DECODER_SIZE", len(payload))
+    monkeypatch.setattr(downloader, "DECODER_SHA256", hashlib.sha256(payload).hexdigest())
+    return payload
+
+
+@pytest.mark.parametrize("source", ["argument", "environment"])
+def test_int8_ready_model_upgrades_only_decoder_then_repeats_offline(
+    tmp_path, monkeypatch, verified_decoder, source
+):
+    target = tmp_path / downloader.MODEL_NAME
+    original = model_files()
+    write_model(target, original)
+    mirror = "https://mirror.invalid/verified-decoder.onnx"
+    arguments = ["download_asr_model.py", "--models-dir", str(tmp_path)]
+    if source == "argument":
+        arguments.extend(("--decoder-url", mirror))
+        monkeypatch.setenv("WHISPER_GUIDE_DECODER_URL", "https://unused.invalid/decoder")
+    else:
+        monkeypatch.setenv("WHISPER_GUIDE_DECODER_URL", mirror)
+    monkeypatch.setattr(sys, "argv", arguments)
+    requests = []
+
+    def download(url, destination, *, timeout, max_bytes=None):
+        requests.append(url)
+        assert destination == target / downloader.DECODER_PARTIAL_NAME
+        assert max_bytes == len(verified_decoder)
+        assert {path.name: path.read_bytes() for path in target.iterdir()} == original
+        destination.write_bytes(verified_decoder)
+
+    monkeypatch.setattr(downloader, "_download_with_resume", download)
+    downloader.main()
+    expected = original.copy()
+    del expected["decoder-epoch-99-avg-1.int8.onnx"]
+    expected[downloader.DECODER_NAME] = verified_decoder
+    assert {path.name: path.read_bytes() for path in target.iterdir()} == expected
+    assert requests == [mirror]
+    assert downloader._model_files(target) == runtime_model_files(target)
+    monkeypatch.setattr(
+        downloader, "_download_with_resume", lambda *args, **kwargs: pytest.fail("network")
+    )
+    downloader.main()
+    assert {path.name: path.read_bytes() for path in target.iterdir()} == expected
+
+
+@pytest.mark.parametrize("failure", ["size", "checksum"])
+def test_decoder_validation_failure_keeps_previous_usable_model(
+    tmp_path, monkeypatch, verified_decoder, failure
+):
+    target = tmp_path / downloader.MODEL_NAME
+    original = model_files() | {"bpe.model": b"keep until upgrade succeeds", "README.md": b"source"}
+    write_model(target, original)
+    bad = b"short" if failure == "size" else b"x" * len(verified_decoder)
+    requests = []
+
+    def download(url, destination, **kwargs):
+        requests.append(url)
+        destination.write_bytes(bad)
+
+    monkeypatch.setattr(sys, "argv", ["download_asr_model.py", "--models-dir", str(tmp_path)])
+    monkeypatch.setattr(downloader, "_download_with_resume", download)
+    with pytest.raises(RuntimeError, match="size" if failure == "size" else "SHA256"):
+        downloader.main()
+    assert requests == [downloader.DECODER_URL]
+    assert {path.name: path.read_bytes() for path in target.iterdir()} == original
+    assert runtime_model_files(target) is not None
+    assert not (target / downloader.DECODER_PARTIAL_NAME).exists()
+
+
+def test_interrupted_decoder_download_keeps_model_and_resumable_partial(
+    tmp_path, monkeypatch, verified_decoder
+):
+    target = tmp_path / downloader.MODEL_NAME
+    original = model_files()
+    write_model(target, original)
+
+    def interrupted(url, destination, **kwargs):
+        destination.write_bytes(verified_decoder[:8])
+        raise OSError("controlled connection interruption")
+
+    monkeypatch.setattr(sys, "argv", ["download_asr_model.py", "--models-dir", str(tmp_path)])
+    monkeypatch.setattr(downloader, "_download_with_resume", interrupted)
+    with pytest.raises(OSError, match="interruption"):
+        downloader.main()
+    assert (target / downloader.DECODER_PARTIAL_NAME).read_bytes() == verified_decoder[:8]
+    assert {name: (target / name).read_bytes() for name in original} == original
+    assert not (target / downloader.DECODER_NAME).exists()
+
+
+@pytest.mark.parametrize("name", [downloader.DECODER_NAME, downloader.DECODER_PARTIAL_NAME])
+def test_decoder_upgrade_rejects_symlink_destination_or_temporary(
+    tmp_path, monkeypatch, verified_decoder, name
+):
+    target = tmp_path / downloader.MODEL_NAME
+    write_model(target, model_files())
+    external = tmp_path / "external-decoder"
+    external.write_bytes(verified_decoder)
+    (target / name).symlink_to(external)
+    monkeypatch.setattr(sys, "argv", ["download_asr_model.py", "--models-dir", str(tmp_path)])
+    monkeypatch.setattr(
+        downloader, "_download_with_resume", lambda *args, **kwargs: pytest.fail("network")
+    )
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        downloader.main()
+    assert (target / name).is_symlink()
+    assert external.read_bytes() == verified_decoder
+
+
+def test_int8_archive_is_upgraded_in_staging_before_install(
+    tmp_path, monkeypatch, verified_decoder
+):
+    source = tmp_path / "source.tar.bz2"
+    write_archive(source, model_files())
+    models = tmp_path / "models"
+    requests = []
+
+    def download(url, destination, *, timeout, max_bytes=None):
+        requests.append(url)
+        assert not (models / downloader.MODEL_NAME).exists()
+        if max_bytes is None:
+            destination.write_bytes(source.read_bytes())
+        else:
+            assert (
+                destination.parent
+                == models / f".{downloader.MODEL_NAME}.extracting" / downloader.MODEL_NAME
+            )
+            destination.write_bytes(verified_decoder)
+
+    monkeypatch.setattr(sys, "argv", ["download_asr_model.py", "--models-dir", str(models)])
+    monkeypatch.setattr(downloader, "_download_with_resume", download)
+    downloader.main()
+    target = models / downloader.MODEL_NAME
+    assert requests == [downloader.MODEL_URL, downloader.DECODER_URL]
+    assert {path.name for path in target.iterdir()} == set(preferred_model_files())
+    assert (target / downloader.DECODER_NAME).read_bytes() == verified_decoder
+    assert downloader._model_files(target) == runtime_model_files(target)
+    assert {path.name for path in models.iterdir()} == {downloader.MODEL_NAME}
+
+
+def test_staging_decoder_failure_preserves_existing_model_and_archive(
+    tmp_path, monkeypatch, verified_decoder
+):
+    source = tmp_path / "source.tar.bz2"
+    write_archive(source, model_files())
+    models = tmp_path / "models"
+    target = models / downloader.MODEL_NAME
+    previous = {"encoder-original.onnx": b"previous incomplete model"}
+    write_model(target, previous)
+
+    def download(url, destination, *, timeout, max_bytes=None):
+        destination.write_bytes(
+            source.read_bytes() if max_bytes is None else b"x" * len(verified_decoder)
+        )
+
+    monkeypatch.setattr(sys, "argv", ["download_asr_model.py", "--models-dir", str(models)])
+    monkeypatch.setattr(downloader, "_download_with_resume", download)
+    with pytest.raises(RuntimeError, match="断点文件"):
+        downloader.main()
+    assert {path.name: path.read_bytes() for path in target.iterdir()} == previous
+    assert (models / downloader.PARTIAL_NAME).read_bytes() == source.read_bytes()
+    assert not (models / f".{downloader.MODEL_NAME}.extracting").exists()
+
+
+def test_decoder_response_cannot_exceed_verified_size(tmp_path, monkeypatch):
+    destination = tmp_path / "decoder.part"
+    response = io.BytesIO(b"123456789")
+    response.status = 200
+    monkeypatch.setattr(downloader.urllib.request, "urlopen", lambda *args, **kwargs: response)
+    with pytest.raises(RuntimeError, match="exceeds the expected size"):
+        downloader._download_with_resume(
+            "https://mirror.invalid/decoder", destination, timeout=12, max_bytes=8
+        )
+    assert destination.stat().st_size <= 8
+
+
+def test_single_decoder_download_resumes_and_verifies(tmp_path, monkeypatch, verified_decoder):
+    target = tmp_path / downloader.MODEL_NAME
+    write_model(target, model_files())
+    temporary = target / downloader.DECODER_PARTIAL_NAME
+    temporary.write_bytes(verified_decoder[:8])
+    response = io.BytesIO(verified_decoder[8:])
+    response.status = 206
+    requests = []
+
+    def open_request(request, **kwargs):
+        requests.append(request)
+        return response
+
+    monkeypatch.setattr(downloader.urllib.request, "urlopen", open_request)
+    monkeypatch.setattr(sys, "argv", ["download_asr_model.py", "--models-dir", str(tmp_path)])
+    downloader.main()
+    assert len(requests) == 1
+    assert requests[0].headers["Range"] == "bytes=8-"
+    assert (target / downloader.DECODER_NAME).read_bytes() == verified_decoder
+    assert not temporary.exists()
+
+
+def test_download_helper_refuses_a_symlink_even_without_main(tmp_path, monkeypatch):
+    external = tmp_path / "outside"
+    external.write_bytes(b"do not truncate")
+    destination = tmp_path / "decoder.part"
+    destination.symlink_to(external)
+    monkeypatch.setattr(
+        downloader.urllib.request, "urlopen", lambda *args, **kwargs: pytest.fail("network")
+    )
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        downloader._download_with_resume(
+            "https://mirror.invalid/decoder", destination, timeout=12, max_bytes=8
+        )
+    assert external.read_bytes() == b"do not truncate"
+    assert destination.is_symlink()
+
+
+def test_main_rejects_linked_models_directory(tmp_path, monkeypatch):
+    external = tmp_path / "outside-models"
+    external.mkdir()
+    requested = tmp_path / "models-link"
+    requested.symlink_to(external, target_is_directory=True)
+    monkeypatch.setattr(sys, "argv", ["download_asr_model.py", "--models-dir", str(requested)])
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        downloader.main()
+    assert not list(external.iterdir())

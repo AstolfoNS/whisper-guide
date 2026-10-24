@@ -19,6 +19,7 @@ export class Microphone {
   private appliedProcessing?: MicrophoneProcessingSettings
 
   get isOpen() { return Boolean(this.stream?.active && this.context) }
+  get contextSampleRate() { return this.context?.sampleRate }
   get processingSettings(): Readonly<MicrophoneProcessingSettings> | undefined {
     return this.appliedProcessing ? { ...this.appliedProcessing } : undefined
   }
@@ -44,6 +45,7 @@ export class Microphone {
       for (const track of stream.getTracks()) track.stop()
       return
     }
+    for (const track of stream.getAudioTracks()) track.enabled = false
     let context: AudioContext | undefined
     let source: MediaStreamAudioSourceNode | undefined
     let processor: AudioWorkletNode | undefined
@@ -61,12 +63,12 @@ export class Microphone {
       processor.connect(sink)
       sink.connect(audioContext.destination)
       processor.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-        if (this.enabled) onFrame(event.data)
+        if (operation === this.operation && this.enabled) onFrame(event.data)
       }
       for (const track of stream.getAudioTracks()) {
         // Optional speech-processing hints must never prevent microphone capture.
         try { track.contentHint = 'speech' } catch { /* Unsupported by this browser. */ }
-        track.onended = () => onFailure('麦克风已断开，请检查设备后继续。')
+        track.onended = () => { if (operation === this.operation) onFailure('麦克风已断开，请检查设备后继续。') }
       }
       try {
         const settings = stream.getAudioTracks()[0]?.getSettings?.()
@@ -77,7 +79,7 @@ export class Microphone {
         }
       } catch { /* Actual settings are optional diagnostics, never inferred from requests. */ }
       context.onstatechange = () => {
-        if (this.enabled && audioContext.state === 'suspended') onFailure('浏览器已暂停音频，请返回页面并继续会话。')
+        if (operation === this.operation && this.enabled && audioContext.state === 'suspended') onFailure('浏览器已暂停音频，请返回页面并继续会话。')
       }
       await audioContext.resume()
       if (operation !== this.operation) {
@@ -110,6 +112,7 @@ export class Microphone {
   }
 
   setEnabled(enabled: boolean) {
+    if (enabled === this.enabled) return
     this.enabled = enabled
     this.processor?.port.postMessage({ enabled })
     for (const track of this.stream?.getAudioTracks() ?? []) track.enabled = enabled

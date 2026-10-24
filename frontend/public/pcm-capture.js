@@ -1,7 +1,7 @@
 /* 16 kHz, mono, little-endian PCM16; 20 ms frames; no persistent audio storage. */
 class PcmCapture extends AudioWorkletProcessor {
   enabled = false; frame = new ArrayBuffer(640); view = new DataView(this.frame); offset = 0; sampleWeight = 0; sampleSum = 0
-  constructor() { super(); this.port.onmessage = ({ data }) => { this.enabled = data.enabled === true; this.offset = 0; this.sampleWeight = 0; this.sampleSum = 0; this.frame = new ArrayBuffer(640); this.view = new DataView(this.frame) } }
+  constructor() { super(); this.port.onmessage = ({ data }) => { const enabled = data.enabled === true; if (enabled === this.enabled) return; this.enabled = enabled; this.offset = 0; this.sampleWeight = 0; this.sampleSum = 0; this.frame = new ArrayBuffer(640); this.view = new DataView(this.frame) } }
   process(inputs) {
     const channel = inputs[0]?.[0]; if (!this.enabled || !channel) return true
     const ratio = sampleRate / 16000

@@ -130,3 +130,11 @@ it('shows recovery progress without repeating a stale failure or promising succe
   await wrapper.vm.$nextTick()
   expect(wrapper.find('[role="alert"]').exists()).toBe(false)
 })
+
+
+it('shows the connecting state without reviving an old mismatch instruction before speech is ready', async () => {
+  const { wrapper } = await studio(snapshot({ stt_ready: false, alignment_status: 'mismatch', message: mismatchMessage }))
+  expect(wrapper.text()).toContain('连接识别中')
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  expect(wrapper.get('[aria-label="讲稿匹配"] [role="status"]').text()).toContain('正在连接语音识别，请稍候再朗读')
+})

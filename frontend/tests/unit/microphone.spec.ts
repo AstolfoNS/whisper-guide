@@ -17,6 +17,7 @@ function capture(options: {
   }
   const stream = { active: true, getTracks: () => [track], getAudioTracks: () => [track] }
   const getUserMedia = vi.fn(async () => stream)
+  const processors: { port: { onmessage: ((event: MessageEvent<ArrayBuffer>) => void) | null; postMessage: ReturnType<typeof vi.fn> } }[] = []
   vi.stubGlobal('navigator', { mediaDevices: {
     getUserMedia,
     ...(options.missingOptionalApis ? {} : { getSupportedConstraints: () => options.supported ?? {} }),
@@ -26,6 +27,7 @@ function capture(options: {
     audioWorklet = { addModule: vi.fn(async () => {}) }
     destination = {}
     state = 'running'
+    sampleRate = 48000
     onstatechange = null
     createMediaStreamSource = node
     createGain = () => ({ ...node(), gain: { value: 1 } })
@@ -33,11 +35,12 @@ function capture(options: {
     close = vi.fn(async () => {})
   })
   vi.stubGlobal('AudioWorkletNode', class {
-    port = { onmessage: null, postMessage: vi.fn() }
+    port = { onmessage: null as ((event: MessageEvent<ArrayBuffer>) => void) | null, postMessage: vi.fn() }
+    constructor() { processors.push(this) }
     connect = vi.fn()
     disconnect = vi.fn()
   })
-  return { track, getUserMedia }
+  return { track, getUserMedia, processors }
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -107,4 +110,41 @@ it('does not publish settings or keep a track from an open operation cancelled d
   expect(microphone.isOpen).toBe(false)
   expect(microphone.processingSettings).toBeUndefined()
   expect(track.stop).toHaveBeenCalled()
+})
+
+
+it('keeps tracks disabled until enabled and does not flush processing on duplicate enable calls', async () => {
+  const { track, processors } = capture()
+  const microphone = new Microphone()
+  await microphone.open(vi.fn(), vi.fn())
+  expect(track.enabled).toBe(false)
+  expect(microphone.contextSampleRate).toBe(48000)
+  microphone.setEnabled(true)
+  microphone.setEnabled(true)
+  expect(track.enabled).toBe(true)
+  microphone.setEnabled(false)
+  microphone.setEnabled(false)
+  expect(processors[0]!.port.postMessage.mock.calls).toEqual([[{ enabled: true }], [{ enabled: false }]])
+  expect(track.enabled).toBe(false)
+  microphone.close()
+})
+
+it('rejects queued PCM and ended callbacks from a microphone operation that was replaced', async () => {
+  const { processors, track } = capture()
+  const microphone = new Microphone()
+  const oldFrame = vi.fn(), currentFrame = vi.fn(), failure = vi.fn()
+  await microphone.open(oldFrame, failure)
+  microphone.setEnabled(true)
+  const oldPort = processors[0]!.port.onmessage!
+  const oldEnded = track.onended as unknown as () => void
+  await microphone.open(currentFrame, failure)
+  microphone.setEnabled(true)
+  const event = { data: new ArrayBuffer(640) } as MessageEvent<ArrayBuffer>
+  oldPort(event)
+  oldEnded()
+  processors[1]!.port.onmessage!(event)
+  expect(oldFrame).not.toHaveBeenCalled()
+  expect(failure).not.toHaveBeenCalled()
+  expect(currentFrame).toHaveBeenCalledTimes(1)
+  microphone.close()
 })

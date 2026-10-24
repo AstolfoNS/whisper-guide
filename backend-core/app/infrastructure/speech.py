@@ -26,6 +26,70 @@ class SpeechUnavailableError(RuntimeError):
     """Raised when a requested speech capability is unavailable."""
 
 
+def _safe_failure_reason(error: Exception, timeout_ms: int | None = None) -> dict[str, Any]:
+    """Keep only bounded diagnostics, never exception text, headers, or endpoints."""
+    reason = getattr(error, "failure_reason", None)
+    source = reason if isinstance(reason, dict) else vars(error)
+    code = source.get("error_code")
+    stage = source.get("stage")
+    http_status = source.get("http_status")
+    provider_code = source.get("provider_error_code")
+    timeout = source.get("timeout_ms", timeout_ms)
+    return {
+        "error_code": code
+        if isinstance(code, str)
+        and code
+        in {
+            "TIMEOUT",
+            "HTTP_ERROR",
+            "PROVIDER_ERROR",
+            "INVALID_RESPONSE",
+            "NETWORK_ERROR",
+            "UNKNOWN_ERROR",
+            "CONFIG_INCOMPLETE",
+        }
+        else "TIMEOUT"
+        if isinstance(error, TimeoutError)
+        else "UNKNOWN_ERROR",
+        "stage": stage
+        if isinstance(stage, str)
+        and stage
+        in {
+            "configuration",
+            "capacity",
+            "connect",
+            "initialize",
+            "send",
+            "result",
+            "buffer",
+            "receive",
+            "closed",
+            "unknown",
+        }
+        else "unknown",
+        "http_status": http_status
+        if type(http_status) is int and 100 <= http_status <= 599
+        else None,
+        "provider_error_code": provider_code
+        if type(provider_code) is int and 0 <= provider_code <= 0xFFFFFFFF
+        else None,
+        "timeout_ms": timeout if type(timeout) is int and 0 < timeout <= 30000 else None,
+    }
+
+
+def _recognizer_timeout_ms(recognizer: Any) -> int | None:
+    value = getattr(getattr(recognizer, "config", None), "timeout_seconds", None)
+    if type(value) in {int, float} and math.isfinite(value) and 0 < value <= 30:
+        return max(1, round(value * 1000))
+    return None
+
+
+def _speech_failure(error: Exception, recognizer: Any) -> SpeechUnavailableError:
+    failure = SpeechUnavailableError("语音识别服务暂时不可用。")
+    failure.failure_reason = _safe_failure_reason(error, _recognizer_timeout_ms(recognizer))
+    return failure
+
+
 @dataclass(frozen=True, slots=True)
 class RecognitionUpdate:
     """A complete, normalized hypothesis for one streaming segment."""
@@ -54,6 +118,29 @@ class SpeechStream:
         self._recognizer = recognizer
         self._vad = vad
         self._closed = False
+        self.fallback_reason: dict[str, Any] | None = None
+
+    @property
+    def ready(self) -> bool:
+        return (
+            not self._closed and self.available and bool(getattr(self._recognizer, "ready", True))
+        )
+
+    async def wait_ready(self, timeout: float | None = None) -> bool:
+        if self._closed or not self.available:
+            raise SpeechUnavailableError("语音识别流已关闭或不可用。")
+        wait = getattr(self._recognizer, "wait_ready", None)
+        if callable(wait):
+            try:
+                if not await wait(timeout=timeout):
+                    raise TimeoutError()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise _speech_failure(error, self._recognizer) from None
+        if not self.ready:
+            raise SpeechUnavailableError("语音识别流尚未就绪。")
+        return True
 
     @property
     def effective_provider(self) -> str:
@@ -112,8 +199,8 @@ class SpeechStream:
             )
         except SpeechUnavailableError:
             raise
-        except Exception as error:  # pragma: no cover - engine-specific
-            raise SpeechUnavailableError("语音识别处理失败。") from error
+        except Exception as error:  # engine-specific failures become safe metadata
+            raise _speech_failure(error, recognizer) from None
 
     def is_speech(self, pcm: bytes) -> bool:
         if self._closed or not pcm:
@@ -285,8 +372,8 @@ FILLER_UTTERANCES = frozenset(
 
 
 def _normalize_transcript(text: str) -> str:
-    compact = " ".join(text.replace("\u3000", " ").split()).strip()
-    return re.sub(r"([^\W\d_])\1{2,}", r"\1", compact)
+    """Preserve the recognizer hypothesis; canonicalize whitespace only."""
+    return " ".join(text.replace("\u3000", " ").split()).strip()
 
 
 def _is_filler_only(text: str) -> bool:
@@ -308,7 +395,15 @@ def _model_files(directory: Path) -> dict[str, Path] | None:
         ]
         if not candidates:
             return None
-        candidates.sort(key=lambda path: ("int8" not in path.name, path.name))
+        # Quantizing the prediction network causes repeated Chinese characters
+        # in this bundled model. Keep its FP32 decoder while using the efficient
+        # INT8 encoder/joiner; older INT8-only installations remain loadable.
+        candidates.sort(
+            key=lambda path: (
+                "int8" in path.name if component == "decoder" else "int8" not in path.name,
+                path.name,
+            )
+        )
         result[component] = candidates[0]
     return result
 
@@ -538,8 +633,12 @@ class WebSocketStreamingProvider(CloudSpeechProvider):
             raise SpeechUnavailableError("云端识别未授权或未配置。")
         try:
             recognizer = WebSocketStreamingRecognizer(self.config, self.sample_rate, turn_token)
-        except Exception:
-            raise SpeechUnavailableError("云端流式识别初始化失败。") from None
+        except Exception as error:
+            failure = _speech_failure(error, None)
+            failure.failure_reason = _safe_failure_reason(
+                error, max(1, round(self.config.timeout_seconds * 1000))
+            )
+            raise failure from None
         return SpeechStream(
             recognizer=recognizer,
             sample_rate=self.sample_rate,
@@ -654,6 +753,44 @@ class FallbackSpeechStream:
         self._frame_count = 0
         self._latest_local_frame = -1
         self._last_cloud_final_frame = -1
+        self.fallback_reason: dict[str, Any] | None = None
+
+    @property
+    def ready(self) -> bool:
+        return not self._closed and bool(getattr(self.active, "ready", self.active.available))
+
+    async def wait_ready(self, timeout: float | None = None) -> bool:
+        if self._closed:
+            raise SpeechUnavailableError("语音识别流已关闭。")
+        active = self.active
+        wait = getattr(active, "wait_ready", None)
+        try:
+            if callable(wait) and not await wait(timeout=timeout):
+                raise TimeoutError()
+            if not self.ready:
+                raise TimeoutError()
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if self._closed:
+                raise SpeechUnavailableError("语音识别流已关闭。") from None
+            if active is self.local or not self.local.available:
+                raise _speech_failure(error, getattr(active, "_recognizer", None)) from None
+            self._activate_local(error)
+            # The local model was constructed before starting the remote stream;
+            # readiness does not replay audio, reconnect, or grow network buffers.
+            return await self.wait_ready(timeout=timeout)
+
+    def _activate_local(self, error: Exception) -> None:
+        if self.active is self.local:
+            return
+        self.fallback_reason = _safe_failure_reason(
+            error, _recognizer_timeout_ms(getattr(self.remote, "_recognizer", None))
+        )
+        self.remote.close()
+        self.active = self.local
+        self._needs_remap = True
 
     @property
     def effective_provider(self) -> str:
@@ -698,14 +835,12 @@ class FallbackSpeechStream:
             if remote_update is not None and remote_update.is_final:
                 self._last_cloud_final_frame = frame
             return self._map_update(remote_update)
-        except SpeechUnavailableError:
+        except SpeechUnavailableError as error:
             if self._closed:
                 return None
             if not self.local.available:
                 raise
-            self.remote.close()
-            self.active = self.local
-            self._needs_remap = True
+            self._activate_local(error)
             # A warmed local final may lag behind cloud commits. Replaying it
             # with a new segment ID would look like an intentional readback.
             # Only reuse local hypotheses observed after the latest cloud final;
@@ -825,7 +960,10 @@ class ProviderSpeechServices(SpeechServices):
                 vad=self._vad_factory(2) if self._vad_factory is not None else None,
                 turn_token=turn_token,
             )
-        except SpeechUnavailableError:
+        except SpeechUnavailableError as error:
+            local.fallback_reason = _safe_failure_reason(
+                error, max(1, round(remote.config.timeout_seconds * 1000))
+            )
             return local
         return FallbackSpeechStream(remote_stream, local)
 

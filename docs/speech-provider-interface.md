@@ -31,6 +31,12 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
 - 本次演讲由前端准备流程选择讲稿，并通过 WebSocket `prepare` 将讲稿绑定到会话；会话开始前必须完成讲稿选择。
 
 
+## 识别就绪与回退诊断
+
+快照包含stt_ready:boolean。LISTENING且false表示仍在连接/初始化；客户端应等待true再启用PCM并发送audio_ready，服务端只从实际收音就绪后计算静音。旧客户端提前确认不会启动不就绪的传输，当前客户端不会丢弃首句。取消、暂停和新generation拒绝旧ready返回。
+
+stt_fallback_reason为null或受控对象，字段error_code、stage、http_status、provider_error_code、timeout_ms。stage为configuration/capacity/connect/initialize/send/result/buffer/receive/closed/unknown之一，数字字段可为null。不含URL、请求头、密钥、上游正文或异常对象。
+
 ## STT 统一事件
 
 ```python

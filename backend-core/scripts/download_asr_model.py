@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
+import stat
 import tarfile
 import urllib.request
 from pathlib import Path, PurePosixPath
@@ -14,6 +16,11 @@ MODEL_NAME = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
 MODEL_URL = (
     f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{MODEL_NAME}.tar.bz2"
 )
+DECODER_NAME = "decoder-epoch-99-avg-1.onnx"
+DECODER_URL = f"https://huggingface.co/csukuangfj/{MODEL_NAME}/resolve/main/{DECODER_NAME}"
+DECODER_SIZE = 13_876_452
+DECODER_SHA256 = "2e3b5ec371f8899ee6acd829fd753ba45772df57a91bdf37cde3136354e7db7d"
+DECODER_PARTIAL_NAME = f".{DECODER_NAME}.part"
 ROOT = Path(__file__).resolve().parents[1]
 PARTIAL_NAME = f".{MODEL_NAME}.tar.bz2.part"
 LEGACY_PARTIAL_NAME = "asr-model.tar.bz2"
@@ -28,19 +35,28 @@ def main() -> None:
         help="模型归档 URL；也可通过 WHISPER_GUIDE_MODEL_URL 设置镜像地址。",
     )
     parser.add_argument(
+        "--decoder-url",
+        default=os.environ.get("WHISPER_GUIDE_DECODER_URL", DECODER_URL),
+        help="FP32 decoder URL；也可通过 WHISPER_GUIDE_DECODER_URL 指定可信镜像。",
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=120,
         help="单次 HTTP 连接和读取超时（秒）。",
     )
     args = parser.parse_args()
-    models_dir = args.models_dir.expanduser().resolve()
+    requested_dir = args.models_dir.expanduser()
+    if requested_dir.is_symlink():
+        raise RuntimeError(f"Refusing a symbolic link at model download path: {requested_dir}")
+    models_dir = requested_dir.resolve()
     target = models_dir / MODEL_NAME
     temporary = models_dir / PARTIAL_NAME
     archive = models_dir / f"{MODEL_NAME}.tar.bz2"
     staging = models_dir / f".{MODEL_NAME}.extracting"
     _validate_work_paths(models_dir)
     if _model_is_complete(target):
+        _ensure_fp32_decoder(target, args.decoder_url, timeout=args.timeout)
         _slim_model(target)
         _clear_downloads(models_dir)
         print(f"Model already present: {target}")
@@ -58,13 +74,18 @@ def main() -> None:
         extracted = staging / MODEL_NAME
         if not _model_is_complete(extracted):
             raise RuntimeError(f"模型归档已解压，但缺少 tokens/encoder/decoder/joiner：{extracted}")
+        # Finish precision upgrades inside staging before replacing any target.
+        _ensure_fp32_decoder(extracted, args.decoder_url, timeout=args.timeout)
+        _slim_model(extracted)
         if target.exists():
             shutil.rmtree(target)
         extracted.replace(target)
     except (EOFError, OSError, RuntimeError, tarfile.TarError) as error:
         # Keep the complete HTTP response so a later invocation can resume it.
         archive.replace(temporary)
-        raise RuntimeError(f"模型归档不完整或损坏，已保留断点文件：{temporary}") from error
+        raise RuntimeError(
+            f"模型归档或 FP32 decoder 准备失败，已保留断点文件：{temporary}"
+        ) from error
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     _slim_model(target)
@@ -73,7 +94,7 @@ def main() -> None:
 
 
 def _model_files(target: Path) -> dict[str, Path] | None:
-    """Match runtime selection: prefer int8, then the first nonempty file by name."""
+    """Match runtime: INT8 encoder/joiner, FP32 decoder, then filename order."""
     if target.is_symlink():
         return None
     tokens = target / "tokens.txt"
@@ -89,9 +110,14 @@ def _model_files(target: Path) -> dict[str, Path] | None:
         candidates = [path for path in paths if path.is_file() and path.stat().st_size > 0]
         if not candidates:
             return None
-        candidates.sort(key=lambda path: ("int8" not in path.name, path.name))
+        candidates.sort(key=lambda path: _precision_key(path.name, component))
         result[component] = candidates[0]
     return result
+
+
+def _precision_key(name: str, component: str) -> tuple[bool, str]:
+    prefer_other = "int8" in name if component == "decoder" else "int8" not in name
+    return prefer_other, name
 
 
 def _model_is_complete(target: Path) -> bool:
@@ -116,6 +142,72 @@ def _validate_work_paths(models_dir: Path) -> None:
         elif path.exists() and not path.is_file():
             raise RuntimeError(f"Expected a model archive file: {path}")
 
+    for directory in (
+        models_dir / MODEL_NAME,
+        models_dir / f".{MODEL_NAME}.extracting" / MODEL_NAME,
+    ):
+        if directory.is_symlink():
+            raise RuntimeError(f"Refusing a symbolic link at model download path: {directory}")
+        for name in (DECODER_NAME, DECODER_PARTIAL_NAME):
+            _regular_file_size(directory / name)
+        if directory.is_dir():
+            for path in (*directory.glob("*.onnx"), directory / "tokens.txt"):
+                if path.is_symlink():
+                    raise RuntimeError(f"Refusing a symbolic link at model download path: {path}")
+
+
+def _regular_file_size(path: Path) -> int:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return 0
+    if stat.S_ISLNK(metadata.st_mode):
+        raise RuntimeError(f"Refusing a symbolic link at model download path: {path}")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError(f"Expected a regular model download file: {path}")
+    return metadata.st_size
+
+
+def _verify_decoder(path: Path) -> None:
+    if _regular_file_size(path) != DECODER_SIZE:
+        raise RuntimeError("FP32 decoder size does not match the verified model")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise RuntimeError("Expected a regular FP32 decoder file")
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest != DECODER_SHA256:
+        raise RuntimeError("FP32 decoder SHA256 does not match the verified model")
+
+
+def _ensure_fp32_decoder(target: Path, url: str, *, timeout: int) -> None:
+    if target.is_symlink():
+        raise RuntimeError(f"Refusing a symbolic link at model download path: {target}")
+    destination = target / DECODER_NAME
+    temporary = target / DECODER_PARTIAL_NAME
+    _regular_file_size(destination)
+    _regular_file_size(temporary)
+    selected = _model_files(target)
+    if selected is None:
+        raise RuntimeError(f"Cannot upgrade an incomplete model: {target}")
+    if "int8" not in selected["decoder"].name:
+        return
+    print("Downloading the verified FP32 decoder only")
+    _download_with_resume(url, temporary, timeout=timeout, max_bytes=DECODER_SIZE)
+    try:
+        _verify_decoder(temporary)
+    except (OSError, RuntimeError):
+        # Corrupt completed responses are not useful resume anchors. Interrupted
+        # HTTP downloads remain available to the existing Range-resume helper.
+        if temporary.is_file() and not temporary.is_symlink():
+            temporary.unlink()
+        raise
+    # Recheck both fixed paths before the atomic replacement. The original INT8
+    # model remains usable until verification has succeeded.
+    _regular_file_size(destination)
+    _regular_file_size(temporary)
+    temporary.replace(destination)
+
 
 def _slim_model(target: Path) -> None:
     """Only discard known redundant artifacts once all four runtime files exist."""
@@ -133,8 +225,14 @@ def _slim_model(target: Path) -> None:
 
 def _clear_downloads(models_dir: Path) -> None:
     # Fixed names belong to this model only; other models/downloads are untouched.
-    for name in (PARTIAL_NAME, LEGACY_PARTIAL_NAME, f"{MODEL_NAME}.tar.bz2"):
-        path = models_dir / name
+    paths = [
+        *(
+            models_dir / name
+            for name in (PARTIAL_NAME, LEGACY_PARTIAL_NAME, f"{MODEL_NAME}.tar.bz2")
+        ),
+        models_dir / MODEL_NAME / DECODER_PARTIAL_NAME,
+    ]
+    for path in paths:
         if not path.is_symlink() and path.is_file():
             path.unlink()
 
@@ -146,8 +244,13 @@ def _adopt_legacy_partial(models_dir: Path, temporary: Path) -> None:
         print(f"Adopted legacy partial archive: {legacy.name}")
 
 
-def _download_with_resume(url: str, destination: Path, *, timeout: int) -> None:
-    existing = destination.stat().st_size if destination.exists() else 0
+def _download_with_resume(
+    url: str, destination: Path, *, timeout: int, max_bytes: int | None = None
+) -> None:
+    existing = _regular_file_size(destination)
+    if max_bytes is not None and existing > max_bytes:
+        destination.unlink()
+        existing = 0
     headers = {"Range": f"bytes={existing}-"} if existing else {}
     request = urllib.request.Request(url, headers=headers)
     try:
@@ -156,6 +259,7 @@ def _download_with_resume(url: str, destination: Path, *, timeout: int) -> None:
         if error.code != 416 or not existing:
             raise
         # The partial file is longer than the remote object. Restart safely.
+        _regular_file_size(destination)
         destination.unlink()
         response = urllib.request.urlopen(urllib.request.Request(url), timeout=timeout)
         existing = 0
@@ -165,9 +269,22 @@ def _download_with_resume(url: str, destination: Path, *, timeout: int) -> None:
         mode = "ab" if append else "wb"
         if existing and not append:
             print("Server did not honor Range; restarting the archive download.")
-        with destination.open(mode) as output:
-            shutil.copyfileobj(response, output, length=1024 * 1024)
-    print(f"Downloaded {destination.stat().st_size} bytes")
+        _regular_file_size(destination)
+        flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+        descriptor = os.open(destination, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(descriptor, mode) as output:
+            if not stat.S_ISREG(os.fstat(output.fileno()).st_mode):
+                raise RuntimeError("Expected a regular model download file")
+            if max_bytes is None:
+                shutil.copyfileobj(response, output, length=1024 * 1024)
+            else:
+                total = existing if append else 0
+                while chunk := response.read(min(1024 * 1024, max_bytes - total + 1)):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError("FP32 decoder download exceeds the expected size")
+                    output.write(chunk)
+    print(f"Downloaded {_regular_file_size(destination)} bytes")
 
 
 def _safe_extract(bundle: tarfile.TarFile, destination: Path) -> None:
@@ -201,7 +318,9 @@ def _safe_extract(bundle: tarfile.TarFile, destination: Path) -> None:
         ]
         if not candidates:
             raise RuntimeError(f"Archive is missing a nonempty {component} model")
-        candidates.sort(key=lambda member: ("int8" not in member.name, member.name))
+        candidates.sort(
+            key=lambda member: _precision_key(PurePosixPath(member.name).name, component)
+        )
         selected.append(candidates[0])
     model_dir = destination / MODEL_NAME
     if destination.is_symlink() or model_dir.is_symlink():

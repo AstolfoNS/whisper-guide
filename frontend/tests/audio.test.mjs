@@ -62,3 +62,41 @@ test('AudioWorklet resamples 48 kHz into 20 ms PCM16 frames and flushes on disab
   processor.process([[new Float32Array(128).fill(1)]])
   assert.equal(frames.length, 4)
 })
+
+
+function workletAt(sampleRate) {
+  let Processor
+  const frames = []
+  const context = vm.createContext({ sampleRate, ArrayBuffer, DataView, Math,
+    AudioWorkletProcessor: class { port = { postMessage(frame) { frames.push(frame) }, onmessage: null } },
+    registerProcessor(_name, implementation) { Processor = implementation },
+  })
+  vm.runInContext(fs.readFileSync(new URL('../public/pcm-capture.js', import.meta.url), 'utf8'), context)
+  const processor = new Processor()
+  processor.port.onmessage({ data: { enabled: true } })
+  return { processor, frames }
+}
+
+test('actual 16, 44.1 and 48 kHz clocks each produce 50 unique mono frames per second', () => {
+  for (const rate of [16000, 44100, 48000]) {
+    const { processor, frames } = workletAt(rate)
+    for (let start = 0; start < rate; start += 128) {
+      const channel = Float32Array.from({ length: Math.min(128, rate - start) }, (_, index) => (start + index) / rate - 0.5)
+      processor.process([[channel]])
+    }
+    assert.equal(frames.length, 50, `input clock ${rate}`)
+    assert.ok(frames.every(frame => frame.byteLength === 640))
+    assert.equal(new Set(frames.map(frame => Buffer.from(frame).toString('base64'))).size, 50)
+    assert.equal(processor.offset, 0)
+  }
+})
+
+test('duplicate enabled messages preserve a partial frame instead of discarding input', () => {
+  const { processor, frames } = workletAt(16000)
+  processor.process([[new Float32Array(128).fill(0.25)]])
+  processor.port.onmessage({ data: { enabled: true } })
+  processor.process([[new Float32Array(192).fill(0.5)]])
+  assert.equal(frames.length, 1)
+  assert.equal(new DataView(frames[0]).getInt16(0, true), 8192)
+  assert.equal(new DataView(frames[0]).getInt16(256, true), 16384)
+})

@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import copy
+import inspect
 import json
 import time
 from collections import deque
@@ -80,6 +81,9 @@ class SessionRuntime:
         self.raw_transcript_is_current = False
         self.finalized_segment_id = -1
         self.stream: Any = None
+        self.stt_ready = False
+        self.readiness: asyncio.Task[None] | None = None
+        self.audio_ready_requested_generation = -1
         self.socket: WebSocket | None = None
         self.lock = asyncio.Lock()
         self.audio_ready = False
@@ -111,6 +115,8 @@ class SessionRuntime:
             aligned_transcript=self.session.aligned_transcript,
             notice=self.session.message,
             stt_provider=self.provider_name,
+            stt_ready=self.stt_ready,
+            stt_fallback_reason=getattr(self.stream, "fallback_reason", None),
             stt_provider_active=getattr(self.stream, "effective_provider", self.provider_name),
             stt_fallback=bool(
                 getattr(self.stream, "fallback_active", False)
@@ -146,6 +152,11 @@ class SessionRuntime:
         await self.send({"type": "snapshot", "session": self.snapshot()})
 
     def release_stream(self) -> None:
+        if self.readiness and self.readiness is not asyncio.current_task():
+            self.readiness.cancel()
+        self.readiness = None
+        self.stt_ready = False
+        self.audio_ready_requested_generation = -1
         self.cancel_refinement()
         self.stream_epoch += 1
         self.voice_activity_revision = 0
@@ -176,6 +187,71 @@ class SessionRuntime:
         self.filtered_count = 0
         self.audio_inflight = False
         self.audio_pending = False
+
+    @staticmethod
+    def _stream_ready(stream: Any) -> bool:
+        return bool(stream is not None and getattr(stream, "ready", stream.available))
+
+    def _mark_audio_ready(self) -> None:
+        if self.ready_generation == self.session.generation:
+            return
+        self.audio_ready = True
+        self.ready_generation = self.session.generation
+        self.session.silence_since_ms = now_ms()
+        self.last_frame_ms = now_ms()
+
+    def _prepare_readiness(self) -> None:
+        self.stt_ready = self._stream_ready(self.stream)
+        if self.stt_ready:
+            return
+        self.readiness = asyncio.create_task(
+            self._wait_for_stream(self.stream, self.session.generation, self.stream_epoch)
+        )
+
+    async def _wait_for_stream(self, stream: Any, generation: int, epoch: int) -> None:
+        """A handshake waits outside the control lock and before microphone capture."""
+        try:
+            budget = min(
+                30.0, max(0.2, getattr(self.model_settings, "cloud_stt_timeout_ms", 5000) / 1000)
+            )
+            waiter = getattr(stream, "wait_ready", None)
+            if not callable(waiter):
+                raise SpeechUnavailableError("语音连接尚未就绪。")
+            async with asyncio.timeout(budget + 0.5):
+                pending = waiter()
+                prepared = await pending if inspect.isawaitable(pending) else pending
+            if prepared is False or not self._stream_ready(stream):
+                raise SpeechUnavailableError("语音连接未能就绪。")
+            async with self.lock:
+                if (
+                    self.stream is not stream
+                    or self.session.generation != generation
+                    or self.stream_epoch != epoch
+                    or self.session.state != SessionState.LISTENING
+                ):
+                    return
+                self.stt_ready = True
+                if self.audio_ready_requested_generation == generation:
+                    # Older clients may already have requested capture. New clients
+                    # wait for stt_ready before enabling PCM, so no first words vanish.
+                    self._mark_audio_ready()
+                await self.publish()
+        except asyncio.CancelledError:
+            pass
+        except (SpeechUnavailableError, TimeoutError):
+            async with self.lock:
+                if (
+                    self.stream is stream
+                    and self.session.generation == generation
+                    and self.stream_epoch == epoch
+                    and self.session.state == SessionState.LISTENING
+                ):
+                    await self.change(
+                        "service_fault", reason="语音识别连接未就绪，请检查服务后继续。"
+                    )
+        finally:
+            if self.readiness is asyncio.current_task():
+                self.readiness = None
 
     def cancel_prompt(self) -> None:
         if self.synthesis and self.synthesis is not asyncio.current_task():
@@ -449,12 +525,26 @@ class SessionRuntime:
             if self.session.prompt:
                 self.synthesis = asyncio.create_task(self.make_prompt(self.session.prompt.id))
 
-    async def change(self, event: str, **payload: Any) -> None:
+    async def change(self, event: str, *, prepared_stream: Any = None, **payload: Any) -> None:
         previous_generation = self.session.generation
         self.session.handle(event, now_ms(), **payload)
         if previous_generation != self.session.generation:
             self.release_stream()
             self.cancel_prompt()
+        if prepared_stream is not None:
+            self.stream = prepared_stream
+        if self.session.state == SessionState.LISTENING:
+            if self.stream is None:
+                try:
+                    self.stream = await self._create_stream()
+                except SpeechUnavailableError:
+                    await self.change("service_fault", reason="识别服务不可用，已暂停。")
+                    return
+            if not self.stream.available:
+                await self.change("service_fault", reason="识别服务不可用，已暂停。")
+                return
+            if self.readiness is None:
+                self._prepare_readiness()
         await self.publish()
         if self.session.state == SessionState.PROMPTING and self.session.prompt:
             if self.synthesis is None:
@@ -521,11 +611,10 @@ class SessionRuntime:
                 stream.close()
                 raise SessionError("识别模型加载失败，请检查服务器语音资源。")
             try:
-                await self.change(event, service_available=True)
+                await self.change(event, prepared_stream=stream, service_available=True)
             except Exception:
                 stream.close()
                 raise
-            self.stream = stream
         elif event == "audio_ready":
             if self.session.state == SessionState.LISTENING:
                 if self.ready_generation == self.session.generation:
@@ -535,10 +624,12 @@ class SessionRuntime:
                 if not self.stream.available:
                     await self.change("service_fault", reason="识别服务不可用，已暂停。")
                     return
-                self.audio_ready = True
-                self.ready_generation = self.session.generation
-                self.session.silence_since_ms = now_ms()
-                self.last_frame_ms = now_ms()
+                self.audio_ready_requested_generation = self.session.generation
+                if self._stream_ready(self.stream):
+                    self.stt_ready = True
+                    self._mark_audio_ready()
+                elif self.readiness is None:
+                    self._prepare_readiness()
         elif event in {"configure", "update_options"}:
             await self.change(
                 "update_options", silence_timeout_ms=command.get("silence_timeout_ms")

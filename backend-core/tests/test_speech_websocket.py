@@ -258,8 +258,12 @@ def test_unresponsive_cloud_after_voiced_audio_times_out_to_warm_local():
             recognizer = remote._recognizer
             stream = FallbackSpeechStream(remote, local)
             try:
+                await recognizer.wait_ready()
+                pcm = array("h", [-1000, 1000] * 160).tobytes()
+                # This test explicitly supplies the runtime's confirmed-voice signal.
+                stream.notify_voice()
                 for _ in range(35):
-                    stream.accept_pcm(PCM)
+                    stream.accept_pcm(pcm)
                     if stream.fallback_active:
                         break
                     await asyncio.sleep(0.02)

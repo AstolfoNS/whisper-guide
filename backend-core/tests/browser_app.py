@@ -1,5 +1,6 @@
 """Isolated browser-test server: deterministic speech doubles, no external requests."""
 
+import asyncio
 import gzip
 import io
 import json
@@ -76,6 +77,7 @@ class BrowserSpeech(ProviderSpeechServices):
                 "/mock/asr/recovery/",
                 "/mock/asr/noise/",
                 "/mock/asr/revising/",
+                "/mock/asr/ready-delay/",
             )
         )
         return FallbackSpeechStream(remote.create_stream(vad=None, turn_token=turn_token), local)
@@ -139,12 +141,15 @@ def mock_asr_frame(payload, final=False):
 @app.websocket("/mock/asr/noise/bigmodel_async")
 @app.websocket("/mock/asr/pending/bigmodel_async")
 @app.websocket("/mock/asr/recovery/bigmodel_async")
+@app.websocket("/mock/asr/ready-delay/bigmodel_async")
 @app.websocket("/mock/asr/boundary/bigmodel_async")
 @app.websocket("/mock/asr/complete/bigmodel_async")
 async def mock_asr(socket: WebSocket):
     if socket.headers.get("x-api-key") != "synthetic-browser-asr-key":
         await socket.close(code=1008)
         return
+    if "/ready-delay/" in socket.url.path:
+        await asyncio.sleep(1.25)
     await socket.accept()
     packets = 0
     try:
@@ -156,6 +161,26 @@ async def mock_asr(socket: WebSocket):
                 await socket.send_bytes(mock_asr_frame({}, final=True))
                 return
             packets += 1
+            if "/ready-delay/" in socket.url.path:
+                hypotheses = ["我将", "我将继续", "我将继续立足", "我将继续立足岗位"]
+                if packets <= 5:
+                    await socket.send_bytes(
+                        mock_asr_frame(
+                            {
+                                "result": {
+                                    "utterances": [
+                                        {
+                                            "text": hypotheses[min(packets - 1, 3)],
+                                            "start_time": 0,
+                                            "end_time": 1000,
+                                            "definite": packets == 5,
+                                        }
+                                    ]
+                                }
+                            }
+                        )
+                    )
+                continue
             if "/recovery/" in socket.url.path:
                 utterances = {
                     2: ("这段背景声音无法匹配讲稿", 0, 400),

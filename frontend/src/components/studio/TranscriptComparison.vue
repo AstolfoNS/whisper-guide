@@ -15,6 +15,7 @@ const recovery = computed(() => props.snapshot ? recoveryFeedback(props.snapshot
 const alignmentStatus = computed(() => {
   const snapshot = props.snapshot
   if (!snapshot || snapshot.state !== 'LISTENING') return ''
+  if (snapshot.stt_ready === false) return '正在连接语音识别，请稍候再朗读。'
   if (snapshot.alignment_status === 'mismatch') return `最近一次有效识别未能可靠匹配讲稿，${recovery.value || '自动提示暂缓；正在尝试自动恢复，可继续朗读更完整的一段，也可手动定位。'}`
   if (recovery.value) return recovery.value
   if (positionReliable.value) return ''
@@ -28,9 +29,9 @@ const alignmentStatus = computed(() => {
 </script>
 <template>
   <div class="transcript-comparison">
-    <section aria-label="实时语音识别"><div class="transcript-heading">实时识别 <small v-if="snapshot?.raw_transcript_is_current === false && snapshot.raw_transcript?.trim()">上次结果</small><small v-else>{{ snapshot?.raw_transcript_is_final ? 'final' : 'partial' }} · {{ snapshot?.recognition_filtered ? '已过滤' : snapshot?.raw_transcript_is_final ? '已定稿' : '修订中' }}</small></div><p>{{ snapshot?.raw_transcript || '等待语音输入' }}</p><small v-if="snapshot?.recognition_filtered" role="status" aria-live="polite">{{ snapshot.recognition_filter_reason || '缺少本段有效人声证据' }}，未用于讲稿定位{{ positionReliable ? '，静音等待继续。' : '，请参考当前讲稿匹配状态。' }}</small></section>
+    <section aria-label="实时语音识别"><div class="transcript-heading">实时识别 <small v-if="(snapshot?.raw_transcript_is_current === false || snapshot?.state !== 'LISTENING') && snapshot?.raw_transcript?.trim()">上次结果</small><small v-else>{{ snapshot?.raw_transcript_is_final ? 'final' : 'partial' }} · {{ snapshot?.recognition_filtered ? '已过滤' : snapshot?.raw_transcript_is_final ? '已定稿' : '修订中' }}</small></div><p>{{ snapshot?.raw_transcript || '等待语音输入' }}</p><small v-if="snapshot?.recognition_filtered" role="status" aria-live="polite">{{ snapshot.recognition_filter_reason || '缺少本段有效人声证据' }}，未用于讲稿定位{{ positionReliable ? '，静音等待继续。' : '，请参考当前讲稿匹配状态。' }}</small></section>
     <section aria-label="讲稿匹配">
-      <div class="transcript-heading">讲稿匹配 <small v-if="snapshot?.match_confidence != null">{{ !positionReliable ? '上次匹配 ' : '' }}{{ Math.round(snapshot.match_confidence * 100) }}%</small></div>
+      <div class="transcript-heading">讲稿匹配 <small v-if="snapshot?.match_confidence != null" title="讲稿对齐得分，不代表原始识别准确率">{{ !positionReliable ? '上次匹配 ' : '' }}{{ Math.round(snapshot.match_confidence * 100) }}%</small></div>
       <p>{{ snapshot?.aligned_transcript || '尚未确认位置' }}</p>
       <div v-if="provisional" class="provisional-match" aria-label="临时定位，待确认"><div class="transcript-heading">临时定位 <small>待确认</small></div><p>{{ provisional }}</p><small>虚线标记供跟读参考，自动提示仍使用已确认位置。</small></div>
       <small v-if="alignmentStatus" role="status" aria-live="polite">{{ alignmentStatus }}</small>
