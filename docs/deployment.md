@@ -1,4 +1,6 @@
-# 部署说明
+# 开发、构建与环境变量参考
+
+已有 Docker 的新服务器部署，统一按根目录[新服务器部署指南](../DEPLOY.md)操作。本文面向源码开发和构建机；目标服务器导入已构建镜像时不需要 uv、Node.js 或 pnpm。文档导航见[文档目录](README.md)，运行限制见[已知问题](known-issues.md)。
 
 ## 本地开发
 
@@ -120,7 +122,7 @@ docker compose logs --tail=100 backend frontend
 
 在模型配置页选择云端 STT、`volcengine-ws`、`bigmodel_async` 地址、已开通语音资源和独立语音 API Key，勾选音频云端授权；`api-key` 模式不需要 App ID。文本校准独立填方舟 Base URL、文本 API Key 和“获取模型列表”返回的实际模型 ID，模式选择 `hybrid`。分别测试、保存，再结束全部会话并激活。已有私有方案优先于环境默认值，改 `.env` 不会覆盖已激活方案。
 
-STT 为 16 kHz 单声道 PCM16，按 200 ms 分块，分句尾部静音 600 ms；语音连接、缓冲与任务仍受轮次取消和本地回退保护。普通健康状态不代表已完成云端网络探测。短静音测试若提示“空音频”，仅确认鉴权与协议可达，仍需在工作台朗读、暂停、继续及提示播放验收。本轮只完成本地模拟服务验证，尚未使用真实火山语音凭据或完成真实云端识别验收。
+STT 为 16 kHz 单声道 PCM16，按 200 ms 分块，分句尾部静音 600 ms；语音连接、缓冲与任务仍受轮次取消和本地回退保护。普通健康状态不代表已完成云端网络探测。短静音测试若提示“空音频”，仅确认鉴权与协议可达，仍需在工作台朗读、暂停、继续及提示播放验收。原生协议自动化使用本地模拟服务；后续实际配置协议及数字静音检查见[云端静音记录](cloud-silence-2026-10-24.md)，不等于真实中文准确率或目标设备长时验收。
 
 后端需要访问配置的 WSS 语音服务、HTTPS 文本接口及 edge-tts 服务；不跟随语音重定向，不能将聊天模型地址填进 STT 栏。完整协议、安全边界和受控失败说明见 [Provider 接口](speech-provider-interface.md#原生-websocket-流式-asr)。
 
@@ -134,6 +136,6 @@ docker compose exec -T backend /app/backend-core/.venv/bin/python -c "import asy
 
 ## 离线发布与容量
 
-在 Docker daemon 可用的构建机执行 `./deploy/package.sh`。它将后端与前端合并保存为一个 gzip 镜像包，外层使用 tar；生成外层归档后移除内部大镜像副本。构建上下文排除文档、测试、凭据、SQLite、node_modules、.venv、dist、测试音频和归档；应用的 `app/models/` 仍作为 Python 源码保留。开发依赖只用于构建或本地检查，不进入后端运行环境。目标部署及备份见 [DEPLOY.md](../DEPLOY.md)。
+在 Docker daemon 可用的构建机执行 `./deploy/package.sh`。它将后端与前端合并保存为一个 gzip 镜像包，外层使用 tar；生成外层归档后移除内部大镜像副本。构建上下文排除文档、测试、凭据、SQLite、node_modules、.venv、dist、测试音频和归档；应用的 `app/models/` 仍作为 Python 源码保留。开发依赖只用于构建或本地检查，不进入后端运行环境。目标服务器的导出传输、权限、SSH 隧道、初始化、健康检查、备份迁移和回滚均见[新服务器部署指南](../DEPLOY.md)。脚本最终交付物为根目录 `whisper-guide-release.tar`，构建机 `release/` 内的大 gzip 在外层打包后已被删除，不可直接复制该目录当完整发布包。已有验证镜像时可按指南直接导出交付目录，避免再次联网构建及生成第二份大型归档。
 
 当前无用户认证与讲稿权限隔离，Compose 默认只绑定 localhost。远程使用需可信网络、HTTPS、认证和访问控制；不要仅修改端口暴露配置接口。

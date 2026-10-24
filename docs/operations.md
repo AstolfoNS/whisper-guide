@@ -1,5 +1,7 @@
 # 运维手册
 
+首次部署与新服务器迁移的完整步骤见根目录[新服务器部署指南](../DEPLOY.md)。本文用于已部署服务的检查、故障定位及恢复；各日期的验收记录属于当时证据，当前限制以[已知问题](known-issues.md)为准。
+
 ## 日常与更新
 
 ```bash
@@ -11,24 +13,27 @@ docker compose logs --tail=100 backend frontend
 
 顶栏诊断区分后端能力、WebSocket、麦克风和最近播放结果。`tts=ready` 仅表明依赖可用；真实合成或浏览器播放失败需单独处理。常规轮询不调用付费模型、不录音、不自动试听。
 
-保留数据目录后更新：
+从完整源码重新构建时，保留数据目录后更新：
 
 ```bash
 docker compose build && docker compose up -d --force-recreate --wait --wait-timeout 180
 ```
 
+离线交付目录不含 Dockerfile 和业务源码，更新使用 `docker load` 后执行 `docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180`；不要在目标交付目录执行 build。完整更新与按实际在用镜像 ID 设置回滚标签见[部署指南第 7 节](../DEPLOY.md#7-日常停止升级与回滚)。
+
 更新前备份讲稿与私有配置。容器重启丢失实时会话，讲稿和已激活模型配置仍从挂载加载。不要删除 `data/sqlite` 或 `data/backups`。
 
 ## 讲稿备份与恢复
 
-在项目根目录执行：
+在含 `docker-compose.yml` 和 `scripts/backup.py` 的部署目录执行；使用容器内 Python，不要求宿主安装 Python，也避免普通用户无法写 UID 10001 目录：
 
 ```bash
-python3 scripts/backup.py data/sqlite/whisper-guide.db \
-  data/backups/whisper-guide-$(date +%Y%m%d-%H%M%S).db
+BACKUP_NAME="whisper-guide-$(date +%Y%m%d-%H%M%S).db"
+docker compose exec -T backend /app/backend-core/.venv/bin/python - \
+  /data/whisper-guide.db "/backups/$BACKUP_NAME" < scripts/backup.py
 ```
 
-脚本使用 SQLite backup API 和 quick_check，不覆盖同名目标。目标目录必须对执行用户可写，容器 UID 为 10001。数据库备份不含录音，也不含下述模型方案。
+脚本使用 SQLite backup API 和 quick_check，不覆盖同名目标；输出在宿主 `data/backups`。数据库备份不含录音，也不含下述模型方案。完整迁移以[部署指南第 8 节](../DEPLOY.md#8-备份与迁移已有数据)为准，停止服务后复制整个目录，包含隐藏文件与可能的 SQLite 附属文件。
 
 恢复前停止 backend、保留当前数据库副本，验证备份 quick_check，再替换 `whisper-guide.db`。不要在 SQLite 仍有写入连接时覆盖文件；恢复后检查 `/api/scripts`、`/api/health` 和语音状态，重新准备演讲。
 
@@ -53,7 +58,8 @@ curl -fsS http://localhost:8080/api/sessions/recoverable
 只列出无连接且未终止的会话元数据：`session_id`、`script_name`、`state`、`config_name`，不返回正文或识别文本。明确放弃某会话时指定 ID：
 
 ```bash
-curl -fsS -X POST http://localhost:8080/api/sessions/<session-id>/terminate
+SESSION_ID=replace-with-session-id  # 替换为待结束的实际 ID
+curl -fsS -X POST "http://localhost:8080/api/sessions/$SESSION_ID/terminate"
 ```
 
 已被其他页面连接的会话返回 `409 SESSION_CONNECTED`，需在所属工作台结束；不存在返回 404。接口不会自动结束在线会话。所有未终止状态（包括 READY 与 PAUSED）都会使模型激活返回 `409 SESSION_ACTIVE`；恢复后继续或明确结束即可解除。
@@ -64,7 +70,9 @@ curl -fsS -X POST http://localhost:8080/api/sessions/<session-id>/terminate
 
 音频处理结束且队列清空时会立即检查截止时间，50 ms 周期检查仍保留。排队的人声优先处理；旧轮次或已失去 WebSocket 归属的处理结果不能触发新轮提示。连续静音帧属于正常采集；超过 5 秒收不到帧属于麦克风断流，会暂停而不是自动播报。不能通过停止采集来模拟正常静音。
 
-如果等待后仍不播报，先看顶栏麦克风、连接与播放状态，再看“状态机与流转诊断”的触发原因：
+如果等待后仍不播报，先看顶栏麦克风、连接与播放状态，再看“状态机与流转诊断”的触发原因。另有已复现但未修复的 VAD 待确认/过滤结算缺陷：即使没有真正对齐失败，也可能显示上次 100% 和“未能可靠匹配”，见[已知问题](known-issues.md)。不要仅根据这句提示判断是云端 Key 或抗噪问题。
+
+常规排查：
 
 - 未允许麦克风、切换页面或设备断流：恢复连接/设备后点击“继续演讲”。
 - 定位不可靠：继续朗读可匹配的讲稿，或手动定位恢复可靠起点；自动提示不会使用不可靠游标。
@@ -161,7 +169,7 @@ docker compose up -d --wait --wait-timeout 180
 
 传输每 200 ms 发送 16 kHz 单声道 PCM16，音频缓冲最多 1 秒、结果最多 32 项、WebSocket 传输最多 4 个活跃线程。暂停/终止会取消连接和丢弃迟到结果，服务不会持久化录音。公网必须 WSS，禁止 URL 凭据/查询/片段及重定向。语音服务数据保留政策由服务商决定，应用的“不录音落盘”不等于云端不处理数据。
 
-本轮只用本地 WebSocket 模拟服务完成自动化验证，尚无真实 ASR Key、真实语音网络调用或真实中文准确率验收。补齐凭据后应验证正常朗读、回读、填充词、网络回退与提示音，分别记录实际结果。
+原生协议自动化使用本地 WebSocket 模拟服务；后续实际配置协议与数字静音网络检查见[云端静音记录](cloud-silence-2026-10-24.md)，仍不代表真实中文准确率或目标设备验收。补齐凭据后应验证正常朗读、回读、填充词、网络回退与提示音，分别记录实际结果。
 
 ## 从接口选择模型
 

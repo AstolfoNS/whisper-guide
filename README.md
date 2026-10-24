@@ -2,6 +2,18 @@
 
 实时讲稿追踪与语音提示工作台。第一版需求基线为 [AC-01 至 AC-27](docs/requirements-v1.md)。
 
+## 文档入口
+
+| 需求 | 文档 |
+|---|---|
+| 部署到已有 Docker 的新服务器、离线包传输、远程访问 | [新服务器部署手册](DEPLOY.md) |
+| 本地开发、模型准备、镜像构建、环境变量参考 | [开发与构建说明](docs/deployment.md) |
+| 更新、讲稿和模型配置备份、恢复与故障排查 | [运维手册](docs/operations.md) |
+| 当前功能限制及未修复问题 | [已知问题](docs/known-issues.md) |
+| 查阅规范、架构和带日期的验收证据 | [文档索引](docs/README.md) |
+
+新服务器优先使用离线发布包：模型与生产依赖已在镜像内，不需要安装 uv、Node.js 或 pnpm。默认通过 SSH 隧道访问服务器上的 localhost 服务；完整命令和联网要求见部署手册。
+
 ## 页面与使用
 
 前端使用 Vue 3、TypeScript、Naive UI、Vue Router 和 Pinia，分为三个视图：
@@ -30,7 +42,7 @@
                               可选 LLMSemanticRefiner（OpenAI 兼容文本接口）
 ```
 
-- ASR 结果先通过有界分段声学证据检查；缺少对应人声的原始结果标为“已过滤”，不改变可靠位置或静音计时。该检查不能代替完整降噪。
+- ASR 结果先通过有界分段声学证据检查；缺少对应人声的原始结果标为“已过滤”，不送入讲稿对齐器。该检查不能代替完整降噪；VAD 已触发待确认、后续结果又被过滤时，目前存在可靠标记未恢复、自动提示持续暂缓的已知路径，见[已知问题](docs/known-issues.md#噪声被过滤后自动提示仍暂缓)。
 - 同一分段 partial 覆盖显示，final 才正常提交位置；静音截止前结算未定稿文本，同段后续修订仍可重新对齐，填充词不触发失配。定位不可靠时明确显示自动提示暂缓的原因。
 - `ScriptAligner` 结合字面、拼音/近音、游标邻近与上下文，保持英文单词及数字边界；按候选范围判断连续阅读，避免长句句末被误罚为远跳。
 - STT 默认本地 `sherpa-onnx`；云端可选 HTTP JSON 网关或通用 WebSocket 传输配合火山流式 ASR 协议适配器。云端 STT 与文本 LLM 独立配置，厂商预设仅帮助填表；它们不能直接指定游标偏移。
@@ -104,7 +116,7 @@ pnpm dev
 
 语义校准独立选择 `hybrid`，Base URL 填 `https://ark.cn-beijing.volces.com/api/v3`，通过“获取模型列表”选择账号实际可用的 Seed 模型，填写**方舟文本 API Key**。分别测试两个接口，通过后保存、结束已有会话并激活。语音超时独立于 LLM，默认 `5000 ms`，范围 `200–30000 ms`；二次识别 `enable_nonstream` 仅用于 `bigmodel_async`。
 
-语音测试只发送内存短静音，等待最终协议响应；若返回已知空音频码 `45000002`，仅说明鉴权与协议可达，仍需在工作台真实朗读。本轮使用本地 WebSocket 模拟服务验证，未提供真实 ASR 凭据，尚未完成真实火山语音识别验收。
+语音测试只发送内存短静音，等待最终协议响应；若返回已知空音频码 `45000002`，仅说明鉴权与协议可达，仍需在工作台真实朗读。原生协议自动化使用本地 WebSocket 模拟服务；后续实际配置的协议和数字静音检查见[云端静音检查记录](docs/cloud-silence-2026-10-24.md)。上述结果均不能替代真实中文准确率及目标麦克风的长时验收。
 
 完整接口见 [Provider 与模型方案协议](docs/speech-provider-interface.md)。模型方案与生效快照原子保存于 `WHISPER_GUIDE_DATA_DIR/.model-configs.json`，权限 `0600`。旧 `.model-settings.json` 自动迁移为“现有配置”；新仓储存在后，以其生效快照为准。两种文件都含后端凭据，不能进入 Git、日志或发布包。浏览器不持久化密钥。
 
@@ -148,7 +160,9 @@ pnpm test:e2e
 - [部署](docs/deployment.md)
 - [运维与恢复](docs/operations.md)
 - [模型、依赖与 Docker 瘦身记录](docs/storage-slim-2026-10-24.md)
-- [离线部署](DEPLOY.md)
+- [新服务器部署与迁移](DEPLOY.md)
+- [已知问题与验收边界](docs/known-issues.md)
+- [全部文档索引](docs/README.md)
 
 当前没有用户认证和讲稿权限隔离，默认监听 localhost；公开配置接口前需设置 HTTPS、认证和访问控制。
 
