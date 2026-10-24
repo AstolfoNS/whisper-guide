@@ -33,11 +33,11 @@ class BrowserStream:
 
     def is_speech(self, pcm):
         if self.acoustic_vad:
-            # Only the pending-hypothesis browser scenario uses real PCM energy;
-            # all other deterministic doubles retain their existing behavior.
+            # Selected speech scenarios explicitly label their finite synthetic
+            # tones as voice. Zero PCM still remains unvoiced after each burst.
             samples = array("h", pcm)
             return (
-                bool(samples) and sum(value * value for value in samples) >= len(samples) * 500**2
+                bool(samples) and sum(value * value for value in samples) >= len(samples) * 128**2
             )
         return not self.silent and self.frames < 8
 
@@ -69,7 +69,15 @@ class BrowserSpeech(ProviderSpeechServices):
         remote = self.registry.provider(provider_name or self.provider_name)
         if remote is None or not remote.configured:
             return local
-        local.acoustic_vad = "/mock/asr/pending/" in remote.config.endpoint
+        local.acoustic_vad = any(
+            marker in remote.config.endpoint
+            for marker in (
+                "/mock/asr/pending/",
+                "/mock/asr/recovery/",
+                "/mock/asr/noise/",
+                "/mock/asr/revising/",
+            )
+        )
         return FallbackSpeechStream(remote.create_stream(vad=None, turn_token=turn_token), local)
 
     async def synthesize(self, text):
@@ -130,6 +138,7 @@ def mock_asr_frame(payload, final=False):
 @app.websocket("/mock/asr/revising/bigmodel_async")
 @app.websocket("/mock/asr/noise/bigmodel_async")
 @app.websocket("/mock/asr/pending/bigmodel_async")
+@app.websocket("/mock/asr/recovery/bigmodel_async")
 @app.websocket("/mock/asr/boundary/bigmodel_async")
 @app.websocket("/mock/asr/complete/bigmodel_async")
 async def mock_asr(socket: WebSocket):
@@ -147,6 +156,31 @@ async def mock_asr(socket: WebSocket):
                 await socket.send_bytes(mock_asr_frame({}, final=True))
                 return
             packets += 1
+            if "/recovery/" in socket.url.path:
+                utterances = {
+                    2: ("这段背景声音无法匹配讲稿", 0, 400),
+                    5: ("我们继续介绍实时讲稿定位的工作流程", 600, 1000),
+                    8: ("系统需要根据后续正文恢复可靠位置", 1200, 1600),
+                }
+                if packets in utterances:
+                    text, start_ms, end_ms = utterances[packets]
+                    await socket.send_bytes(
+                        mock_asr_frame(
+                            {
+                                "result": {
+                                    "utterances": [
+                                        {
+                                            "text": text,
+                                            "start_time": start_ms,
+                                            "end_time": end_ms,
+                                            "definite": True,
+                                        }
+                                    ]
+                                }
+                            }
+                        )
+                    )
+                continue
             if "/pending/" in socket.url.path:
                 if packets <= 2:
                     await socket.send_bytes(

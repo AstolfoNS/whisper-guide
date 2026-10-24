@@ -77,7 +77,7 @@ class RecognitionUpdate:
 {"matched_quote":"讲稿窗口内的连续原文","confidence":0.92}
 ```
 
-返回必须是窗口中的连续原文，置信度有效，且任务仍属于当前会话轮次；随后由本地对齐器确认位置。`off` 不调用；`fallback` 用于本地低置信度；`hybrid` 在有效句末异步校准。超时默认 1500 ms，错误或无效输出静默保留本地结果。
+返回需为窗口连续原文、至少6完整单位且有转写字面/拼音依据。失锁可由全文trigram召回最多4段原文、合计4096字符。任务绑定generation、流epoch与结算版本；partial不取消，最多追赶4条后续证据并在副本验证，再由领域确认。`off` 不调用；`fallback` 用于本地低置信度；`hybrid` 在有效句末异步校准。超时默认 1500 ms，错误或无效输出静默保留本地结果。
 
 内置预设为 `custom`、`deepseek`、`qwen`、`doubao`、`openai`、`ollama`。预设只填充推荐 URL 和示例模型名，用户可自由改写模型名与地址；它们不证明真实账号、配额或模型访问权限已经可用。
 
@@ -89,11 +89,17 @@ class RecognitionUpdate:
 
 声学过滤不提交该条文本，也不保证当前声音是噪声。没有有效转写/可结算候选时继续 pending；不能以过滤或等待到期强制恢复可靠性。详细行为与验证边界见[状态修复记录](alignment-state-2026-10-24.md)。
 
+## 实时临时位置与自动恢复
+
+快照新增可选provisional_position（整数或null）、provisional_transcript、provisional_confidence、recovery_status（idle/searching/ambiguous/confirming）、recovery_attempts。临时位置来自稳定partial，仅供高亮，不改变reading/prompt游标或放行播报。字段不增加主状态，旧快照兼容。
+
+失锁后全文检索强字面/拼音锚点，附近唯一正文可恢复；远跳需两份独立连续且各至少6单位的证据。同段修订、重复文字及LLM纠错不重复计数。重复句等后文，确认后恢复原静音提示资格。
+
 ## 识别过滤诊断
 
 会话快照新增 `recognition_filtered`、`recognition_filter_reason`、`recognition_filtered_count`。无声学支持的文本仍可在 `raw_transcript` 展示并保留自己的 `raw_transcript_is_final`，该过滤分支本身不改变已接受假设、游标、可靠性、静音时钟或 LLM 任务；此前 VAD 已使位置待确认的情况仍须单独处理。计数及单条过滤文本仅存于本轮有界内存，换轮清零，不写日志/SQLite。前端应将“已过滤”与“无法匹配讲稿”分开；过滤噪声不能自动恢复原已不可靠的位置。
 
-完整规则、噪声能力边界与回归见[无声识别门控记录](noise-guard-2026-10-24.md)。
+连续600ms平稳VAD阴性底噪会收紧纯能量兜底，Runtime可撤回失去支持的partial、临时锚点和相关模型历史。同段迟到final保留原声学锚点，但不能将授权迁到后续静音。详见[自动恢复记录](auto-recovery-2026-10-25.md)，历史门控见[原记录](noise-guard-2026-10-24.md)。
 
 ## 多方案管理 API
 

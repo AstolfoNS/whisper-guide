@@ -111,3 +111,22 @@ it('clears confirmed mismatch feedback after recovery and does not revive it dur
   expect(wrapper.get('[aria-label="讲稿匹配"]').text()).toContain('上次匹配 100%')
   expect(wrapper.get('[aria-label="实时语音识别"] .transcript-heading small').text()).toBe('上次结果')
 })
+
+it('shows recovery progress without repeating a stale failure or promising successful relocation', async () => {
+  const { wrapper, session } = await studio(snapshot({
+    alignment_status: 'mismatch', recovery_status: 'searching', recovery_attempts: 1,
+    raw_transcript: '正在继续读', raw_transcript_is_final: true,
+    message: '继续朗读一小段讲稿将自动重新定位。',
+  }))
+  expect(wrapper.get('[role="alert"]').text()).toContain('正在尝试自动恢复')
+  expect(wrapper.get('[role="alert"]').text()).not.toContain('将自动重新定位')
+  session.snapshot = { ...session.snapshot!, recovery_status: 'ambiguous' }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.get('[role="alert"]').text()).toContain('多处相似内容')
+  session.snapshot = { ...session.snapshot!, recovery_status: 'confirming' }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.get('[role="alert"]').text()).toContain('等待后续朗读确认')
+  session.snapshot = { ...session.snapshot!, recovery_status: 'idle', reliable: true, alignment_status: 'reliable' }
+  await wrapper.vm.$nextTick()
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+})

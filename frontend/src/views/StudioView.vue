@@ -6,6 +6,7 @@ import ScriptLibraryPanel from '../components/scripts/ScriptLibraryPanel.vue'
 import TeleprompterView from '../components/studio/TeleprompterView.vue'
 import SessionControls from '../components/studio/SessionControls.vue'
 import TranscriptComparison from '../components/studio/TranscriptComparison.vue'
+import { recoveryFeedback } from '../components/studio/alignmentFeedback'
 import StateMachineMonitor from '../components/studio/StateMachineMonitor.vue'
 import { useSessionStore } from '../stores/session'
 import { useScriptsStore } from '../stores/scripts'
@@ -26,9 +27,11 @@ const sessionFeedback = computed(() => {
   if (snapshot.state === 'PAUSED' && snapshot.transition_trigger !== 'user_paused') {
     return snapshot.pause_reason || snapshot.message || session.notice
   }
+  const recovery = recoveryFeedback(snapshot)
+  if (recovery) return recovery
   if (snapshot.state === 'LISTENING' && snapshot.alignment_status) {
     if (snapshot.alignment_status !== 'mismatch') return ''
-    return snapshot.message || session.notice || '最近一次有效识别未能可靠匹配讲稿，自动提示暂缓；请继续朗读或手动定位。'
+    return snapshot.message || session.notice || '最近一次有效识别未能可靠匹配讲稿，自动提示暂缓；正在尝试自动恢复，可继续朗读更完整的一段，也可手动定位。'
   }
   if (snapshot.state === 'LISTENING' && !snapshot.reliable && !snapshot.speaking && snapshot.last_transcript?.trim()) {
     const recovered = recoveredFeedback.value
