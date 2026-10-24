@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from app.domain.tracking import ScriptAligner, ScriptTracker
+from app.domain.tracking import MatchResult, ScriptAligner, ScriptTracker, content_units
 
 
 class SessionState(StrEnum):
@@ -120,10 +120,22 @@ class SpeechSession:
         self.aligned_transcript = ""
         self.match_confidence: float | None = None
         self._location_warning_reported = False
+        self.provisional_position: int | None = None
+        self.provisional_transcript = ""
+        self.provisional_confidence: float | None = None
+        self.recovery_status = "idle"
+        self.recovery_attempts = 0
+        self._recovery_candidates: tuple[MatchResult, ...] = ()
+        self._recovery_evidence_id: Any = None
+        self._alignment_evidence_ids: tuple[Any, ...] = ()
 
     def _transition(self, state: SessionState, trigger: str, timestamp: int | None) -> None:
         if state == self.state:
             return
+        self.clear_provisional()
+        if state != SessionState.LISTENING:
+            self._recovery_candidates = ()
+            self._recovery_evidence_id = None
         previous = self.state
         self.previous_state = previous
         self.state = state
@@ -154,6 +166,11 @@ class SpeechSession:
             "allowed_transitions": self.allowed_transitions(),
             "silence_timeout_ms": self.options.silence_timeout_ms,
             "reading_position": self.reading_position,
+            "provisional_position": self.provisional_position,
+            "provisional_transcript": self.provisional_transcript,
+            "provisional_confidence": self.provisional_confidence,
+            "recovery_status": self.recovery_status,
+            "recovery_attempts": self.recovery_attempts,
             "prompt_position": self.prompt_position,
             "reliable": self.reliable,
             "alignment_status": (
@@ -176,6 +193,123 @@ class SpeechSession:
             "at_end": self.prompt_position >= len(self.tracker.text),
         }
 
+    def clear_provisional(self) -> None:
+        self.provisional_position = None
+        self.provisional_transcript = ""
+        self.provisional_confidence = None
+
+    def retract_evidence(self, evidence_id: Any) -> None:
+        """Withdraw tentative anchors when their segment is revised or filtered."""
+        self.clear_provisional()
+        if evidence_id in self._alignment_evidence_ids:
+            # Keep the old offset for reference, but neither fillers nor timers
+            # may authorize a prompt from a withdrawn acoustic/transcript proof.
+            self.reliable = self._last_reliable = False
+            self.match_confidence = None
+            self._alignment_evidence_ids = ()
+            if not self._location_warning_reported:
+                self._feedback("本段声音证据已失效，正在尝试自动重新定位；请继续朗读正文。")
+                self._location_warning_reported = True
+            self.reset_recovery_evidence()
+        elif evidence_id == self._recovery_evidence_id:
+            self.reset_recovery_evidence()
+
+    def mark_alignment_pending(self) -> None:
+        """An older alignment verdict does not settle a newer voice activity."""
+        self.reliable = False
+
+    def reset_recovery_evidence(self) -> None:
+        """A rebuilt stream cannot provide the second half of an old recovery chain."""
+        self._recovery_candidates = ()
+        self._recovery_evidence_id = None
+        self.recovery_status = "searching" if self._location_warning_reported else "idle"
+
+    def preview_transcript(self, text: str) -> None:
+        """Show stable hypotheses without authorizing a prompt or moving either cursor."""
+        self.clear_provisional()
+        if self.state != SessionState.LISTENING or len(content_units(text)) < 3:
+            return
+        if self._location_warning_reported:
+            candidates = self.aligner.recovery_candidates(text, min_units=3)
+            result = candidates[0] if len(candidates) == 1 else None
+        else:
+            result = self.aligner.align(text, self.reading_position)
+        if result is not None:
+            self.provisional_position = result.position
+            self.provisional_transcript = result.matched_text
+            self.provisional_confidence = result.confidence
+
+    @staticmethod
+    def _candidate_start(result: MatchResult) -> int:
+        return result.unit_index - len(content_units(result.matched_text)) + 1
+
+    def _nearby(self, result: MatchResult) -> bool:
+        anchor = (
+            0
+            if self.reading_position is None
+            else self.tracker.unit_index_at(self.reading_position)
+        )
+        start = self._candidate_start(result)
+        return start - 40 <= anchor <= result.unit_index + 24
+
+    def _recover_position(self, text: str, evidence_id: Any) -> MatchResult | None:
+        candidates = self.aligner.recovery_candidates(text, min_units=3)
+        # A near fuzzy correction still needs independent original-text support and
+        # global uniqueness. It cannot bypass the repeated-phrase recovery guard.
+        if not candidates:
+            local = self.aligner.align(text, self.reading_position)
+            if local and self.aligner.supports_refinement(text, local.matched_text):
+                candidates = self.aligner.recovery_candidates(local.matched_text, min_units=3)
+        self.recovery_attempts += 1
+        if not candidates:
+            self.recovery_status = "searching"
+            self._recovery_candidates = ()
+            self._recovery_evidence_id = evidence_id
+            return None
+        if len(candidates) == 1 and self._nearby(candidates[0]):
+            return candidates[0]
+        # Outside the neighborhood, require two independent, advancing pieces of
+        # evidence. A partial/final revision or an LLM quote is still the same piece.
+        continuous = [
+            current
+            for current in candidates
+            if len(content_units(current.matched_text)) >= 6
+            and any(
+                len(content_units(previous.matched_text)) >= 6
+                and self._candidate_start(current) >= self._candidate_start(previous)
+                and current.unit_index > previous.unit_index
+                and -8 <= self._candidate_start(current) - previous.unit_index <= 24
+                for previous in self._recovery_candidates
+            )
+        ]
+        if (
+            evidence_id != self._recovery_evidence_id
+            and len(candidates) < 33
+            and len(self._recovery_candidates) < 33
+            and len(continuous) == 1
+        ):
+            return continuous[0]
+        self.recovery_status = "ambiguous" if len(candidates) > 1 else "confirming"
+        self._recovery_candidates = candidates
+        self._recovery_evidence_id = evidence_id
+        return None
+
+    def _commit_alignment(self, result: MatchResult, evidence_id: Any) -> None:
+        dependencies = (evidence_id,)
+        if not self._nearby(result) and self._recovery_evidence_id is not None:
+            dependencies = (self._recovery_evidence_id, evidence_id)
+        self._alignment_evidence_ids = dependencies
+        self.reading_position = result.position
+        self.prompt_position = self.tracker.prompt_position_after_reading(result.position)
+        self.reliable = self._last_reliable = True
+        self.match_confidence = result.confidence
+        self.aligned_transcript = result.matched_text
+        self._location_warning_reported = False
+        self.recovery_status = "idle"
+        self._recovery_candidates = ()
+        self._recovery_evidence_id = None
+        self.message = None
+
     def _feedback(self, message: str) -> None:
         self.message = message
         self.feedback_id += 1
@@ -187,6 +321,10 @@ class SpeechSession:
         self.speaking = False
         self.silence_since_ms = now_ms
         self.pause_reason = None
+        self.clear_provisional()
+        self._recovery_candidates = ()
+        self._recovery_evidence_id = None
+        self.recovery_status = "searching" if self._location_warning_reported else "idle"
 
     def _prompt(self, now_ms: int, trigger: str = "silence_threshold_reached") -> None:
         segment = self.tracker.segment(self.prompt_position)
@@ -290,27 +428,27 @@ class SpeechSession:
                 if compact.casefold() in FILLER_UTTERANCES:
                     self.reliable = self._last_reliable
                     return self.snapshot()
-                result = self.aligner.align(text, self.reading_position)
-                if result is None and self.prompt_position != self.reading_position:
+                self.clear_provisional()
+                if payload.get("recovery") and not self.aligner.supports_refinement(
+                    self.raw_transcript, text
+                ):
+                    return self.snapshot()
+                lost = self._location_warning_reported
+                result = None if lost else self.aligner.align(text, self.reading_position)
+                if not lost and result is None and self.prompt_position != self.reading_position:
                     result = self.aligner.align(text, self.prompt_position)
-                if result:
-                    self.reading_position = result.position
-                    self.prompt_position = self.tracker.prompt_position_after_reading(
-                        result.position
-                    )
-                    self.reliable = True
-                    self._last_reliable = True
-                    self.match_confidence = result.confidence
-                    self.aligned_transcript = result.matched_text
-                    self._location_warning_reported = False
+                if result is None:
+                    result = self._recover_position(text, payload.get("evidence_id", now_ms))
+                if result is not None:
+                    self._commit_alignment(result, payload.get("evidence_id", now_ms))
                 elif text.strip():
                     if not self._location_warning_reported:
                         self._feedback(
-                            "暂时无法可靠定位讲稿，自动提示已暂停；可手动提示或重新定位。"
+                            "暂时无法可靠定位讲稿，正在尝试自动重新定位；"
+                            "请继续朗读正文，也可手动提示或重新定位。"
                         )
                         self._location_warning_reported = True
-                    self.reliable = False
-                    self._last_reliable = False
+                    self.reliable = self._last_reliable = False
                     self.match_confidence = None
         elif event == "tick":
             if (
@@ -334,6 +472,12 @@ class SpeechSession:
             except ValueError as error:
                 raise SessionError(str(error)) from error
             self.reading_position = self.prompt_position
+            self._alignment_evidence_ids = ()
+            self.clear_provisional()
+            self.recovery_status = "idle"
+            self.recovery_attempts = 0
+            self._recovery_candidates = ()
+            self._recovery_evidence_id = None
             self.reliable = True
             self._last_reliable = True
             self._location_warning_reported = False

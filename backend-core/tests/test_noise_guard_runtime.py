@@ -400,3 +400,59 @@ def test_empty_endpoint_preserves_filter_notice_until_supported_text_arrives(mon
         runtime.release_stream()
 
     asyncio.run(scenario())
+
+
+def test_stationary_energy_noise_is_filtered_then_quiet_voice_resumes_tracking(monkeypatch):
+    async def scenario():
+        runtime, speech, clock = await listening(monkeypatch)
+        for index in range(50):
+            update = (
+                RecognitionUpdate(
+                    "unrelated background recognition",
+                    is_final=True,
+                    segment_id=0,
+                    start_ms=0,
+                    end_ms=1000,
+                )
+                if index == 49
+                else None
+            )
+            await frame(
+                runtime, speech, clock, 1000 + 20 * index, ac_pcm(20, amplitude=3000), update
+            )
+        assert runtime.snapshot()["recognition_filtered"]
+        assert runtime.session.reliable
+        assert runtime.session.reading_position is None
+        assert runtime.session.silence_since_ms == 1000
+        # A learned high floor must never impose that threshold on quiet VAD voice.
+        for index in range(3):
+            update = (
+                RecognitionUpdate(
+                    runtime.session.tracker.text[:6],
+                    is_final=True,
+                    segment_id=1,
+                    start_ms=1000,
+                    end_ms=1060,
+                )
+                if index == 2
+                else None
+            )
+            await frame(
+                runtime,
+                speech,
+                clock,
+                2020 + 20 * index,
+                ac_pcm(20, amplitude=16),
+                update,
+                vad=True,
+            )
+        assert runtime.session.reliable
+        assert runtime.session.reading_position is not None
+        assert not runtime.snapshot()["recognition_filtered"]
+        await frame(runtime, speech, clock, 2310, silence(250))
+        await runtime.tick(3060)
+        assert runtime.session.state.value == "PROMPTING"
+        runtime.cancel_prompt()
+        runtime.release_stream()
+
+    asyncio.run(scenario())

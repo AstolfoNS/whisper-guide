@@ -222,3 +222,100 @@ def test_incomplete_timestamp_cannot_extend_a_new_segment_over_old_voice(partial
     assert not evidence.allows(1, *partial_times, is_final=True)
     feed(evidence, 100)
     assert evidence.allows(1, *partial_times, is_final=True)
+
+
+@pytest.mark.parametrize("amplitude", [64, 300, 3000])
+def test_sustained_stationary_vad_negative_noise_cannot_authorize_transcripts(amplitude):
+    evidence = AudioEvidence()
+    assert not any(feed(evidence, 1000, amplitude=amplitude, vad=False))
+    assert not evidence.pending_voice
+    # Learning must also remove the initial energy-only onset from this interval.
+    assert not evidence.allows(0, 0, 1000, is_final=True)
+    assert not evidence.allows(1, is_final=True)
+
+
+def test_stationary_noise_revokes_an_early_energy_only_partial_latch():
+    evidence = AudioEvidence()
+    feed(evidence, 80, amplitude=300, vad=False)
+    assert evidence.allows(0, 0, 80)
+    assert evidence.is_supported(0)
+    assert not evidence.is_supported(False)
+    feed(evidence, 920, amplitude=300, vad=False)
+    assert not evidence.is_supported(0)
+    assert not evidence.allows(0, 0, 1000, is_final=True)
+    assert not evidence.allows(0, is_final=True)
+
+
+def test_quiet_confirmed_voice_survives_a_high_learned_noise_floor():
+    evidence = AudioEvidence()
+    feed(evidence, 1000, amplitude=3000, vad=False)
+    assert feed(evidence, 60, amplitude=16) == [False, False, True]
+    assert evidence.allows(0, 1000, 1060, is_final=True)
+
+
+def test_vad_missed_voice_above_learned_noise_still_has_energy_support():
+    evidence = AudioEvidence()
+    feed(evidence, 1000, amplitude=100, vad=False)
+    feed(evidence, 80, amplitude=200, vad=False)
+    assert evidence.allows(0, 1000, 1080)
+
+
+def test_quiet_vad_missed_voice_recovers_after_noise_stops():
+    evidence = AudioEvidence()
+    feed(evidence, 1000, amplitude=3000, vad=False)
+    feed(evidence, 600, amplitude=0, vad=False)
+    assert not any(feed(evidence, 80, amplitude=64, vad=False))
+    assert evidence.allows(0, 1600, 1680, is_final=True)
+
+
+def test_varying_vad_missed_energy_is_not_learned_as_stationary_noise():
+    evidence = AudioEvidence()
+    for amplitude in [80, 300, 100, 400, 80, 300, 100, 400]:
+        feed(evidence, 100, amplitude=amplitude, vad=False)
+    assert evidence.allows(0, 0, 800)
+
+
+def test_later_noise_learning_does_not_revoke_prior_vad_voice_final():
+    evidence = AudioEvidence()
+    feed(evidence, 80, amplitude=16)
+    assert evidence.allows(0, 0, 80)
+    feed(evidence, 1000, amplitude=3000, vad=False)
+    assert evidence.allows(0, 0, 1080, is_final=True)
+    assert not evidence.allows(1, 80, 1080)
+
+
+def test_same_segment_cannot_move_its_acoustic_anchor_into_later_silence():
+    evidence = AudioEvidence()
+    feed(evidence, 100)
+    assert evidence.allows(0, 0, 100)
+    feed(evidence, 800, amplitude=0, vad=False)
+    assert not evidence.allows(0, 100, 900, is_final=True)
+    assert not evidence.allows(0, start_ms=100, is_final=True)
+    # A normal endpoint tail or omitted timing still belongs to the first voice.
+    assert evidence.allows(0, 0, 900, is_final=True)
+    assert evidence.allows(0, is_final=True)
+
+
+def test_same_segment_can_revise_its_anchor_to_new_supported_voice():
+    evidence = AudioEvidence()
+    feed(evidence, 100)
+    assert evidence.allows(0, 0, 100)
+    feed(evidence, 800, amplitude=0, vad=False)
+    feed(evidence, 100)
+    assert evidence.allows(0, 900, 1000, is_final=True)
+
+
+@pytest.mark.parametrize("times", [(-1, 100), (100, 0), (100, 100), (True, 100)])
+def test_latched_segment_does_not_bypass_invalid_interval_validation(times):
+    evidence = AudioEvidence()
+    feed(evidence, 100)
+    assert evidence.allows(0, 0, 100)
+    assert not evidence.allows(0, *times, is_final=True)
+
+
+def test_noise_estimation_keeps_bounded_scalar_history():
+    evidence = AudioEvidence()
+    feed(evidence, 32000, amplitude=300, vad=False)
+    assert len(evidence._features) <= 1500
+    assert len(evidence._noise_features) <= 100
+    assert not evidence.allows(0)

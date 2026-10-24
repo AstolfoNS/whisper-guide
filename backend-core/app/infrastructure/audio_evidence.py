@@ -2,7 +2,8 @@
 
 This is an evidence check, not a denoiser or a replacement for VAD/ASR. Quiet
 VAD-positive voice is retained, and VAD-missed voice may authorize a transcript
-through sustained AC energy. Only confirmed VAD starts the speech clock itself.
+through sustained AC energy above a learned stationary noise floor. Only confirmed
+VAD starts the speech clock itself.
 """
 
 from __future__ import annotations
@@ -26,6 +27,10 @@ _VAD_CONFIRM_MS = 60.0
 _WEAK_CONFIRM_MS = 80.0
 _BURST_GAP_MS = 200.0
 _RECENT_MS = 2500.0
+_NOISE_WINDOW_MS = 600.0
+_NOISE_MAX_FEATURES = 100
+_NOISE_MAX_VARIATION = 0.12
+_NOISE_ENERGY_RATIO = 1.5
 _EPSILON = 1e-6
 
 
@@ -36,6 +41,14 @@ class _Feature:
     vad_supported: bool
     energy_supported: bool
     activity_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class _Support:
+    activity_id: int
+    start_ms: float
+    end_ms: float
+    is_vad: bool
 
 
 class AudioEvidence:
@@ -52,7 +65,9 @@ class AudioEvidence:
     def __init__(self) -> None:
         self._samples = 0
         self._features: deque[_Feature] = deque(maxlen=_MAX_FEATURES)
-        self._accepted: OrderedDict[int, None] = OrderedDict()
+        self._accepted: OrderedDict[int, _Support] = OrderedDict()
+        self._noise_features: deque[tuple[float, float, float]] = deque(maxlen=_NOISE_MAX_FEATURES)
+        self._noise_floor = 0.0
         self._vad_run_ms = 0.0
         self._activity_id = -1
         self._last_activity_end = -math.inf
@@ -84,7 +99,10 @@ class AudioEvidence:
             variance = sum(value * value for value in samples) / len(samples) - average * average
             ac_rms = math.sqrt(max(0.0, variance))
             vad_supported = bool(vad and ac_rms >= _VAD_MIN_AC_RMS)
-            energy_supported = ac_rms >= _WEAK_MIN_AC_RMS
+            self._observe_noise(start, end, ac_rms, vad)
+            energy_supported = ac_rms >= max(
+                _WEAK_MIN_AC_RMS, self._noise_floor * _NOISE_ENERGY_RATIO
+            )
             if vad_supported:
                 self._vad_run_ms += end - start
                 confirmed = confirmed or self._vad_run_ms >= _VAD_CONFIRM_MS - _EPSILON
@@ -102,6 +120,57 @@ class AudioEvidence:
             self._features.popleft()
         return confirmed
 
+    def _observe_noise(self, start: float, end: float, ac_rms: float, vad: bool) -> None:
+        """Learn only sustained, steady VAD-negative energy, never quiet VAD voice.
+
+        The energy-only escape hatch remains available at stream startup and
+        above the current floor. Once a whole window proves stationary, revoke
+        its provisional energy support, including early noise-only partials.
+        This is deliberately narrower than treating all VAD misses as silence.
+        """
+        if vad:
+            self._noise_features.clear()
+            return
+        self._noise_features.append((start, end, ac_rms))
+        while self._noise_features and end - self._noise_features[0][1] >= _NOISE_WINDOW_MS:
+            self._noise_features.popleft()
+        duration = sum(right - left for left, right, _ in self._noise_features)
+        if duration < _NOISE_WINDOW_MS - _EPSILON:
+            return
+        average = sum((right - left) * rms for left, right, rms in self._noise_features) / duration
+        variance = (
+            sum((right - left) * (rms - average) ** 2 for left, right, rms in self._noise_features)
+            / duration
+        )
+        if math.sqrt(variance) > max(1.0, average * _NOISE_MAX_VARIATION):
+            return
+        self._noise_floor = average
+        if average < _WEAK_MIN_AC_RMS / _NOISE_ENERGY_RATIO:
+            return
+        noise_start = self._noise_features[0][0]
+        # Retain VAD-supported frames and scalars only. This also removes the
+        # first 80 ms of a noise burst instead of leaving it as a reusable anchor.
+        self._features = deque(
+            (
+                _Feature(item.start_ms, item.end_ms, False, False, item.activity_id)
+                if not item.vad_supported and item.end_ms > noise_start and item.start_ms < end
+                else item
+                for item in self._features
+            ),
+            maxlen=_MAX_FEATURES,
+        )
+        for segment_id, support in list(self._accepted.items()):
+            if not support.is_vad and support.end_ms > noise_start and support.start_ms < end:
+                del self._accepted[segment_id]
+
+    def is_supported(self, segment_id: int) -> bool:
+        """Whether a previously accepted segment still has an acoustic anchor.
+
+        Stationary-noise learning may withdraw provisional energy-only support
+        while an ASR partial is waiting for finalization in the caller.
+        """
+        return type(segment_id) is int and segment_id in self._accepted
+
     def allows(
         self,
         segment_id: int,
@@ -117,24 +186,44 @@ class AudioEvidence:
         del is_final
         if type(segment_id) is not int or segment_id < 0:
             return False
-        if segment_id in self._accepted:
-            self._accepted.move_to_end(segment_id)
-            return True
-        if not self._features:
-            return False
         if any(
             value is not None and (type(value) is not int or value < 0)
             for value in (start_ms, end_ms)
         ):
             return False
+        if start_ms is not None and end_ms is not None and end_ms <= start_ms:
+            return False
+        accepted = self._accepted.get(segment_id)
+        if accepted is not None:
+            # Late finals may add endpoint silence or omit timestamps entirely.
+            # They must still refer to their original acoustic anchor, rather
+            # than moving an accepted segment into a later silent interval.
+            contains_anchor = (start_ms is None or start_ms <= accepted.start_ms + _EPSILON) and (
+                end_ms is None or end_ms >= accepted.end_ms - _EPSILON
+            )
+            if contains_anchor:
+                self._accepted.move_to_end(segment_id)
+                return True
+            support = _support_activity(
+                self._features,
+                start_ms if start_ms is not None else 0,
+                end_ms if end_ms is not None else self.audio_ms,
+            )
+            if support is None:
+                return False
+            self._accepted[segment_id] = support
+            self._accepted.move_to_end(segment_id)
+            return True
+        if not self._features:
+            return False
         if start_ms is not None and end_ms is not None:
             start, end = start_ms, end_ms
-            if end <= start:
+            support = _support_activity(self._features, start, end)
+            if support is None:
                 return False
-            activity_id = _support_activity(self._features, start, end)
-            if activity_id is None:
-                return False
-            self._untimed_activity_watermark = max(self._untimed_activity_watermark, activity_id)
+            self._untimed_activity_watermark = max(
+                self._untimed_activity_watermark, support.activity_id
+            )
             self._untimed_claimed_until = max(self._untimed_claimed_until, min(end, self.audio_ms))
         else:
             cutoff = self.audio_ms - _RECENT_MS
@@ -142,31 +231,31 @@ class AudioEvidence:
                 if activity_id <= self._untimed_activity_watermark:
                     continue
                 burst = list(features)
-                if _support_activity(burst, cutoff, self.audio_ms) is not None:
+                support = _support_activity(burst, cutoff, self.audio_ms)
+                if support is not None:
                     self._untimed_activity_watermark = activity_id
                     self._untimed_claimed_until = max(self._untimed_claimed_until, burst[-1].end_ms)
                     break
             else:
                 tail = self._features[-1]
+                support = _support_activity(
+                    self._features, max(cutoff, self._untimed_claimed_until), self.audio_ms
+                )
                 if (
                     tail.activity_id != self._untimed_activity_watermark
                     or not (tail.vad_supported or tail.energy_supported)
-                    or _support_activity(
-                        self._features,
-                        max(cutoff, self._untimed_claimed_until),
-                        self.audio_ms,
-                    )
-                    != tail.activity_id
+                    or support is None
+                    or support.activity_id != tail.activity_id
                 ):
                     return False
                 self._untimed_claimed_until = self.audio_ms
-        self._accepted[segment_id] = None
+        self._accepted[segment_id] = support
         if len(self._accepted) > _MAX_SEGMENTS:
             self._accepted.popitem(last=False)
         return True
 
 
-def _support_activity(features: Iterable[_Feature], start: float, end: float) -> int | None:
+def _support_activity(features: Iterable[_Feature], start: float, end: float) -> _Support | None:
     vad_ms = energy_ms = 0.0
     previous_end = -math.inf
     for feature in features:
@@ -178,7 +267,9 @@ def _support_activity(features: Iterable[_Feature], start: float, end: float) ->
         duration = right - left
         vad_ms = vad_ms + duration if feature.vad_supported else 0.0
         energy_ms = energy_ms + duration if feature.energy_supported else 0.0
-        if vad_ms >= _VAD_CONFIRM_MS - _EPSILON or energy_ms >= _WEAK_CONFIRM_MS - _EPSILON:
-            return feature.activity_id
+        if vad_ms >= _VAD_CONFIRM_MS - _EPSILON:
+            return _Support(feature.activity_id, right - vad_ms, right, True)
+        if energy_ms >= _WEAK_CONFIRM_MS - _EPSILON:
+            return _Support(feature.activity_id, right - energy_ms, right, False)
         previous_end = right
     return None

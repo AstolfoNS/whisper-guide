@@ -225,6 +225,29 @@ class ScriptAligner:
         self.search_after = search_after
         self.reliable_threshold = reliable_threshold
         self._script_pinyin = [_pinyin_key(unit.text) for unit in tracker.units]
+        self._script_normalized = tuple(unit.normalized for unit in tracker.units)
+        self._literal_index = self._index(self._script_normalized)
+        self._phonetic_index = self._index(tuple(self._script_pinyin))
+
+    @staticmethod
+    def _index(values: tuple) -> dict[tuple, tuple[int, ...]]:
+        pending: dict[tuple, list[int]] = {}
+        for start in range(len(values) - 2):
+            pending.setdefault(values[start : start + 3], []).append(start)
+        return {key: tuple(starts) for key, starts in pending.items()}
+
+    @staticmethod
+    def _indexed_starts(needle: tuple, index: dict[tuple, tuple[int, ...]]) -> list[int]:
+        # The rarest trigram keeps repeated passages from becoming a full scan.
+        offset = min(
+            range(len(needle) - 2),
+            key=lambda item: len(index.get(needle[item : item + 3], ())),
+        )
+        return [
+            start - offset
+            for start in index.get(needle[offset : offset + 3], ())
+            if start >= offset
+        ]
 
     def script_window(self, reading_position: int | None) -> str:
         """Return only original text inside the bounded alignment search window."""
@@ -237,6 +260,158 @@ class ScriptAligner:
         start, end = units[left].start, units[right - 1].end
         # Never split an English/number unit merely to fit a remote context limit.
         return self.tracker.text[start:end] if end - start <= 4096 else ""
+
+    def _recovery_bounds(self, reading_position: int | None) -> tuple[int, int] | None:
+        """Keep recovery work local and preserve whole English/number units."""
+        units = self.tracker.units
+        anchor = min(
+            0 if reading_position is None else self.tracker.unit_index_at(reading_position),
+            len(units) - 1,
+        )
+        left, right = max(0, anchor - 160), min(len(units), anchor + 512)
+        while units[right - 1].end - units[left].start > 4096:
+            before = units[anchor].start - units[left].start
+            after = units[right - 1].end - units[anchor].start
+            if right > anchor + 1 and (after >= before or left == anchor):
+                right -= 1
+            elif left < anchor:
+                left += 1
+            else:
+                # A single indivisible unit does not fit the remote context budget.
+                return None
+        return left, right
+
+    def recovery_window(self, reading_position: int | None, transcript: str = "") -> str:
+        """Retrieve bounded original excerpts, including candidates outside the old cursor."""
+        recognized = content_units(transcript)
+        snippets: list[str] = []
+        if 6 <= len(recognized) <= 256:
+            votes: dict[int, int] = {}
+            keys = (
+                (tuple(unit.normalized for unit in recognized), self._literal_index),
+                (tuple(_pinyin_key(unit.text) for unit in recognized), self._phonetic_index),
+            )
+            for needle, index in keys:
+                for offset in range(len(needle) - 2):
+                    occurrences = index.get(needle[offset : offset + 3], ())
+                    if len(occurrences) > 64:
+                        continue
+                    for occurrence in occurrences:
+                        candidate = max(0, occurrence - offset)
+                        votes[candidate] = votes.get(candidate, 0) + 1
+            intervals: list[tuple[int, int]] = []
+            for candidate in sorted(votes, key=lambda item: (-votes[item], item)):
+                left = max(0, candidate - 12)
+                right = min(len(self.tracker.units), candidate + len(recognized) + 12)
+                if any(left < end and right > begin for begin, end in intervals):
+                    continue
+                units = self.tracker.units
+                snippet = self.tracker.text[units[left].start : units[right - 1].end]
+                if sum(map(len, snippets)) + len(snippet) + 2 * len(snippets) > 4096:
+                    continue
+                intervals.append((left, right))
+                snippets.append(snippet)
+                if len(snippets) == 4:
+                    break
+        if snippets:
+            return "\n\n".join(snippets)
+        bounds = self._recovery_bounds(reading_position)
+        if bounds is None:
+            return ""
+        left, right = bounds
+        units = self.tracker.units
+        return self.tracker.text[units[left].start : units[right - 1].end]
+
+    def supports_refinement(self, rough: str, quote: str) -> bool:
+        """Require transcription evidence independently of an LLM's confidence.
+
+        Exact normalized text is safe even for a genuine single word. A changed
+        quote needs at least three units on both sides, comparable lengths and
+        strong literal evidence or near-identical pinyin with literal anchors.
+        """
+        if not isinstance(rough, str) or not isinstance(quote, str):
+            return False
+        if not quote or quote not in self.tracker.text:
+            return False
+        source, target = content_units(rough), content_units(quote)
+        if not source or not target or max(len(source), len(target)) > 256:
+            return False
+        source_text = [unit.normalized for unit in source]
+        target_text = [unit.normalized for unit in target]
+        if source_text == target_text:
+            return True
+        if min(len(source), len(target)) < 3:
+            return False
+        if min(len(source), len(target)) / max(len(source), len(target)) < 0.75:
+            return False
+        literal = SequenceMatcher(None, source_text, target_text, autojunk=False).ratio()
+        if literal >= 0.85:
+            return True
+        phonetic = SequenceMatcher(
+            None,
+            [_pinyin_key(unit.text) for unit in source],
+            [_pinyin_key(unit.text) for unit in target],
+            autojunk=False,
+        ).ratio()
+        return literal >= 0.5 and phonetic >= 0.9
+
+    def recovery_candidates(
+        self, transcript: str, *, min_units: int = 6
+    ) -> tuple[MatchResult, ...]:
+        """Find strong whole-unit anchors throughout the script using immutable indexes.
+
+        Results include all plausible locations, up to an ambiguity sentinel of 33.
+        A caller must never choose a repeated occurrence by cursor distance alone.
+        """
+        recognized = content_units(transcript)
+        if not max(3, min_units) <= len(recognized) <= 256:
+            return ()
+        matches: dict[int, tuple[int, int, float]] = {}
+        for trimmed in range(min(2, len(recognized) - max(3, min_units)) + 1):
+            retained = recognized[trimmed:]
+            if len(retained) / len(recognized) < 0.75:
+                continue
+            needle = tuple(unit.normalized for unit in retained)
+            phonetic = tuple(_pinyin_key(unit.text) for unit in retained)
+            starts = set(self._indexed_starts(needle, self._literal_index))
+            starts.update(self._indexed_starts(phonetic, self._phonetic_index))
+            for start in sorted(starts):
+                end = start + len(needle)
+                if end > len(self.tracker.units):
+                    continue
+                source = self._script_normalized[start:end]
+                if source == needle:
+                    confidence = 1.0
+                elif tuple(self._script_pinyin[start:end]) == phonetic:
+                    literal = sum(a == b for a, b in zip(source, needle, strict=True)) / len(needle)
+                    if literal < 0.5:
+                        continue
+                    confidence = 0.9 + 0.1 * literal
+                else:
+                    continue
+                previous = matches.get(end - 1)
+                if previous is None or len(needle) > previous[1] - previous[0] + 1:
+                    matches[end - 1] = (start, end - 1, confidence)
+                if len(matches) >= 33:
+                    break
+            if len(matches) >= 33:
+                break
+        units = self.tracker.units
+        return tuple(
+            MatchResult(
+                position=units[end].start,
+                unit_index=end,
+                confidence=confidence,
+                matched_text=self.tracker.text[units[start].start : units[end].end],
+            )
+            for start, end, confidence in sorted(matches.values())
+        )
+
+    def recover(self, transcript: str, reading_position: int | None) -> MatchResult | None:
+        """Return only a globally unique strong phrase; session confirms distant moves."""
+        del reading_position
+        matches = self.recovery_candidates(transcript)
+        return matches[0] if len(matches) == 1 else None
 
     def align(self, transcript: str, reading_position: int | None) -> MatchResult | None:
         recognized = content_units(transcript)

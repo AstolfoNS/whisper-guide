@@ -2,9 +2,11 @@
 
 import asyncio
 import base64
+import copy
 import json
 import time
-from dataclasses import asdict
+from collections import deque
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
@@ -13,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import clone_model_settings
 from app.domain.session import SessionError, SessionState, SpeechSession
+from app.domain.tracking import content_units
 from app.infrastructure.audio_evidence import AudioEvidence
 from app.infrastructure.llm import LLMSemanticRefiner
 from app.infrastructure.speech import ProviderSpeechServices, SpeechUnavailableError
@@ -25,7 +28,20 @@ def now_ms() -> int:
     return time.monotonic_ns() // 1_000_000
 
 
+@dataclass(frozen=True, slots=True)
+class SettledTranscript:
+    version: int
+    evidence_id: tuple[int, int]
+    text: str
+    timestamp: int
+    accepted_position: int | None
+    acoustic_support: bool
+
+
 class SessionRuntime:
+    MAX_REFINEMENT_CATCHUP = 4
+    PREVIEW_STABLE_MS = 300
+
     def __init__(
         self,
         session: SpeechSession,
@@ -46,6 +62,19 @@ class SessionRuntime:
         self.model_config_revision = (model_config or {}).get("revision", 0)
         self.refinement: asyncio.Task[None] | None = None
         self.transcript_revision = 0
+        self.committed_revision = 0
+        self.stream_epoch = 0
+        self.voice_activity_revision = 0
+        self.settled_activity_revision = 0
+        self.committed_history: deque[SettledTranscript] = deque(
+            maxlen=self.MAX_REFINEMENT_CATCHUP + 1
+        )
+        self.refinement_version: int | None = None
+        self.refinement_evidence_id: tuple[int, int] | None = None
+        self.preview_hypothesis: tuple[int, str] | None = None
+        self.preview_since_ms = 0
+        self.preview_observations = 0
+        self.acoustic_segments: deque[int] = deque(maxlen=32)
         self.last_filler_only = False
         self.settled_hypothesis: tuple[int, str] | None = None
         # A single accepted hypothesis survives VAD display resets until settled.
@@ -121,6 +150,13 @@ class SessionRuntime:
     def release_stream(self) -> None:
         self.cancel_refinement()
         self.transcript_revision += 1
+        self.stream_epoch += 1
+        self.voice_activity_revision = 0
+        self.settled_activity_revision = 0
+        self.committed_history.clear()
+        self.session.reset_recovery_evidence()
+        self.acoustic_segments.clear()
+        self.clear_preview()
         self.settled_hypothesis = None
         self.pending_hypothesis = None
         self.raw_transcript_is_current = False
@@ -154,27 +190,135 @@ class SessionRuntime:
         if self.refinement and self.refinement is not asyncio.current_task():
             self.refinement.cancel()
         self.refinement = None
+        self.refinement_version = None
+        self.refinement_evidence_id = None
+
+    def clear_preview(self) -> None:
+        self.preview_hypothesis = None
+        self.preview_observations = 0
+        self.session.clear_provisional()
+
+    def retract_transcript_evidence(self, evidence_id: tuple[int, int]) -> bool:
+        self.session.retract_evidence(evidence_id)
+        revoked = [item for item in self.committed_history if item.evidence_id == evidence_id]
+        if revoked:
+            versions = {item.version for item in revoked}
+            self.committed_history = deque(
+                (item for item in self.committed_history if item.version not in versions),
+                maxlen=self.MAX_REFINEMENT_CATCHUP + 1,
+            )
+        if self.refinement_evidence_id == evidence_id or (
+            self.refinement_version is not None
+            and any(item.version >= self.refinement_version for item in revoked)
+        ):
+            # A retracted later segment also invalidates an older request whose
+            # catch-up would otherwise replay those withdrawn words.
+            self.cancel_refinement()
+        return bool(revoked)
+
+    def retract_unsupported_evidence(self) -> bool:
+        changed = False
+        pending = self.pending_hypothesis
+        if pending and not self.audio_evidence.is_supported(pending[0]):
+            self.pending_hypothesis = None
+            self.filtered_text = pending[1]
+            self.filtered_final = False
+            self.filtered_count += 1
+            self.clear_preview()
+            self.retract_transcript_evidence((self.session.generation, pending[0]))
+            changed = True
+        revoked_ids = {
+            item.evidence_id
+            for item in self.committed_history
+            if item.acoustic_support and not self.audio_evidence.is_supported(item.evidence_id[1])
+        }
+        for evidence_id in revoked_ids:
+            changed = self.retract_transcript_evidence(evidence_id) or changed
+        return changed
+
+    def preview_partial(self, timestamp: int) -> bool:
+        candidate = self.preview_hypothesis
+        if (
+            not candidate
+            or candidate != self.pending_hypothesis
+            or not self.audio_evidence.is_supported(candidate[0])
+            or candidate[0] <= self.finalized_segment_id
+            or (
+                self.preview_observations < 2
+                and timestamp - self.preview_since_ms < self.PREVIEW_STABLE_MS
+            )
+        ):
+            return False
+        before = self.session.snapshot()
+        self.session.preview_transcript(candidate[1])
+        after = self.session.snapshot()
+        return any(
+            before.get(key) != after.get(key)
+            for key in ("provisional_position", "provisional_transcript", "provisional_confidence")
+        )
 
     def commit_transcript(self, text: str, timestamp: int) -> None:
-        """Commit locally first; optional semantic work never holds the audio lock."""
+        """Commit local evidence first; partial display revisions cannot starve recovery."""
         anchor = self.session.reading_position
-        window = self.session.aligner.script_window(anchor)
-        self.session.handle("transcript", timestamp, text=text)
         pending = self.pending_hypothesis
+        # Actual final/silence settlement resolves the current listening round,
+        # including accepted partials preserved across harmless VAD display resets.
+        self.settled_activity_revision = self.voice_activity_revision
         self.settled_hypothesis = (
             pending if pending and pending[1] == text else (self.last_segment_id, text)
         )
         self.pending_hypothesis = None
-        settings = self.model_settings
-        refiner = LLMSemanticRefiner(settings)
-        if not refiner.enabled:
+        self.clear_preview()
+        evidence_id = (self.session.generation, self.settled_hypothesis[0])
+        self.session.handle("transcript", timestamp, text=text, evidence_id=evidence_id)
+        self.committed_revision += 1
+        evidence = SettledTranscript(
+            self.committed_revision,
+            evidence_id,
+            text,
+            timestamp,
+            self.session.reading_position if self.session.reliable else None,
+            self.settled_hypothesis[0] in self.acoustic_segments,
+        )
+        self.committed_history.append(evidence)
+        if self.refinement and not self.refinement.done():
+            if (
+                self.refinement_evidence_id != evidence_id
+                and self.refinement_version is not None
+                and evidence.version - self.refinement_version <= self.MAX_REFINEMENT_CATCHUP
+            ):
+                # New segments are checked after the old result arrives. A revised
+                # interpretation of the same segment must invalidate its old request.
+                return
+            self.cancel_refinement()
+        self.start_refinement(evidence, anchor)
+
+    def start_refinement(self, evidence: SettledTranscript, anchor: int | None) -> None:
+        refiner = LLMSemanticRefiner(self.model_settings)
+        if (
+            not refiner.enabled
+            or len(content_units(evidence.text)) < 6
+            or (refiner.align_mode == "fallback" and self.session.reliable)
+        ):
             return
-        if refiner.align_mode == "fallback" and self.session.reliable:
+        recovering = self.session.snapshot()["alignment_status"] != "reliable"
+        window = (
+            self.session.aligner.recovery_window(anchor, transcript=evidence.text)
+            if recovering
+            else self.session.aligner.script_window(anchor)
+        )
+        if not window:
             return
-        self.cancel_refinement()
+        self.refinement_version = evidence.version
+        self.refinement_evidence_id = evidence.evidence_id
         self.refinement = asyncio.create_task(
             self.refine_transcript(
-                refiner, window, text, self.session.generation, self.transcript_revision
+                refiner,
+                window,
+                evidence.text,
+                self.session.generation,
+                evidence.version,
+                self.stream_epoch,
             )
         )
 
@@ -185,36 +329,110 @@ class SessionRuntime:
         rough: str,
         generation: int,
         revision: int,
+        stream_epoch: int,
     ) -> None:
         try:
             result = await refiner.refine(window, rough, turn_token=generation)
             async with self.lock:
+                history = list(self.committed_history)
+                original = next((item for item in history if item.version == revision), None)
+                catchup = [item for item in history if item.version > revision]
                 if (
                     result is None
                     or result.confidence < 0.68
                     or result.matched_quote not in window
+                    or len(content_units(result.matched_quote)) < 6
+                    or not self.session.aligner.supports_refinement(rough, result.matched_quote)
                     or self.session.state != SessionState.LISTENING
                     or self.session.generation != generation
-                    or self.transcript_revision != revision
+                    or self.stream_epoch != stream_epoch
+                    or self.refinement is not asyncio.current_task()
+                    or original is None
+                    or original.text != rough
+                    or len(catchup) > self.MAX_REFINEMENT_CATCHUP
+                    or self.committed_revision != revision + len(catchup)
+                    or any(item.evidence_id == original.evidence_id for item in catchup)
                 ):
                     return
-                # Domain uses ScriptAligner once more; the model never supplies offsets.
-                self.session.handle(
-                    "transcript",
-                    now_ms(),
-                    text=result.matched_quote,
-                    raw_text=rough,
-                    generation=generation,
-                )
+                # Validate every intervening settled segment on a separate domain
+                # state before updating the live cursor. The aligner/index is read-only.
+                projection = copy.copy(self.session)
+                events = [
+                    (
+                        result.matched_quote,
+                        rough,
+                        original.evidence_id,
+                        True,
+                        original.timestamp,
+                    ),
+                    *[
+                        (item.text, item.text, item.evidence_id, False, item.timestamp)
+                        for item in catchup
+                    ],
+                ]
+                for text, raw, evidence_id, recovery, timestamp in events:
+                    projection.handle(
+                        "transcript",
+                        timestamp,
+                        text=text,
+                        raw_text=raw,
+                        evidence_id=evidence_id,
+                        generation=generation,
+                        recovery=recovery,
+                    )
+                if catchup and (
+                    not projection.reliable
+                    or (
+                        catchup[-1].accepted_position is not None
+                        and projection.reading_position != catchup[-1].accepted_position
+                    )
+                ):
+                    return
+                # No await separates validation and replay, and a model never
+                # supplies character offsets or independent second-segment evidence.
+                for text, raw, evidence_id, recovery, timestamp in events:
+                    self.session.handle(
+                        "transcript",
+                        timestamp,
+                        text=text,
+                        raw_text=raw,
+                        evidence_id=evidence_id,
+                        generation=generation,
+                        recovery=recovery,
+                    )
+                if (
+                    self.pending_hypothesis is not None
+                    or self.voice_activity_revision > self.settled_activity_revision
+                ):
+                    # A corrected historical anchor cannot settle newer sounds.
+                    # Keep its true verdict for later filler handling, while the
+                    # current activity still waits for its own settled evidence.
+                    self.session.mark_alignment_pending()
+                self.preview_partial(now_ms())
                 await self.publish()
         except asyncio.CancelledError:
             pass
         finally:
             if self.refinement is asyncio.current_task():
                 self.refinement = None
+                self.refinement_version = None
+                self.refinement_evidence_id = None
+                if (
+                    self.session.state == SessionState.LISTENING
+                    and self.session.generation == generation
+                    and self.stream_epoch == stream_epoch
+                    and self.committed_history
+                    and self.committed_revision > revision
+                ):
+                    # A failed old request may retry the newest settled evidence
+                    # once. Never loop on an unchanged evidence version.
+                    self.start_refinement(self.committed_history[-1], self.session.reading_position)
 
     async def tick(self, timestamp: int) -> None:
-        """Settle a pending hypothesis only at the actual silence deadline."""
+        """Preview stable partials, but settle only at the actual silence deadline."""
+        retracted = self.retract_unsupported_evidence()
+        if self.preview_partial(timestamp) or retracted:
+            await self.publish()
         if self.audio_evidence.pending_voice:
             return
         due = (
@@ -368,18 +586,20 @@ class SessionRuntime:
             generation = self.session.generation
             stream = self.stream
             voiced = self.audio_evidence.observe(pcm, stream.is_speech(pcm))
-            changed = False
+            changed = self.retract_unsupported_evidence()
             if voiced:
                 notify = getattr(stream, "notify_voice", None)
                 if callable(notify):
                     notify()
                 self.last_voice_ms = received
                 if not self.session.speaking:
+                    # Voice activity changes display state, not the immutable
+                    # settled evidence owned by an in-flight recovery request.
                     self.transcript_revision += 1
-                    self.cancel_refinement()
                     self.last_text = ""
                     self.last_update_final = False
                     self.raw_transcript_is_current = False
+                    self.voice_activity_revision += 1
                     self.session.handle("speech_start", received)
                     changed = True
             elif self.session.speaking and self.last_voice_ms is not None:
@@ -396,6 +616,7 @@ class SessionRuntime:
             if (
                 generation != self.session.generation
                 or self.session.state != SessionState.LISTENING
+                or self.stream is not stream
             ):
                 return
             if provider_before != getattr(stream, "effective_provider", self.provider_name):
@@ -427,6 +648,9 @@ class SessionRuntime:
                 self.filtered_count += 1
                 await self.publish()
                 return
+            if update.text.strip() and not update.is_filler_only:
+                if update.segment_id not in self.acoustic_segments:
+                    self.acoustic_segments.append(update.segment_id)
             if update.text.strip():
                 self.raw_transcript_is_current = True
                 self.filtered_text = ""
@@ -437,7 +661,7 @@ class SessionRuntime:
                 self.last_text = ""
             if update.text != self.last_text or update.segment_id != self.last_segment_id:
                 self.transcript_revision += 1
-                self.cancel_refinement()
+                self.clear_preview()
             self.last_segment_id = update.segment_id
             self.last_update_final = update.is_final
             if update.is_final:
@@ -445,12 +669,41 @@ class SessionRuntime:
             self.last_filler_only = update.is_filler_only
             if update.text.strip() and not update.is_filler_only:
                 hypothesis = (update.segment_id, update.text)
+                original = next(
+                    (
+                        item
+                        for item in self.committed_history
+                        if item.version == self.refinement_version
+                    ),
+                    None,
+                )
+                if (
+                    original is not None
+                    and original.evidence_id == (generation, update.segment_id)
+                    and original.text != update.text
+                ):
+                    self.cancel_refinement()
                 self.pending_hypothesis = (
                     hypothesis if hypothesis != self.settled_hypothesis else None
                 )
-            elif self.pending_hypothesis and self.pending_hypothesis[0] == update.segment_id:
-                # A full revision to filler/empty retracts this segment's old words.
-                self.pending_hypothesis = None
+                if not update.is_final:
+                    if self.preview_hypothesis == hypothesis:
+                        self.preview_observations += 1
+                    else:
+                        self.preview_hypothesis = hypothesis
+                        self.preview_since_ms = received
+                        self.preview_observations = 1
+                    if self.preview_partial(received):
+                        await self.publish()
+            else:
+                if self.pending_hypothesis and self.pending_hypothesis[0] == update.segment_id:
+                    # Filler/empty updates retract this segment's unsettled words.
+                    self.pending_hypothesis = None
+                self.clear_preview()
+                # Empty/filler final retracts an earlier silence-settled partial
+                # from this segment, so its model response is no longer evidence.
+                evidence_id = (generation, update.segment_id)
+                self.retract_transcript_evidence(evidence_id)
             previous_text = self.last_text
             self.last_text = update.text
             if update.text.strip() and not update.is_filler_only and update.text != previous_text:
@@ -458,6 +711,7 @@ class SessionRuntime:
                 # hypotheses during silence must not continually restart the clock.
                 self.last_voice_ms = received
                 if not self.session.speaking:
+                    self.voice_activity_revision += 1
                     self.session.handle("speech_start", received)
             if update.text != previous_text:
                 await self.publish()

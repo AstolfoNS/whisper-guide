@@ -19,24 +19,65 @@ def make_runtime(mode="fallback"):
     return SessionRuntime(SpeechSession("s", "大家好，欢迎来到演讲测试。"), "稿", speech)
 
 
+def recovery_runtime(mode="fallback"):
+    first = "我会坚持自律好好吃饭踏实学习"
+    following = "接着继续认真练习保持专注"
+    script = "开场。" + "甲" * 120 + first + "。" + following + "。结束。"
+    runtime = make_runtime(mode)
+    runtime.session = SpeechSession("s", script)
+    return runtime, first, following
+
+
 def test_semantic_result_reenters_local_aligner_and_keeps_raw_text(monkeypatch):
     async def scenario():
-        runtime = make_runtime()
+        runtime, quote, following = recovery_runtime()
+        rough = quote[:-1] + "思"
 
-        async def refine(self, window, rough, **kwargs):
-            assert "大家好" in window
-            return SemanticRefinement("大家好", 0.95)
+        async def refine(self, window, transcript, **kwargs):
+            assert quote in window
+            assert transcript == rough
+            return SemanticRefinement(quote, 0.95)
 
         monkeypatch.setattr(LLMSemanticRefiner, "refine", refine)
         await runtime.control({"type": "start"})
         runtime.last_segment_id = 0
-        runtime.commit_transcript("完全识别错误", now_ms())
+        runtime.commit_transcript(rough, now_ms())
         task = runtime.refinement
         assert task is not None
         await task
-        assert runtime.session.reading_position == 2
-        assert runtime.session.aligned_transcript == "大家好"
-        assert runtime.session.raw_transcript == "完全识别错误"
+        assert runtime.session.raw_transcript == rough
+        # A model's correction of the same segment is not independent evidence
+        # for a distant jump. A subsequent real segment confirms the position.
+        assert not runtime.session.reliable
+        runtime.last_segment_id = 1
+        runtime.commit_transcript(following, now_ms())
+        assert runtime.session.reliable
+        assert runtime.session.aligned_transcript == following
+        assert runtime.session.reading_position == (
+            runtime.session.tracker.text.index(following) + len(following) - 1
+        )
+        runtime.release_stream()
+
+    asyncio.run(scenario())
+
+
+def test_semantic_result_without_transcription_evidence_is_rejected(monkeypatch):
+    async def scenario():
+        runtime, quote, _ = recovery_runtime()
+
+        async def refine(self, *args, **kwargs):
+            return SemanticRefinement(quote, 0.99)
+
+        monkeypatch.setattr(LLMSemanticRefiner, "refine", refine)
+        await runtime.control({"type": "start"})
+        runtime.last_segment_id = 0
+        runtime.commit_transcript("完全识别错误没有任何文字依据", now_ms())
+        task = runtime.refinement
+        assert task is not None
+        await task
+        assert runtime.session.reading_position is None
+        assert not runtime.session.reliable
+        assert not runtime.session._recovery_candidates
         runtime.release_stream()
 
     asyncio.run(scenario())
@@ -44,7 +85,7 @@ def test_semantic_result_reenters_local_aligner_and_keeps_raw_text(monkeypatch):
 
 def test_cancelled_model_return_cannot_overwrite_reposition_or_pause(monkeypatch):
     async def scenario():
-        runtime = make_runtime()
+        runtime, quote, _ = recovery_runtime()
         entered = asyncio.Event()
 
         async def refine(self, *args, **kwargs):
@@ -52,12 +93,14 @@ def test_cancelled_model_return_cannot_overwrite_reposition_or_pause(monkeypatch
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                return SemanticRefinement("大家好", 1)
+                return SemanticRefinement(quote, 1)
 
         monkeypatch.setattr(LLMSemanticRefiner, "refine", refine)
         await runtime.control({"type": "start"})
-        runtime.commit_transcript("完全识别错误", now_ms())
+        runtime.last_segment_id = 0
+        runtime.commit_transcript(quote[:-1] + "思", now_ms())
         task = runtime.refinement
+        assert task is not None
         await entered.wait()
         await runtime.control({"type": "reposition", "position": 5})
         await runtime.control({"type": "pause"})
@@ -156,10 +199,12 @@ def test_hybrid_timeout_keeps_local_alignment_and_bounds_request(monkeypatch):
 
         monkeypatch.setattr(LLMSemanticRefiner, "refine", refine)
         await runtime.control({"type": "start"})
-        runtime.commit_transcript("大家好", now_ms())
+        runtime.commit_transcript("欢迎来到演讲测试", now_ms())
         position = runtime.session.reading_position
-        await runtime.refinement
-        assert runtime.session.reading_position == position == 2
+        task = runtime.refinement
+        assert task is not None
+        await task
+        assert runtime.session.reading_position == position == 11
         assert runtime.session.reliable
         runtime.release_stream()
 
