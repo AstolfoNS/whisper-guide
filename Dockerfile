@@ -43,7 +43,7 @@ EXPOSE 8000
 CMD ["/app/backend-core/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
 
 FROM nginx:1.29-alpine AS frontend-runtime
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=frontend-build /src/dist /usr/share/nginx/html
 EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
