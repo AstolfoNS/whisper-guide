@@ -23,11 +23,14 @@
 ```text
 浏览器内存 PCM16 → WebRTC VAD → SpeechProvider → RecognitionUpdate(partial/final)
                                                        ↓
+                                    AudioEvidence 分段人声证据
+                                                       ↓
                                本地 ScriptAligner → 双游标与五状态机 → edge-tts 内存 MP3
                                                        ↑
                               可选 LLMSemanticRefiner（OpenAI 兼容文本接口）
 ```
 
+- ASR 结果先通过有界分段声学证据检查；缺少对应人声的原始结果标为“已过滤”，不改变可靠位置或静音计时。该检查不能代替完整降噪。
 - 同一分段 partial 覆盖显示，final 才正常提交位置；静音截止前结算未定稿文本，同段后续修订仍可重新对齐，填充词不触发失配。定位不可靠时明确显示自动提示暂缓的原因。
 - `ScriptAligner` 结合字面、拼音/近音、游标邻近与上下文，保持英文单词及数字边界；按候选范围判断连续阅读，避免长句句末被误罚为远跳。
 - STT 默认本地 `sherpa-onnx`；云端可选 HTTP JSON 网关或通用 WebSocket 传输配合火山流式 ASR 协议适配器。云端 STT 与文本 LLM 独立配置，厂商预设仅帮助填表；它们不能直接指定游标偏移。
@@ -152,3 +155,5 @@ pnpm test:e2e
 云端静音等待、弱人声超时与当前方舟模型延迟排查见[专项检查记录](docs/cloud-silence-2026-10-24.md)。
 
 持续识别变乱的长句评分、云端发送节拍修复及尚存的抗噪边界见[连续识别排查记录](docs/asr-drift-2026-10-24.md)。
+
+无声孤立转写防误停、轻声/迟到 final 与云端热备回归见[实现与验收记录](docs/noise-guard-2026-10-24.md)。

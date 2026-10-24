@@ -10,6 +10,7 @@ from app.infrastructure.speech import (
     ProviderSpeechServices,
     RecognitionUpdate,
     RemoteProviderConfig,
+    SpeechStream,
     SpeechUnavailableError,
     _HTTPStreamingRecognizer,
 )
@@ -363,3 +364,44 @@ def test_fallback_does_not_reuse_old_partial_before_cloud_final():
     assert stream.accept_pcm(b"one") is None
     assert stream.accept_pcm(b"two").is_final
     assert stream.accept_pcm(b"three") is None
+
+
+@pytest.mark.parametrize("wire_result", [False, True])
+def test_speech_facade_preserves_audio_interval_through_normalization(wire_result):
+    from app.infrastructure.speech_protocols import ProtocolTranscript
+
+    result = (
+        ProtocolTranscript(" 好好， ", False, 2, 1200, 1800)
+        if wire_result
+        else RecognitionUpdate(" 好好， ", False, 2, False, 1200, 1800)
+    )
+    update = SpeechStream(recognizer=lambda pcm: result).accept_pcm(b"audio")
+    assert update.text == "好好，"
+    assert update.segment_id == 2
+    assert not update.is_final
+    assert update.start_ms == 1200
+    assert update.end_ms == 1800
+
+
+def test_provider_fallback_keeps_cloud_interval_but_drops_local_relative_clock():
+    local = FakeStream(
+        [
+            RecognitionUpdate("大家", False, 0, False, 0, 400),
+            RecognitionUpdate("接下来", False, 1, False, 0, 600),
+            RecognitionUpdate("继续朗读", True, 1, False, 0, 1000),
+        ]
+    )
+    remote = FakeStream(
+        [
+            RecognitionUpdate("大家好", True, 7, False, 1200, 1800),
+            SpeechUnavailableError("offline"),
+        ]
+    )
+    stream = FallbackSpeechStream(remote, local)
+    cloud_update = stream.accept_pcm(b"one")
+    assert cloud_update == RecognitionUpdate("大家好", True, 7, False, 1200, 1800)
+    local_update = stream.accept_pcm(b"two")
+    assert local_update == RecognitionUpdate("接下来", segment_id=8)
+    next_update = stream.accept_pcm(b"three")
+    assert next_update == RecognitionUpdate("继续朗读", is_final=True, segment_id=8)
+    assert stream.fallback_active

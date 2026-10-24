@@ -5,6 +5,8 @@
 ```text
 PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreamingProvider
                          ↓ RecognitionUpdate(partial/final)
+                     AudioEvidence 分段声学证据
+                         ↓
                      ScriptAligner → 双游标 / 五状态机
                          ↑ 经本地验证的讲稿原文
                  LLMSemanticRefiner（可选 OpenAI 兼容接口）
@@ -19,7 +21,11 @@ class RecognitionUpdate:
     is_final: bool
     segment_id: int
     is_filler_only: bool
+    start_ms: int | None = None
+    end_ms: int | None = None
 ```
+
+可选 `start_ms/end_ms` 为本连接 PCM 音频时间，完整有效区间用于匹配人声特征；不完整/缺失时使用近期活动及新增证据水位。已认可段的迟到修订/定稿仍可使用已锁存证据。原生 sherpa 的累计时钟不随 endpoint/reset 归零，云端回退仅保留受信任的连接时钟，外部相对时间不混用。
 
 同一 `segment_id` 的 partial 覆盖前次假设，final 才正常提交位置。填充词不提交讲稿位置。本地 sherpa 端点后重置流并递增分段号；WebSocket 云端分句定稿只递增分段号，保留同一连接。默认 `local` 使用 `sherpa-onnx`；`cloud` 需选择语音协议、独立凭据与 `cloud_opt_in=true`，未授权时锁定本地。
 
@@ -74,6 +80,12 @@ class RecognitionUpdate:
 返回必须是窗口中的连续原文，置信度有效，且任务仍属于当前会话轮次；随后由本地对齐器确认位置。`off` 不调用；`fallback` 用于本地低置信度；`hybrid` 在有效句末异步校准。超时默认 1500 ms，错误或无效输出静默保留本地结果。
 
 内置预设为 `custom`、`deepseek`、`qwen`、`doubao`、`openai`、`ollama`。预设只填充推荐 URL 和示例模型名，用户可自由改写模型名与地址；它们不证明真实账号、配额或模型访问权限已经可用。
+
+## 识别过滤诊断
+
+会话快照新增 `recognition_filtered`、`recognition_filter_reason`、`recognition_filtered_count`。无声学支持的文本仍可在 `raw_transcript` 展示并保留自己的 `raw_transcript_is_final`，但不改变已接受假设、游标、可靠性、静音时钟或 LLM 任务。计数及单条过滤文本仅存于本轮有界内存，换轮清零，不写日志/SQLite。前端应将“已过滤”与“无法匹配讲稿”分开；过滤噪声不能自动恢复原已不可靠的位置。
+
+完整规则、噪声能力边界与回归见[无声识别门控记录](noise-guard-2026-10-24.md)。
 
 ## 多方案管理 API
 

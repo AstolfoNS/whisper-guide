@@ -1,7 +1,10 @@
+import { useSyntheticMicrophone } from './syntheticMicrophone'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
 const screenshots = '../docs/screenshots/cloud-speech-2026-10-24'
+
+test.beforeEach(async ({ page }) => { await useSyntheticMicrophone(page) })
 
 test('configures independent cloud ASR and text LLM, aligns WS final and releases microphone on pause', async ({ page }) => {
   await page.goto('/settings/models')

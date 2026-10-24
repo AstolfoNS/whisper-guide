@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from test_runtime import FakeSpeech
+from test_runtime import VOICE_PCM, FakeSpeech
 
 from app.api.session import SessionRuntime, now_ms
 from app.domain.session import SpeechSession
@@ -116,7 +116,7 @@ def test_quiet_voice_partial_ends_and_does_not_reset_timer_on_identical_hypothes
         runtime.stream = QuietStream()
         await runtime.control({"type": "audio_ready"})
         monkeypatch.setattr(runtime_api, "now_ms", lambda: 1000)
-        await runtime.audio(bytes(640))
+        await runtime.audio(VOICE_PCM)
         assert runtime.session.speaking
         assert runtime.last_voice_ms == 1000
         monkeypatch.setattr(runtime_api, "now_ms", lambda: 1250)

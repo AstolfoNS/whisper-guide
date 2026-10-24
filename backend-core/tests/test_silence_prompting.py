@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+from array import array
 
 import pytest
 from fastapi.testclient import TestClient
@@ -160,15 +161,20 @@ def test_playback_and_resume_require_fresh_audio_ready_then_restart_quiet_wait(
         assert app.state.speech_services.spoken == ["欢迎大家。", "谢谢。"]
 
 
-def test_microphone_data_loss_is_paused_instead_of_treated_as_live_silence(tmp_path, monkeypatch):
+@pytest.mark.parametrize("pending_ms", [0, 20, 40])
+def test_microphone_data_loss_is_paused_instead_of_treated_as_live_silence(
+    tmp_path, monkeypatch, pending_ms
+):
     clock = [10000]
     monkeypatch.setattr(session_api, "now_ms", lambda: clock[0])
     app = make_app(tmp_path)
     with TestClient(app) as client, client.websocket_connect("/api/session") as ws:
         runtime = prepare(client, ws, 6000)
         ws.send_json({"type": "audio_ready"})
-        ws.send_bytes(bytes(640))
+        pcm = array("h", [-1000, 1000] * (pending_ms * 8)).tobytes()
+        ws.send_bytes(pcm if pending_ms else bytes(640))
         client.portal.call(drained, runtime, clock[0])
+        assert runtime.audio_evidence.pending_voice is bool(pending_ms)
         clock[0] += 5001
         client.portal.call(wait_state, runtime, "PAUSED")
         paused = state(ws, "PAUSED")
@@ -283,7 +289,7 @@ def test_queued_voice_at_deadline_precedes_completed_quiet_frame(tmp_path, monke
         ws.send_bytes(bytes(640))
         client.portal.call(signaled, entered)
         clock[0] = 11000
-        ws.send_bytes((10000).to_bytes(2, "little", signed=True) * 320)
+        ws.send_bytes(array("h", [-10000, 10000] * 480).tobytes())
         client.portal.call(queued_voice, runtime)
         client.portal.call(release.set)
         speaking = state(ws, "LISTENING")

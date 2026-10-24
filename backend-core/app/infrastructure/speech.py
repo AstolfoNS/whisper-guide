@@ -34,6 +34,8 @@ class RecognitionUpdate:
     is_final: bool = False
     segment_id: int = 0
     is_filler_only: bool = False
+    start_ms: int | None = None
+    end_ms: int | None = None
 
 
 class SpeechStream:
@@ -56,6 +58,10 @@ class SpeechStream:
     @property
     def effective_provider(self) -> str:
         return self.provider_name
+
+    @property
+    def uses_connection_timestamps(self) -> bool:
+        return bool(getattr(self._recognizer, "uses_connection_timestamps", False))
 
     @property
     def available(self) -> bool:
@@ -89,6 +95,8 @@ class SpeechStream:
                     is_final=result.is_final,
                     segment_id=result.segment_id,
                     is_filler_only=_is_filler_only(text),
+                    start_ms=result.start_ms,
+                    end_ms=result.end_ms,
                 )
             if isinstance(result, str):
                 text = _normalize_transcript(result)
@@ -99,6 +107,8 @@ class SpeechStream:
                 is_final=bool(getattr(result, "is_final", False)),
                 segment_id=int(getattr(result, "segment_id", 0)),
                 is_filler_only=_is_filler_only(text),
+                start_ms=getattr(result, "start_ms", None),
+                end_ms=getattr(result, "end_ms", None),
             )
         except SpeechUnavailableError:
             raise
@@ -114,8 +124,6 @@ class SpeechStream:
             except Exception:
                 pass
             else:
-                if voiced:
-                    self.notify_voice()
                 return voiced
         if len(pcm) % 2:
             return False
@@ -123,10 +131,7 @@ class SpeechStream:
         if not samples:
             return False
         rms = math.sqrt(sum(value * value for value in samples) / len(samples))
-        voiced = rms >= 500
-        if voiced:
-            self.notify_voice()
-        return voiced
+        return rms >= 500
 
     def notify_voice(self) -> None:
         notify = getattr(self._recognizer, "notify_voice", None)
@@ -234,17 +239,22 @@ class SpeechServices:
 
 
 class _SherpaRecognizerStream:
+    uses_connection_timestamps = True
+
     def __init__(self, recognizer: Any, sample_rate: int) -> None:
         self.recognizer = recognizer
         self.sample_rate = sample_rate
         self.stream = recognizer.create_stream()
         self.segment_id = 0
+        self._samples = 0
+        self._segment_start_samples = 0
 
     def __call__(self, pcm: bytes) -> RecognitionUpdate | None:
         import numpy as np
 
         waveform = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
         self.stream.accept_waveform(self.sample_rate, waveform)
+        self._samples += len(waveform)
         while self.recognizer.is_ready(self.stream):
             self.recognizer.decode_stream(self.stream)
         text = _normalize_transcript(self.recognizer.get_result(self.stream).strip())
@@ -254,15 +264,19 @@ class _SherpaRecognizerStream:
             is_final=is_final,
             segment_id=self.segment_id,
             is_filler_only=_is_filler_only(text),
+            start_ms=self._segment_start_samples * 1000 // self.sample_rate,
+            end_ms=self._samples * 1000 // self.sample_rate,
         )
         if is_final:
             self.recognizer.reset(self.stream)
             self.segment_id += 1
+            self._segment_start_samples = self._samples
         return update if text or is_final else None
 
     def reset(self) -> None:
         self.recognizer.reset(self.stream)
         self.segment_id += 1
+        self._segment_start_samples = self._samples
 
 
 FILLER_UTTERANCES = frozenset(
@@ -652,12 +666,13 @@ class FallbackSpeechStream:
         return self.active is self.local
 
     def is_speech(self, pcm: bytes) -> bool:
-        voiced = self.local.is_speech(pcm)
-        if voiced and self.active is self.remote:
+        return self.local.is_speech(pcm)
+
+    def notify_voice(self) -> None:
+        if self.active is self.remote:
             notify = getattr(self.remote, "notify_voice", None)
             if callable(notify):
                 notify()
-        return voiced
 
     def accept_pcm(self, pcm: bytes) -> RecognitionUpdate | None:
         if self._closed:
@@ -672,7 +687,8 @@ class FallbackSpeechStream:
             local_update = None
         if self._closed:
             return None
-        if local_update is not None:
+        # Empty silence endpoints must not erase the last useful warm result.
+        if local_update is not None and local_update.text.strip():
             self._latest_local = local_update
             self._latest_local_frame = frame
         if self.active is self.local:
@@ -709,11 +725,19 @@ class FallbackSpeechStream:
             self._needs_remap = False
         segment_id = update.segment_id + self._segment_offset
         self._last_segment_id = max(self._last_segment_id, segment_id)
+        trusted_times = self.active is self.remote or bool(
+            getattr(self.local, "uses_connection_timestamps", False)
+        )
         return RecognitionUpdate(
             text=update.text,
             is_final=update.is_final,
             segment_id=segment_id,
             is_filler_only=update.is_filler_only,
+            # Native warm standby shares the connection's PCM clock, including
+            # cached finals returned after a long cloud timeout. Custom local
+            # adapters may use segment-relative clocks and remain untimed.
+            start_ms=update.start_ms if trusted_times else None,
+            end_ms=update.end_ms if trusted_times else None,
         )
 
     def reset(self) -> None:

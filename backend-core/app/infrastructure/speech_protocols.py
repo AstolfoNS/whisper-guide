@@ -23,6 +23,8 @@ class ProtocolTranscript:
     text: str
     is_final: bool
     segment_id: int
+    start_ms: int | None = None
+    end_ms: int | None = None
 
 
 class SpeechProtocolError(RuntimeError):
@@ -64,6 +66,8 @@ class VolcengineSpeechProtocol:
         self.last_package = False
         self._segment_id = 0
         self._active_text = ""
+        self._active_start_ms: int | None = None
+        self._active_end_ms: int | None = None
         self._seen_utterances = False
         self._committed_start = -1
         self._committed_end = -1
@@ -166,7 +170,7 @@ class VolcengineSpeechProtocol:
                 if end is not None and end <= self._committed_end:
                     continue
                 is_final = utterance.get("definite") is True or last
-                update = self._update(text, is_final=is_final)
+                update = self._update(text, is_final=is_final, start_ms=start, end_ms=end)
                 if update is not None:
                     updates.append(update)
                 if is_final:
@@ -189,13 +193,36 @@ class VolcengineSpeechProtocol:
                 updates.append(update)
         return updates
 
-    def _update(self, text: str, *, is_final: bool) -> ProtocolTranscript | None:
-        if not is_final and text == self._active_text:
+    def _update(
+        self,
+        text: str,
+        *,
+        is_final: bool,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+    ) -> ProtocolTranscript | None:
+        # Wire times share the connection's PCM clock. Revisions may change
+        # only their timing, and an empty terminal acknowledgement retains the
+        # latest known interval rather than losing its audio evidence.
+        start_ms = self._active_start_ms if start_ms is None else start_ms
+        end_ms = self._active_end_ms if end_ms is None else end_ms
+        if start_ms is not None and end_ms is not None and end_ms < start_ms:
+            raise SpeechProtocolError("云端语音分句时间无效。")
+        if (
+            not is_final
+            and text == self._active_text
+            and start_ms == self._active_start_ms
+            and end_ms == self._active_end_ms
+        ):
             return None
         self._active_text = text
-        update = ProtocolTranscript(text, is_final, self._segment_id)
+        self._active_start_ms = start_ms
+        self._active_end_ms = end_ms
+        update = ProtocolTranscript(text, is_final, self._segment_id, start_ms, end_ms)
         if is_final:
             self._active_text = ""
+            self._active_start_ms = None
+            self._active_end_ms = None
             self._segment_id += 1
         return update
 

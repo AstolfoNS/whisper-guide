@@ -13,7 +13,7 @@ const alignmentStatus = computed(() => {
 </script>
 <template>
   <div class="transcript-comparison">
-    <section aria-label="实时语音识别"><div class="transcript-heading">实时识别 <small>{{ snapshot?.raw_transcript_is_final ? 'final · 已定稿' : 'partial · 修订中' }}</small></div><p>{{ snapshot?.raw_transcript || '等待语音输入' }}</p></section>
+    <section aria-label="实时语音识别"><div class="transcript-heading">实时识别 <small>{{ snapshot?.raw_transcript_is_final ? 'final' : 'partial' }} · {{ snapshot?.recognition_filtered ? '已过滤' : snapshot?.raw_transcript_is_final ? '已定稿' : '修订中' }}</small></div><p>{{ snapshot?.raw_transcript || '等待语音输入' }}</p><small v-if="snapshot?.recognition_filtered" role="status" aria-live="polite">{{ snapshot.recognition_filter_reason || '缺少本段有效人声证据' }}，未用于讲稿定位{{ snapshot.reliable ? '，静音等待继续。' : '，请参考当前讲稿匹配状态。' }}</small></section>
     <section aria-label="讲稿匹配"><div class="transcript-heading">讲稿匹配 <small v-if="snapshot?.match_confidence != null">{{ Math.round(snapshot.match_confidence * 100) }}%</small></div><p>{{ snapshot?.aligned_transcript || '尚未确认位置' }}</p><small v-if="alignmentStatus" role="status" aria-live="polite">{{ alignmentStatus }}</small></section>
   </div>
 </template>

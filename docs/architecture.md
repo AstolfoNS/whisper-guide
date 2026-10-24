@@ -9,10 +9,11 @@ flowchart LR
   C <-->|WebSocket| A[SessionRuntime]
   A --> P[VAD 与 SpeechProvider]
   P --> R[RecognitionUpdate partial/final]
-  R --> L[本地 ScriptAligner]
+  R --> E[AudioEvidence 分段人声证据]
+  E --> L[本地 ScriptAligner]
   L --> D[五状态机与双游标]
   D --> T[edge-tts 内存 MP3]
-  R -.有效文本.-> M[可选 LLMSemanticRefiner]
+  E -.有效文本.-> M[可选 LLMSemanticRefiner]
   M -.讲稿原文子串经本地校验.-> L
   F[多配置管理 API] --> Q[私有版本化模型仓储]
   Q -->|显式激活| A
@@ -29,6 +30,7 @@ flowchart LR
 | `app/domain/session.py` | 五状态机、双游标、批事件优先级、最近 10 条流转记录 |
 | `app/domain/tracking.py` | ScriptAligner、讲稿内容单位、字符偏移、英文数字完整边界 |
 | `app/infrastructure/speech.py` | 本地/通用云端 STT、VAD、内存 TTS、失败回退 |
+| `app/infrastructure/audio_evidence.py` | 连接 PCM 时钟与有界声学特征、分段结果门控；不保存音频 |
 | `app/infrastructure/llm.py` | 轻量 OpenAI 兼容文本校准，厂商无关 |
 | `app/repositories/model_configs.py` | 模型方案草稿、生效快照、修订号、锁和原子私有文件保存 |
 | `app/repositories/scripts.py`、`app/models/` | SQLite 讲稿持久化 |
@@ -46,7 +48,7 @@ flowchart LR
 
 ## 流式识别与位置提交
 
-VAD 当前用于人声信号、静音计时和云端超时，不等同于完整声学降噪；非人声帧仍保持流式传输，原始 ASR 可能产生误转写。云端音频每块 200 ms，发送周期从实际发送开始计算，包含发送耗时；持续链路慢于实时音频时仍由一秒有界缓冲触发保护回退。
+VAD 不等同于完整声学降噪；非人声帧仍保持流式传输，原始 ASR 可能产生误转写。新增接收侧 AudioEvidence 以有界声学特征和可选分段音频时间审核文本；无证据结果只作过滤诊断，不进入定位/失配/计时逻辑，确认人声才通知状态机。该升级已完成回归，边界及验证结果见[无声识别门控记录](noise-guard-2026-10-24.md)。云端音频每块 200 ms，发送周期从实际发送开始计算，包含发送耗时；持续链路慢于实时音频时仍由一秒有界缓冲触发保护回退。
 
 同一 `segment_id` 的 partial 是分段的完整假设，覆盖前次文本；endpoint 产生 final 后重置流并递增分段号。VAD 有效人声或有效 partial 立即取消静音计时或打断提示，但 partial 不正常提交 `reading_position`。静音截止前结算尚未定稿文本，然后决定提示起点。填充词不进入定位器造成失配。
 

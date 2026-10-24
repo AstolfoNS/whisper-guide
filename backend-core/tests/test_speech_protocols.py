@@ -103,15 +103,15 @@ def test_invalid_auth_mode_and_missing_legacy_app_id_fail_closed():
 def test_partial_revisions_are_replaced_and_definite_does_not_close_connection():
     protocol = VolcengineSpeechProtocol()
     assert protocol.decode(response({"result": {"utterances": [utterance("大")]}})) == [
-        ProtocolTranscript("大", False, 0)
+        ProtocolTranscript("大", False, 0, 0, 800)
     ]
     assert protocol.decode(response({"result": {"utterances": [utterance("大家好")]}})) == [
-        ProtocolTranscript("大家好", False, 0)
+        ProtocolTranscript("大家好", False, 0, 0, 800)
     ]
     assert protocol.decode(response({"result": {"utterances": [utterance("大家好")]}})) == []
     final = utterance("大家好。", definite=True)
     assert protocol.decode(response({"result": {"utterances": [final]}})) == [
-        ProtocolTranscript("大家好。", True, 0)
+        ProtocolTranscript("大家好。", True, 0, 0, 800)
     ]
     assert not protocol.last_package
     assert protocol.decode(response({"result": {"utterances": [final]}})) == []
@@ -122,14 +122,14 @@ def test_full_snapshots_deduplicate_history_but_preserve_real_readback():
     first = utterance("大家好。", definite=True)
     second = utterance("今天", start=900, end=1400)
     assert protocol.decode(response({"result": {"utterances": [first, second]}})) == [
-        ProtocolTranscript("大家好。", True, 0),
-        ProtocolTranscript("今天", False, 1),
+        ProtocolTranscript("大家好。", True, 0, 0, 800),
+        ProtocolTranscript("今天", False, 1, 900, 1400),
     ]
     second = utterance("今天开始。", start=900, end=2000, definite=True)
     repeated = utterance("大家好。", start=2200, end=3000, definite=True)
     assert protocol.decode(response({"result": {"utterances": [first, second, repeated]}})) == [
-        ProtocolTranscript("今天开始。", True, 1),
-        ProtocolTranscript("大家好。", True, 2),
+        ProtocolTranscript("今天开始。", True, 1, 900, 2000),
+        ProtocolTranscript("大家好。", True, 2, 2200, 3000),
     ]
     assert protocol.decode(response({"result": {"utterances": [first, second, repeated]}})) == []
     # History corrections after a definite result cannot submit it again.
@@ -158,7 +158,7 @@ def test_last_packet_finalizes_active_segment_for_all_wire_conventions(flags, se
     protocol = VolcengineSpeechProtocol()
     protocol.decode(response({"result": {"utterances": [utterance("今天开始")]}}))
     assert protocol.decode(response({}, flags=flags, sequence=sequence)) == [
-        ProtocolTranscript("今天开始", True, 0)
+        ProtocolTranscript("今天开始", True, 0, 0, 800)
     ]
     assert protocol.last_package
     assert protocol.decode(response({}, flags=flags, sequence=sequence)) == []
@@ -278,10 +278,58 @@ def test_single_snapshots_commit_sequential_sentences_at_same_array_index():
         partial = utterance(text[:-1], start=start, end=start + 600)
         final = utterance(text, start=start, end=start + 800, definite=True)
         assert protocol.decode(response({"result": {"utterances": [partial]}})) == [
-            ProtocolTranscript(text[:-1], False, index)
+            ProtocolTranscript(text[:-1], False, index, start, start + 600)
         ]
         assert protocol.decode(response({"result": {"utterances": [final]}})) == [
-            ProtocolTranscript(text, True, index)
+            ProtocolTranscript(text, True, index, start, start + 800)
         ]
         assert protocol.decode(response({"result": {"utterances": [final]}})) == []
     assert not protocol.last_package
+
+
+def test_same_hypothesis_with_new_audio_interval_is_not_swallowed():
+    protocol = VolcengineSpeechProtocol()
+    first = utterance("好好", start=1200, end=1500)
+    revised = utterance("好好", start=1200, end=1800)
+    assert protocol.decode(response({"result": {"utterances": [first]}})) == [
+        ProtocolTranscript("好好", False, 0, 1200, 1500)
+    ]
+    assert protocol.decode(response({"result": {"utterances": [revised]}})) == [
+        ProtocolTranscript("好好", False, 0, 1200, 1800)
+    ]
+    assert protocol.decode(response({"result": {"utterances": [revised]}})) == []
+    revised["definite"] = True
+    assert protocol.decode(response({"result": {"utterances": [revised]}})) == [
+        ProtocolTranscript("好好", True, 0, 1200, 1800)
+    ]
+    assert protocol.decode(response({"result": {"utterances": [revised]}})) == []
+
+
+def test_timing_only_revision_keeps_available_bounds_and_final_ack_interval():
+    protocol = VolcengineSpeechProtocol()
+    protocol.decode(response({"result": {"utterances": [utterance("自律", start=800, end=1200)]}}))
+    assert (
+        protocol.decode(response({"result": {"utterances": [{"text": "自律", "start_time": 800}]}}))
+        == []
+    )
+    assert protocol.decode(response({}, flags=2)) == [
+        ProtocolTranscript("自律", True, 0, 800, 1200)
+    ]
+
+
+def test_next_timestamp_free_segment_does_not_inherit_previous_interval():
+    protocol = VolcengineSpeechProtocol()
+    protocol.decode(response({"result": {"utterances": [utterance("大家好", definite=True)]}}))
+    assert protocol.decode(
+        response(
+            {
+                "result": {
+                    "utterances": [
+                        utterance("大家好", definite=True),
+                        {"text": "接下来", "definite": False},
+                    ]
+                }
+            }
+        )
+    ) == [ProtocolTranscript("接下来", False, 1)]
+    assert protocol.decode(response({}, flags=2)) == [ProtocolTranscript("接下来", True, 1)]

@@ -1,9 +1,12 @@
 import asyncio
 import time
+from array import array
 
 from app.api.session import SessionRuntime
 from app.domain.session import SpeechSession
 from app.speech import RecognitionUpdate
+
+VOICE_PCM = array("h", [-100, 100] * 640).tobytes()  # 80 ms of AC audio
 
 
 class SlowStream:
@@ -36,7 +39,7 @@ def test_pause_does_not_wait_for_inference_and_discards_late_transcript():
         runtime = SessionRuntime(SpeechSession("script", "欢迎大家。"), "demo", FakeSpeech())
         await runtime.control({"type": "start"})
         await runtime.control({"type": "audio_ready"})
-        inference = asyncio.create_task(runtime.audio(bytes(640)))
+        inference = asyncio.create_task(runtime.audio(VOICE_PCM))
         await asyncio.sleep(0.02)
         before = time.monotonic()
         await runtime.control({"type": "pause"})
@@ -92,9 +95,9 @@ def test_partial_does_not_commit_until_final():
         runtime = SessionRuntime(SpeechSession("script", "欢迎大家。"), "demo", Speech())
         await runtime.control({"type": "start"})
         await runtime.control({"type": "audio_ready"})
-        await runtime.audio(bytes(640))
+        await runtime.audio(VOICE_PCM)
         assert runtime.session.reading_position is None
-        await runtime.audio(bytes(640))
+        await runtime.audio(VOICE_PCM)
         assert runtime.session.reading_position is not None
 
     asyncio.run(scenario())

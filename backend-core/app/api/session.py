@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import clone_model_settings
 from app.domain.session import SessionError, SessionState, SpeechSession
+from app.infrastructure.audio_evidence import AudioEvidence
 from app.infrastructure.llm import LLMSemanticRefiner
 from app.infrastructure.speech import ProviderSpeechServices, SpeechUnavailableError
 from app.repositories.scripts import get_script as find_script
@@ -62,6 +63,10 @@ class SessionRuntime:
         self.audio_queue: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(maxsize=50)
         self.audio_inflight = False
         self.audio_pending = False
+        self.audio_evidence = AudioEvidence()
+        self.filtered_text = ""
+        self.filtered_final = False
+        self.filtered_count = 0
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self.session.snapshot()
@@ -72,7 +77,7 @@ class SessionRuntime:
             units=[asdict(unit) for unit in self.session.tracker.units],
             position_reliable=self.session.reliable,
             recognized_text=self.last_text or self.session.last_transcript,
-            raw_transcript=self.last_text or self.session.raw_transcript,
+            raw_transcript=self.filtered_text or self.last_text or self.session.raw_transcript,
             aligned_transcript=self.session.aligned_transcript,
             notice=self.session.message,
             stt_provider=self.provider_name,
@@ -90,8 +95,14 @@ class SessionRuntime:
             model_config_revision=self.model_config_revision,
             recognition_is_final=self.last_update_final,
             raw_transcript_is_final=(
-                self.last_update_final or (not self.last_text and bool(self.session.raw_transcript))
+                self.filtered_final
+                if self.filtered_text
+                else self.last_update_final
+                or (not self.last_text and bool(self.session.raw_transcript))
             ),
+            recognition_filtered=bool(self.filtered_text),
+            recognition_filtered_count=self.filtered_count,
+            recognition_filter_reason="缺少本段有效人声证据" if self.filtered_text else "",
             recognition_segment_id=self.last_segment_id,
         )
         return snapshot
@@ -121,6 +132,10 @@ class SessionRuntime:
         self.last_text = ""
         self.last_segment_id = -1
         self.last_update_final = False
+        self.audio_evidence = AudioEvidence()
+        self.filtered_text = ""
+        self.filtered_final = False
+        self.filtered_count = 0
         self.audio_inflight = False
         self.audio_pending = False
 
@@ -190,6 +205,8 @@ class SessionRuntime:
 
     async def tick(self, timestamp: int) -> None:
         """Settle a pending hypothesis only at the actual silence deadline."""
+        if self.audio_evidence.pending_voice:
+            return
         due = (
             not self.session.speaking
             and self.session.silence_since_ms is not None
@@ -345,9 +362,12 @@ class SessionRuntime:
             self.last_frame_ms = received
             generation = self.session.generation
             stream = self.stream
-            voiced = stream.is_speech(pcm)
+            voiced = self.audio_evidence.observe(pcm, stream.is_speech(pcm))
             changed = False
             if voiced:
+                notify = getattr(stream, "notify_voice", None)
+                if callable(notify):
+                    notify()
                 self.last_voice_ms = received
                 if not self.session.speaking:
                     self.transcript_revision += 1
@@ -384,6 +404,26 @@ class SessionRuntime:
                 or update.segment_id <= self.finalized_segment_id
             ):
                 return
+            if (
+                update.text.strip()
+                and not update.is_filler_only
+                and not self.audio_evidence.allows(
+                    update.segment_id,
+                    start_ms=getattr(update, "start_ms", None),
+                    end_ms=getattr(update, "end_ms", None),
+                    is_final=update.is_final,
+                )
+            ):
+                # A cloud hypothesis alone cannot turn live silence into speech
+                # or disable prompting at the last reliable script position.
+                self.filtered_text = update.text
+                self.filtered_final = update.is_final
+                self.filtered_count += 1
+                await self.publish()
+                return
+            if update.text.strip():
+                self.filtered_text = ""
+                self.filtered_final = False
             if update.segment_id > self.last_segment_id:
                 self.last_text = ""
             if update.text != self.last_text or update.segment_id != self.last_segment_id:
@@ -468,7 +508,7 @@ async def session_socket(socket: WebSocket) -> None:
                 timestamp = now_ms()
                 if current.last_frame_ms and timestamp - current.last_frame_ms > 5000:
                     await current.change("service_fault", reason="麦克风数据中断，已暂停。")
-                else:
+                elif not current.audio_evidence.pending_voice:
                     await current.tick(timestamp)
 
     async def audio_worker() -> None:

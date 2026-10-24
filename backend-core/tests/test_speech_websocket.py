@@ -365,6 +365,9 @@ def test_low_energy_vad_voice_starts_cloud_deadline(with_fallback):
             try:
                 pcm = array("h", [50] * 320).tobytes()
                 assert stream.is_speech(pcm)
+                # Raw VAD must not start a request before acoustic confirmation.
+                assert recognizer._pending_voice_at is None
+                stream.notify_voice()
                 assert recognizer._pending_voice_at is not None
                 async with asyncio.timeout(2):
                     while recognizer._failure is None:

@@ -1,0 +1,67 @@
+$ pnpm test:legacy && pnpm test:unit
+$ node --experimental-strip-types --test tests/*.test.mjs
+✔ stopping an audio decode prevents stale playback and completion (3.19141ms)
+✔ manual stop detaches completion callback (0.394991ms)
+✔ AudioWorklet resamples 48 kHz into 20 ms PCM16 frames and flushes on disable (4.996329ms)
+✔ editor draft keeps revision and activation metadata separate and never fills a masked key (1.481042ms)
+✔ credential preserve, replacement and explicit clear are distinct payloads (0.33059ms)
+✔ cloud drafts require explicit microphone authorization and model drafts require URL and model (0.428007ms)
+✔ save, duplicate, test and activate use independent routes and never send secrets during copy (20.963253ms)
+✔ revision and session conflicts retain structured server reasons (1.111243ms)
+✔ model discovery uses the draft without requiring a model, preserving saved credentials and supporting cancellation (1.079128ms)
+✔ native ASR API Key does not require App ID, while old authentication does (0.510615ms)
+✔ ASR retains only its own saved credential and explicit clear blocks testing (0.339017ms)
+✔ native ASR validates encrypted protocol, consent and independent timeout (0.892449ms)
+✔ unsaved native ASR tests send all protocol fields without saving or borrowing an LLM key (1.233451ms)
+✔ model settings normalize nested response and preserve only secret metadata (1.253221ms)
+✔ model presets include generic providers and custom fallback (0.812296ms)
+✔ cloud ASR protocol options normalize flat, nested and older settings with independent timeout (0.262853ms)
+✔ session client prepares fixed script, waits for acknowledgement and uses expected socket URL (1.8939ms)
+✔ server errors reject pending state acknowledgement (0.548051ms)
+✔ events from old connection do not modify a replacement connection (0.391193ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 148.759925
+$ vitest run
+
+ RUN  v5.0.5 /home/timeleafing/projects/whisper-guide/frontend
+
+ ✓ tests/unit/modelConfigsStore.spec.ts (2 tests) 7ms
+ ✓ tests/unit/noiseGuardView.spec.ts (3 tests) 37ms
+ ✓ tests/unit/sessionController.spec.ts (8 tests) 79ms
+ ✓ tests/unit/stateMachineMonitor.spec.ts (13 tests) 156ms
+ ✓ tests/unit/studioFeedback.spec.ts (5 tests) 157ms
+ ✓ tests/unit/studioComponents.spec.ts (4 tests) 267ms
+ ✓ tests/unit/modelConfigs.spec.ts (9 tests) 313ms
+ ✓ tests/unit/modelConfigsView.spec.ts (16 tests) 1043ms
+
+ Test Files  8 passed (8)
+      Tests  60 passed (60)
+   Start at  13:49:02
+   Duration  4.05s (import 52%, environment 30%, tests 12%, transform 4%, worker 1%)
+
+$ vue-tsc --noEmit
+$ npm run typecheck && vite build
+npm notice run whisper-guide-frontend@0.1.0 typecheck
+npm notice run vue-tsc --noEmit
+vite v7.3.7 building client environment for production...
+transforming...
+✓ 2738 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                              0.55 kB │ gzip:   0.38 kB
+dist/assets/ModelConfigsView-BEDX1-08.css    5.36 kB │ gzip:   1.32 kB
+dist/assets/StudioView-DASj9uxK.css          7.73 kB │ gzip:   1.85 kB
+dist/assets/index-BC9rDw4C.css               9.85 kB │ gzip:   2.88 kB
+dist/assets/scripts-Cymwunkx.js              2.14 kB │ gzip:   1.07 kB
+dist/assets/DashboardView-DUt_a3II.js        5.47 kB │ gzip:   2.60 kB
+dist/assets/modelConfigs-b24vhbWL.js         6.08 kB │ gzip:   2.50 kB
+dist/assets/ModelConfigsView-DFpwuQex.js    31.06 kB │ gzip:  10.23 kB
+dist/assets/StudioView-BZ77tnCq.js         169.78 kB │ gzip:  49.95 kB
+dist/assets/index-IjqWxNPQ.js              452.47 kB │ gzip: 139.32 kB
+✓ built in 3.65s

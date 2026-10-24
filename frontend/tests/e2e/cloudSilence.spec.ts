@@ -1,7 +1,10 @@
+import { useSyntheticMicrophone } from './syntheticMicrophone'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
 const screenshots = '../docs/screenshots/cloud-silence-2026-10-24'
+
+test.beforeEach(async ({ page }) => { await useSyntheticMicrophone(page) })
 
 test('cloud revisions recover from an unreliable partial and automatically prompt after silence', async ({ page }) => {
   const created = await page.request.post('/api/settings/model-configs', { data: { name: '云端静音修订验证', settings: {

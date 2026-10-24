@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from array import array
 from collections import deque
 from types import SimpleNamespace
 
@@ -61,7 +62,9 @@ async def listening(stream, script="大家好。欢迎测试。继续下一句�
 
 async def frame(runtime, monkeypatch, timestamp):
     monkeypatch.setattr(runtime_api, "now_ms", lambda: timestamp)
-    await runtime.audio(bytes(640))
+    # Distinct logical reads carry a real 80 ms weak voice, separated by
+    # 200 ms silence on the PCM clock rather than only jumping wall time.
+    await runtime.audio(bytes(6400) + array("h", [-100, 100] * 640).tobytes())
 
 
 def test_revised_cloud_partial_in_same_segment_can_settle_after_failed_alignment(monkeypatch):

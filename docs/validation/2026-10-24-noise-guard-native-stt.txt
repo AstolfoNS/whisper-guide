@@ -1,0 +1,5 @@
+Real native sherpa-onnx / WebRTC VAD evidence smoke check; generated audio only, no recording files.
+{"stt": "ready", "vad": "ready", "tts": "ready"}
+{"zero_frames": 300, "audio_ms": 6000, "confirmed_voice_frames": 0, "accepted_meaningful_updates": 0, "endpoint_intervals_ms": [[0, 2660], [2660, 5220]]}
+Chinese synthetic TTS smoke skipped: ffmpeg not available; no dependency installed.
+PASS: native silence and connection-clock endpoint checks.
