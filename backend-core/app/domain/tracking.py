@@ -228,20 +228,37 @@ class ScriptAligner:
         recognized = content_units(transcript)
         if not recognized:
             return None
+        # Keep fuzzy comparisons at 64 units. A longer segment may extend the
+        # window only after its omitted prefix matches nearby script verbatim.
+        # Exceptionally long inputs stay uncommitted rather than expanding work
+        # without a bound while the session control lock is held.
+        if len(recognized) > 256:
+            return None
         needle = [unit.normalized for unit in recognized[-64:]]
         needle_pinyin = [_pinyin_key(unit.text) for unit in recognized[-64:]]
+        prefix_length = max(0, len(recognized) - len(needle))
         anchor = 0 if reading_position is None else self.tracker.unit_index_at(reading_position)
         left = max(0, anchor - max(self.search_before, len(needle) + 12))
         right = min(
             len(self.tracker.units),
             anchor + max(self.search_after, len(needle) + 12),
         )
+        starts = range(left, right)
+        if prefix_length:
+            prefix = [unit.normalized for unit in recognized[:prefix_length]]
+            starts = [
+                start + prefix_length
+                for start in starts
+                if [unit.normalized for unit in self.tracker.units[start : start + prefix_length]]
+                == prefix
+            ]
         candidates: list[AlignmentCandidate] = []
         lengths = range(max(1, len(needle) - 2), len(needle) + 3)
-        for start in range(left, right):
+        for start in starts:
             for length in lengths:
                 end = start + length
-                if end > right:
+                limit = len(self.tracker.units) if prefix_length else right
+                if end > limit:
                     continue
                 literal = SequenceMatcher(
                     None,
@@ -256,7 +273,15 @@ class ScriptAligner:
                     autojunk=False,
                 ).ratio()
                 end_index = end - 1
-                distance = abs(end_index - anchor)
+                full_start = start - prefix_length
+                # Sequential reading is close even when a coherent sentence is
+                # long: its end is progress, not evidence of a distant jump.
+                if full_start <= anchor <= end_index:
+                    distance = 0
+                elif full_start > anchor:
+                    distance = max(0, full_start - anchor - (reading_position is not None))
+                else:
+                    distance = anchor - end_index
                 proximity = max(0.0, 1.0 - min(distance, 80) / 80)
                 context = 1.0 if end_index >= anchor else max(0.0, 1.0 - distance / 24)
                 jump_penalty = min(0.25, max(0, distance - 8) / 80)
@@ -269,7 +294,7 @@ class ScriptAligner:
                 )
                 candidates.append(
                     AlignmentCandidate(
-                        start,
+                        full_start,
                         end_index,
                         score,
                         literal,

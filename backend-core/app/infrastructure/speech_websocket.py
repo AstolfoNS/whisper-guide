@@ -330,9 +330,13 @@ class WebSocketStreamingRecognizer:
                 del self._buffer[: self._chunk_bytes]
                 if self._pending_voice_at is None and _voiced(chunk):
                     self._pending_voice_at = time.monotonic()
+            # Measure the 200 ms cadence from send start. Waiting a full
+            # interval after send completion permanently adds transport latency
+            # to each chunk, eventually overflowing even a healthy live stream.
+            # An idle source starts a fresh cadence; missed slots never burst.
+            sent_at = time.monotonic()
             async with asyncio.timeout(_timeout(self.config)):
                 await socket.send(self.protocol.audio_frame(chunk))
-            sent_at = time.monotonic()
 
     async def _receive(self, socket: Any) -> None:
         async for message in socket:
