@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.speech import (
+from app.infrastructure.speech import (
     RecognitionUpdate,
     SpeechServices,
     SpeechStream,

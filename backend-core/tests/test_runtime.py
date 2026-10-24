@@ -4,7 +4,7 @@ from array import array
 
 from app.api.session import SessionRuntime
 from app.domain.session import SpeechSession
-from app.speech import RecognitionUpdate
+from app.infrastructure.speech import RecognitionUpdate
 
 VOICE_PCM = array("h", [-100, 100] * 640).tobytes()  # 80 ms of AC audio
 

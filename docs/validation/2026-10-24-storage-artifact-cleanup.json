@@ -1,0 +1,74 @@
+{
+  "removed": [
+    {
+      "path": "backend-core/.pytest_cache",
+      "file_bytes": 2457599
+    },
+    {
+      "path": "backend-core/__pycache__",
+      "file_bytes": 665
+    },
+    {
+      "path": "backend-core/.ruff_cache",
+      "file_bytes": 4178
+    },
+    {
+      "path": "backend-core/app/__pycache__",
+      "file_bytes": 17171
+    },
+    {
+      "path": "backend-core/app/api/__pycache__",
+      "file_bytes": 97599
+    },
+    {
+      "path": "backend-core/app/repositories/__pycache__",
+      "file_bytes": 18141
+    },
+    {
+      "path": "backend-core/app/domain/__pycache__",
+      "file_bytes": 38781
+    },
+    {
+      "path": "backend-core/app/infrastructure/__pycache__",
+      "file_bytes": 124123
+    },
+    {
+      "path": "backend-core/scripts/__pycache__",
+      "file_bytes": 14073
+    },
+    {
+      "path": "backend-core/tests/__pycache__",
+      "file_bytes": 1137469
+    },
+    {
+      "path": "scripts/__pycache__",
+      "file_bytes": 2311
+    },
+    {
+      "path": ".uv-cache-test",
+      "file_bytes": 44
+    },
+    {
+      "path": "frontend/dist",
+      "file_bytes": 692256
+    },
+    {
+      "path": "frontend/test-results",
+      "file_bytes": 45
+    },
+    {
+      "path": "backend-core/app/models/__pycache__",
+      "file_bytes": 1722
+    }
+  ],
+  "total_file_bytes": 4606177,
+  "preserved": [
+    "user data",
+    "backups",
+    "private configs",
+    ".venv",
+    "node_modules",
+    "active model files",
+    "git history"
+  ]
+}

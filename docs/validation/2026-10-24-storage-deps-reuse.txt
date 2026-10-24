@@ -1,0 +1,80 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from .storage-deps.Dockerfile
+#1 transferring dockerfile: 759B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for ghcr.io/astral-sh/uv:0.11.18
+#2 ...
+
+#3 [internal] load metadata for docker.io/library/whisper-guide-deps-source:storage-20261024
+#3 DONE 0.2s
+
+#2 [internal] load metadata for ghcr.io/astral-sh/uv:0.11.18
+#2 DONE 11.6s
+
+#4 FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#4 resolve ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03 0.0s done
+#4 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 25.15MB / 25.15MB 871.6s done
+#4 extracting sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0.3s done
+#4 extracting sha256:38a8c2c3a3c6beb1f0c9a5e3e3559c1e51e523d61008e3992dff21c56c09dccd 0.0s done
+#4 DONE 872.0s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 1.32kB done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 419.80kB 0.0s done
+#6 DONE 0.0s
+
+#7 [stage-0 1/5] FROM docker.io/library/whisper-guide-deps-source:storage-20261024@sha256:a79a61324a0ffcbe47a711cb8354de7c04aa108551a908a4ead1eec72b41117c
+#7 resolve docker.io/library/whisper-guide-deps-source:storage-20261024@sha256:a79a61324a0ffcbe47a711cb8354de7c04aa108551a908a4ead1eec72b41117c 0.1s done
+#7 DONE 0.2s
+
+#7 [stage-0 1/5] FROM docker.io/library/whisper-guide-deps-source:storage-20261024@sha256:a79a61324a0ffcbe47a711cb8354de7c04aa108551a908a4ead1eec72b41117c
+#7 extracting sha256:f87f6b7ef4410dbaf53d232e4184d0b3ea87570ac23c4c7875bdd8a079deb15d 0.0s done
+#7 extracting sha256:d4e9f98a7be91f442ad4ff1f458a5110b4be82775b7dee5e7b9beda5d2c5c1ad 0.0s done
+#7 extracting sha256:ff25dc232b14c53748a896c2248c54169e46a0b7b73315156e860b98f501877a
+#7 extracting sha256:ff25dc232b14c53748a896c2248c54169e46a0b7b73315156e860b98f501877a 1.6s done
+#7 DONE 1.8s
+
+#7 [stage-0 1/5] FROM docker.io/library/whisper-guide-deps-source:storage-20261024@sha256:a79a61324a0ffcbe47a711cb8354de7c04aa108551a908a4ead1eec72b41117c
+#7 extracting sha256:02f93c8e38c5b508e0b2a005214e9abfc006bb1de5c5084a80792a35798f80c2
+#7 extracting sha256:02f93c8e38c5b508e0b2a005214e9abfc006bb1de5c5084a80792a35798f80c2 0.9s done
+#7 DONE 2.7s
+
+#7 [stage-0 1/5] FROM docker.io/library/whisper-guide-deps-source:storage-20261024@sha256:a79a61324a0ffcbe47a711cb8354de7c04aa108551a908a4ead1eec72b41117c
+#7 extracting sha256:1e08fca8d354bf0ad2607a81b16e80006ca7e9c803239dce5c00a9db650b0156 0.0s done
+#7 extracting sha256:14071a426841b84b9779c87b0b2aacb919e7da26ecc6f74b8e53f7c962f17c2e 0.0s done
+#7 extracting sha256:e58dc7034548674d115dfe9797969a705919dde8d5f1dc2105ccd9c6b5f8dd44 0.0s done
+#7 extracting sha256:2742e31f7a6f807436dcd14831111be76ec8d597b5e8cca61a5acc1c00cc51c2 0.0s done
+#7 extracting sha256:8101b225bb97ac4ca4463ff4a607e550632acda582a8d1315f1a9cb122543a1a 0.0s done
+#7 extracting sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 0.0s done
+#7 DONE 2.8s
+
+#8 [stage-0 2/5] COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /bin/uv
+#8 DONE 0.5s
+
+#9 [stage-0 3/5] WORKDIR /app/backend-core
+#9 DONE 0.0s
+
+#10 [stage-0 4/5] COPY backend-core/pyproject.toml backend-core/uv.lock backend-core/README.md ./
+#10 DONE 0.0s
+
+#11 [stage-0 5/5] RUN uv sync --frozen --no-dev --no-cache --offline     && /app/backend-core/.venv/bin/python -c "from pathlib import Path; import importlib.util; p=Path('/app/backend-core/.venv'); files=list(p.rglob('*.pyc')); print('Removing bytecode files:', len(files), 'bytes:', sum(f.stat().st_size for f in files)); [f.unlink() for f in files]; assert importlib.util.find_spec('pytest') is None; assert importlib.util.find_spec('ruff') is None"
+#11 0.322 Checked 41 packages in 0.70ms
+#11 0.426 Removing bytecode files: 1378 bytes: 31500432
+#11 DONE 0.6s
+
+#12 exporting to image
+#12 exporting layers
+#12 exporting layers 2.0s done
+#12 exporting manifest sha256:be816b33ce8dfb41dfe34df5e3c61ff2e1e026195c5fd8f2b7b6628d97fd475a 0.0s done
+#12 exporting config sha256:73b1074d69e601774d63b351e867ea09f3d1e2df4627df16dd1d27c7b442e1c0 0.0s done
+#12 exporting attestation manifest sha256:0701b94cc4b55540ee8bb2e1d794de69ea8754368a86499a4e1ce9fa0e882e06 0.0s done
+#12 exporting manifest list sha256:114d2fdbf80f8ec7647a3d940ee0f1d720c6b4ef15689a0ecf5fd422e9ca6868 0.0s done
+#12 naming to docker.io/library/whisper-guide-deps-reuse:storage-20261024 done
+#12 unpacking to docker.io/library/whisper-guide-deps-reuse:storage-20261024
+#12 unpacking to docker.io/library/whisper-guide-deps-reuse:storage-20261024 0.6s done
+#12 DONE 2.7s

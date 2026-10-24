@@ -121,7 +121,7 @@ docker compose config --quiet
 docker compose build && docker compose up -d --force-recreate --wait --wait-timeout 180
 ```
 
-访问 `http://localhost:8080`；直接刷新 `/studio` 或 `/settings/models` 由 Nginx 回退到同一前端入口。SQLite、模型方案与旧兼容配置持久化到 `./data/sqlite`，备份到 `./data/backups`；更新镜像保留这些目录。STT 核心模型内置镜像，后端始终单 worker。`edge-tts` 仍需服务器联网。
+访问 `http://localhost:8080`；直接刷新 `/studio` 或 `/settings/models` 由 Nginx 回退到同一前端入口。SQLite、模型方案与旧兼容配置持久化到 `./data/sqlite`，备份到 `./data/backups`；更新镜像保留这些目录。STT 核心模型内置镜像，后端始终单 worker。`edge-tts` 仍需服务器联网。模型准备脚本只提取运行时使用的 tokens 与三份权重；已就绪目录再次执行脚本会离线清理冗余权重和官方测试音频。当前本地模型目录为 198,271,089 字节，清理前后原生识别器均可加载。构建和开发缓存的清理方式见[瘦身记录](docs/storage-slim-2026-10-24.md)，不要删除数据挂载目录。
 
 ## 检查与验收
 
@@ -142,11 +142,12 @@ pnpm exec playwright install --with-deps chromium
 pnpm test:e2e
 ```
 
-本地真实 STT 和中文闭环此前已验收；本轮路由、会话资源生命周期、多配置及界面回归见 [工作台重构记录](docs/workbench-refactor-2026-10-24.md)。历史结果保留于 [验收报告](docs/acceptance-round-1.md)。真实云端账号、目标麦克风/耳机、长时设备与读屏软件组合仍需单独验收。
+最新瘦身回归：后端 545 项、前端 87 项、Chromium 14 项通过，Ruff、TypeScript 与生产构建通过，详见[瘦身记录](docs/storage-slim-2026-10-24.md)。本地真实 STT 和中文闭环此前已验收；路由、会话资源生命周期、多配置及界面回归见 [工作台重构记录](docs/workbench-refactor-2026-10-24.md)。历史结果保留于 [验收报告](docs/acceptance-round-1.md)。真实云端账号、目标麦克风/耳机、长时设备与读屏软件组合仍需单独验收。
 
 - [架构](docs/architecture.md)
 - [部署](docs/deployment.md)
 - [运维与恢复](docs/operations.md)
+- [模型、依赖与 Docker 瘦身记录](docs/storage-slim-2026-10-24.md)
 - [离线部署](DEPLOY.md)
 
 当前没有用户认证和讲稿权限隔离，默认监听 localhost；公开配置接口前需设置 HTTPS、认证和访问控制。

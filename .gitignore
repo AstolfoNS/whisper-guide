@@ -20,12 +20,14 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .coverage
+.coverage.*
 htmlcov/
 
 # Node and generated frontend assets
 node_modules/
 dist/
 coverage/
+.vite/
 *.tsbuildinfo
 npm-debug.log*
 

@@ -1,0 +1,477 @@
+ Image whisper-guide-frontend:0.1.0 Building
+ Image whisper-guide-backend:0.1.0 Building
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.10kB done
+#1 DONE 0.0s
+
+#2 [backend internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.89kB done
+#2 DONE 0.0s
+
+#3 [frontend internal] load metadata for docker.io/library/node:24-alpine
+#3 DONE 0.0s
+
+#4 [backend internal] load metadata for ghcr.io/astral-sh/uv:0.11.18
+#4 ...
+
+#5 [backend internal] load metadata for docker.io/library/python:3.12-slim
+#5 DONE 0.4s
+
+#6 [frontend internal] load metadata for docker.io/library/nginx:1.29-alpine
+#6 DONE 0.4s
+
+#7 [frontend internal] load .dockerignore
+#7 transferring context: 1.32kB done
+#7 DONE 0.0s
+
+#8 [frontend frontend-build 1/7] FROM docker.io/library/node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+#8 resolve docker.io/library/node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 0.0s done
+#8 DONE 0.0s
+
+#9 [frontend frontend-runtime 1/3] FROM docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+#9 resolve docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de 0.0s done
+#9 DONE 0.0s
+
+#10 [frontend internal] load build context
+#10 transferring context: 213.81kB 0.0s done
+#10 DONE 0.0s
+
+#11 [frontend frontend-build 3/7] RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
+#11 CACHED
+
+#12 [frontend frontend-build 2/7] WORKDIR /src
+#12 CACHED
+
+#13 [frontend frontend-runtime 2/3] COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+#13 CACHED
+
+#14 [frontend frontend-build 4/7] COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+#14 CACHED
+
+#15 [frontend frontend-build 5/7] RUN pnpm install --frozen-lockfile
+#15 0.933 ? Verifying lockfile against supply-chain policies (175 entries)...
+#15 0.945 Lockfile is up to date, resolution step is skipped
+#15 1.078 Progress: resolved 1, reused 0, downloaded 0, added 0
+#15 1.134 Packages: +124
+#15 1.134 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#15 2.085 Progress: resolved 124, reused 0, downloaded 0, added 0
+#15 2.287 Packages are hard linked from the content-addressable store to the virtual store.
+#15 2.287   Content-addressable store is at: /root/.local/share/pnpm/store/v11
+#15 2.287   Virtual store is at:             node_modules/.pnpm
+#15 3.085 Progress: resolved 124, reused 0, downloaded 40, added 40
+#15 4.085 Progress: resolved 124, reused 0, downloaded 66, added 66
+#15 4.418
+#15 4.418    ╭───────────────────────────────────────────────╮
+#15 4.418    │                                               │
+#15 4.418    │     Update available! 11.24.0 → 12.15.0.      │
+#15 4.418    │     Changelog: https://pnpm.io/v/12.15.0      │
+#15 4.418    │   To update, run: corepack use pnpm@12.15.0   │
+#15 4.418    │                                               │
+#15 4.418    ╰───────────────────────────────────────────────╯
+#15 4.418
+#15 5.085 Progress: resolved 124, reused 0, downloaded 100, added 100
+#15 6.085 Progress: resolved 124, reused 0, downloaded 113, added 113
+#15 7.085 Progress: resolved 124, reused 0, downloaded 118, added 118
+#15 8.086 Progress: resolved 124, reused 0, downloaded 120, added 120
+#15 9.086 Progress: resolved 124, reused 0, downloaded 121, added 121
+#15 10.09 Progress: resolved 124, reused 0, downloaded 122, added 122
+#15 ...
+
+#4 [backend internal] load metadata for ghcr.io/astral-sh/uv:0.11.18
+#4 DONE 11.3s
+
+#7 [backend internal] load .dockerignore
+#7 transferring context: 1.32kB done
+#7 DONE 0.0s
+
+#16 [backend backend-deps 1/5] FROM docker.io/library/python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+#16 resolve docker.io/library/python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 0.0s done
+#16 CACHED
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 resolve ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03 0.0s done
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0B / 25.15MB 0.2s
+#17 ...
+
+#18 [backend internal] load build context
+#18 transferring context: 198.95MB 1.0s done
+#18 DONE 1.0s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0B / 25.15MB 5.3s
+#17 ...
+
+#15 [frontend frontend-build 5/7] RUN pnpm install --frozen-lockfile
+#15 12.31 Progress: resolved 124, reused 0, downloaded 123, added 122
+#15 13.31 Progress: resolved 124, reused 0, downloaded 123, added 123
+#15 13.99 Progress: resolved 124, reused 0, downloaded 124, added 124, done
+#15 15.40 ✓ Lockfile passes supply-chain policies (175 entries in 14.4s)
+#15 15.41 .../esbuild@0.28.2/node_modules/esbuild postinstall$ node install.js
+#15 15.52 .../esbuild@0.28.2/node_modules/esbuild postinstall: Done
+#15 15.60
+#15 15.60 dependencies:
+#15 15.60 + naive-ui 2.45.3
+#15 15.60 + pinia 4.1.0
+#15 15.60 + vue 3.5.44
+#15 15.60 + vue-router 4.6.4
+#15 15.60
+#15 15.60 devDependencies:
+#15 15.60 + @playwright/test 1.64.1
+#15 15.60 + @types/node 24.19.2
+#15 15.60 + @vitejs/plugin-vue 6.0.10
+#15 15.60 + @vue/test-utils 2.5.1
+#15 15.60 + happy-dom 21.0.4
+#15 15.60 + typescript 5.9.3
+#15 15.60 + vite 7.3.7
+#15 15.60 + vitest 5.0.5
+#15 15.60 + vue-tsc 3.3.13
+#15 15.60
+#15 15.68 Done in 15.3s using pnpm v11.24.0
+#15 DONE 16.3s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 ...
+
+#19 [frontend frontend-build 6/7] COPY frontend ./
+#19 DONE 0.3s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 ...
+
+#20 [backend backend-runtime 2/8] RUN apt-get update     && apt-get install -y --no-install-recommends ca-certificates libgomp1 libstdc++6     && rm -rf /var/lib/apt/lists/*     && useradd --create-home --uid 10001 appuser
+#20 0.849 Hit:1 http://deb.debian.org/debian trixie InRelease
+#20 1.057 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#20 1.859 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#20 2.940 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9678 kB]
+#20 ...
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0B / 25.15MB 10.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0B / 25.15MB 15.4s
+#17 ...
+
+#21 [frontend frontend-build 7/7] RUN pnpm run build
+#21 0.730 $ npm run typecheck && vite build
+#21 1.102
+#21 1.102 > whisper-guide-frontend@0.1.0 typecheck
+#21 1.102 > vue-tsc --noEmit
+#21 1.102
+#21 5.270 npm notice
+#21 5.270 npm notice New major version of npm available! 11.19.1 -> 12.2.1
+#21 5.270 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.1
+#21 5.270 npm notice To update run: npm install -g npm@12.2.1
+#21 5.270 npm notice
+#21 5.596 vite v7.3.7 building client environment for production...
+#21 5.662 transforming...
+#21 9.761 ✓ 2738 modules transformed.
+#21 9.936 rendering chunks...
+#21 10.09 computing gzip size...
+#21 10.10 dist/index.html                              0.55 kB │ gzip:   0.38 kB
+#21 10.10 dist/assets/ModelConfigsView-BEDX1-08.css    5.36 kB │ gzip:   1.32 kB
+#21 10.10 dist/assets/StudioView-DhzL3Si9.css          7.86 kB │ gzip:   1.87 kB
+#21 10.10 dist/assets/index-BC9rDw4C.css               9.85 kB │ gzip:   2.88 kB
+#21 10.10 dist/assets/scripts-CcBAluPi.js              2.14 kB │ gzip:   1.07 kB
+#21 10.10 dist/assets/DashboardView-CHyJqo2F.js        5.47 kB │ gzip:   2.60 kB
+#21 10.10 dist/assets/modelConfigs-D0GqMRei.js         6.08 kB │ gzip:   2.50 kB
+#21 10.10 dist/assets/ModelConfigsView-5ryUQOYN.js    31.06 kB │ gzip:  10.23 kB
+#21 10.10 dist/assets/StudioView-TK22C-uq.js         170.05 kB │ gzip:  50.06 kB
+#21 10.10 dist/assets/index-Dp1XV2iV.js              452.47 kB │ gzip: 139.32 kB
+#21 10.10 ✓ built in 4.49s
+#21 ...
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 ...
+
+#21 [frontend frontend-build 7/7] RUN pnpm run build
+#21 DONE 10.2s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 ...
+
+#22 [frontend frontend-runtime 3/3] COPY --from=frontend-build /src/dist /usr/share/nginx/html
+#22 DONE 0.0s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 ...
+
+#23 [frontend] exporting to image
+#23 exporting layers 0.1s done
+#23 exporting manifest sha256:eecdccccfe6732a24f28a428fb0c5c024ef93223efc1c141e1be84b0b03cfa31 0.0s done
+#23 exporting config sha256:1b8fecabfeb19cbdc69fade252018bae747ee1814741e281900b50cca689451d 0.0s done
+#23 exporting attestation manifest sha256:b4ce8840ee253055618ea8492ea59b1c23a56d1c23ac693cafcda0780c4ae566 0.0s done
+#23 exporting manifest list sha256:ef9bbdcd2ee8abeaa65a237acdbb6a14e70f040c30aa54708109c7d53b8186da 0.0s done
+#23 naming to docker.io/library/whisper-guide-frontend:0.1.0 done
+#23 unpacking to docker.io/library/whisper-guide-frontend:0.1.0 0.0s done
+#23 DONE 0.2s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 ...
+
+#24 [frontend] resolving provenance for metadata file
+#24 DONE 0.0s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0B / 25.15MB 20.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0B / 25.15MB 25.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0B / 25.15MB 30.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 1.05MB / 25.15MB 35.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 1.05MB / 25.15MB 40.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 1.05MB / 25.15MB 46.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 1.05MB / 25.15MB 51.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 1.05MB / 25.15MB 56.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 1.05MB / 25.15MB 61.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 1.05MB / 25.15MB 66.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 71.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 76.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 81.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 86.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 91.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 97.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 102.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 107.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 2.10MB / 25.15MB 112.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 3.15MB / 25.15MB 117.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 3.15MB / 25.15MB 122.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 3.15MB / 25.15MB 127.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 3.15MB / 25.15MB 132.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 3.15MB / 25.15MB 137.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 3.15MB / 25.15MB 142.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 3.15MB / 25.15MB 148.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 153.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 158.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 163.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 168.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 173.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 178.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 183.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 4.19MB / 25.15MB 188.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 5.24MB / 25.15MB 193.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 5.24MB / 25.15MB 199.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 5.24MB / 25.15MB 204.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 5.24MB / 25.15MB 209.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 5.24MB / 25.15MB 214.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 5.24MB / 25.15MB 219.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 5.24MB / 25.15MB 224.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 229.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 234.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 239.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 244.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 250.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 255.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 260.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 6.29MB / 25.15MB 265.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 270.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 275.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 280.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 285.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 290.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 295.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 301.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 7.34MB / 25.15MB 306.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 311.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 316.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 321.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 326.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 331.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 336.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 341.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 8.39MB / 25.15MB 346.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 9.44MB / 25.15MB 352.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 9.44MB / 25.15MB 357.1s
+#17 ...
+
+#20 [backend backend-runtime 2/8] RUN apt-get update     && apt-get install -y --no-install-recommends ca-certificates libgomp1 libstdc++6     && rm -rf /var/lib/apt/lists/*     && useradd --create-home --uid 10001 appuser
+#20 357.3 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [720 B]
+#20 357.5 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [270 kB]
+#20 ...
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 9.44MB / 25.15MB 362.7s
+#17 ...
+
+#20 [backend backend-runtime 2/8] RUN apt-get update     && apt-get install -y --no-install-recommends ca-certificates libgomp1 libstdc++6     && rm -rf /var/lib/apt/lists/*     && useradd --create-home --uid 10001 appuser
+#20 366.5 Fetched 10.0 MB in 6min 6s (27.4 kB/s)
+#20 366.5 Reading package lists...
+#20 367.0 Reading package lists...
+#20 367.6 Building dependency tree...
+#20 367.7 Reading state information...
+#20 368.0 ca-certificates is already the newest version (20250419+deb13u1).
+#20 368.0 libstdc++6 is already the newest version (14.2.0-19).
+#20 368.0 libstdc++6 set to manually installed.
+#20 368.0 The following NEW packages will be installed:
+#20 368.0   libgomp1
+#20 368.5 0 upgraded, 1 newly installed, 0 to remove and 1 not upgraded.
+#20 368.5 Need to get 137 kB of archives.
+#20 368.5 After this operation, 377 kB of additional disk space will be used.
+#20 368.5 Get:1 http://deb.debian.org/debian trixie/main amd64 libgomp1 amd64 14.2.0-19 [137 kB]
+#20 369.7 debconf: unable to initialize frontend: Dialog
+#20 369.7 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#20 369.7 debconf: falling back to frontend: Readline
+#20 369.7 debconf: unable to initialize frontend: Readline
+#20 369.7 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 1.)
+#20 369.7 debconf: falling back to frontend: Teletype
+#20 369.7 debconf: unable to initialize frontend: Teletype
+#20 369.7 debconf: (This frontend requires a controlling tty.)
+#20 369.7 debconf: falling back to frontend: Noninteractive
+#20 370.2 Fetched 137 kB in 2s (87.9 kB/s)
+#20 370.2 Selecting previously unselected package libgomp1:amd64.
+#20 370.2 (Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 5658 files and directories currently installed.)
+#20 370.2 Preparing to unpack .../libgomp1_14.2.0-19_amd64.deb ...
+#20 370.2 Unpacking libgomp1:amd64 (14.2.0-19) ...
+#20 370.3 Setting up libgomp1:amd64 (14.2.0-19) ...
+#20 370.3 Processing triggers for libc-bin (2.41-12+deb13u4) ...
+#20 DONE 370.4s
+
+#25 [backend backend-runtime 3/8] WORKDIR /app/backend-core
+#25 DONE 0.0s
+
+#17 [backend] FROM ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 9.44MB / 25.15MB 370.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 9.44MB / 25.15MB 375.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 9.44MB / 25.15MB 380.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 9.44MB / 25.15MB 385.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 390.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 396.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 401.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 406.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 411.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 416.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 421.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 10.49MB / 25.15MB 426.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 431.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 436.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 441.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 447.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 452.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 457.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 462.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 11.53MB / 25.15MB 467.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 12.58MB / 25.15MB 472.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 12.58MB / 25.15MB 477.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 12.58MB / 25.15MB 482.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 12.58MB / 25.15MB 487.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 12.58MB / 25.15MB 492.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 12.58MB / 25.15MB 498.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 12.58MB / 25.15MB 503.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 13.63MB / 25.15MB 508.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 13.63MB / 25.15MB 513.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 13.63MB / 25.15MB 518.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 13.63MB / 25.15MB 523.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 13.63MB / 25.15MB 528.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 13.63MB / 25.15MB 533.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 13.63MB / 25.15MB 538.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 14.68MB / 25.15MB 543.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 14.68MB / 25.15MB 549.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 14.68MB / 25.15MB 554.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 14.68MB / 25.15MB 559.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 14.68MB / 25.15MB 564.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 14.68MB / 25.15MB 569.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 14.68MB / 25.15MB 574.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 579.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 584.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 589.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 594.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 600.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 605.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 610.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 615.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 15.73MB / 25.15MB 620.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 16.78MB / 25.15MB 625.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 16.78MB / 25.15MB 630.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 16.78MB / 25.15MB 635.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 16.78MB / 25.15MB 640.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 16.78MB / 25.15MB 645.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 16.78MB / 25.15MB 651.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 16.78MB / 25.15MB 656.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 17.83MB / 25.15MB 661.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 17.83MB / 25.15MB 666.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 17.83MB / 25.15MB 671.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 17.83MB / 25.15MB 676.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 17.83MB / 25.15MB 681.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 18.87MB / 25.15MB 686.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 18.87MB / 25.15MB 691.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 18.87MB / 25.15MB 696.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 18.87MB / 25.15MB 702.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 19.92MB / 25.15MB 707.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 19.92MB / 25.15MB 712.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 19.92MB / 25.15MB 717.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 19.92MB / 25.15MB 722.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 19.92MB / 25.15MB 727.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 19.92MB / 25.15MB 732.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 19.92MB / 25.15MB 737.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 20.97MB / 25.15MB 742.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 20.97MB / 25.15MB 747.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 20.97MB / 25.15MB 753.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 20.97MB / 25.15MB 758.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 20.97MB / 25.15MB 763.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 20.97MB / 25.15MB 768.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 20.97MB / 25.15MB 773.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 22.02MB / 25.15MB 778.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 22.02MB / 25.15MB 783.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 22.02MB / 25.15MB 788.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 22.02MB / 25.15MB 793.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 22.02MB / 25.15MB 798.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 22.02MB / 25.15MB 804.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 22.02MB / 25.15MB 809.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 23.07MB / 25.15MB 814.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 23.07MB / 25.15MB 819.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 23.07MB / 25.15MB 824.4s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 23.07MB / 25.15MB 829.5s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 23.07MB / 25.15MB 834.6s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 23.07MB / 25.15MB 839.7s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 24.12MB / 25.15MB 844.8s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 24.12MB / 25.15MB 849.9s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 24.12MB / 25.15MB 855.0s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 24.12MB / 25.15MB 860.1s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 24.12MB / 25.15MB 865.2s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 24.12MB / 25.15MB 870.3s
+#17 sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 25.15MB / 25.15MB 871.6s done
+#17 extracting sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36
+#17 extracting sha256:dc53ac184c62e4824e2d805ad848658e103512daecb538db5d756f3fdd6a4e36 0.3s done
+#17 extracting sha256:38a8c2c3a3c6beb1f0c9a5e3e3559c1e51e523d61008e3992dff21c56c09dccd
+#17 extracting sha256:38a8c2c3a3c6beb1f0c9a5e3e3559c1e51e523d61008e3992dff21c56c09dccd 0.0s done
+#17 DONE 872.0s
+
+#26 [backend backend-deps 2/5] COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /uvx /bin/
+#26 DONE 0.2s
+
+#27 [backend backend-deps 3/5] WORKDIR /app/backend-core
+#27 DONE 0.0s
+
+#28 [backend backend-deps 4/5] COPY backend-core/pyproject.toml backend-core/uv.lock backend-core/README.md ./
+#28 DONE 0.0s
+
+#29 [backend backend-deps 5/5] RUN uv sync --frozen --no-dev --no-cache
+#29 0.322 Using CPython 3.12.15 interpreter at: /usr/local/bin/python3
+#29 0.322 Creating virtual environment at: .venv
+#29 1.361 Downloading pydantic-core (2.1MiB)
+#29 1.367 Downloading numpy (16.0MiB)
+#29 1.367 Downloading sqlalchemy (4.5MiB)
+#29 1.372 Downloading aiohttp (1.8MiB)
+#29 1.380 Downloading sherpa-onnx (4.2MiB)
+#29 1.381 Downloading uvloop (4.3MiB)
+#29 1.381 Downloading sherpa-onnx-core (10.1MiB)
+#29 689.7  Downloaded aiohttp
+#29 745.1  Downloaded pydantic-core
+

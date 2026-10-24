@@ -29,6 +29,8 @@ uv run python scripts/download_asr_model.py
 
 默认路径为 `backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20`。模型不进入 Git；Docker 内置已瘦身的 `tokens.txt` 与 encoder/decoder/joiner 三份 int8 权重，不包含冗余 fp32、测试音频或压缩包。此前真实中文音频、游标推进与回读闭环已经验收。
 
+脚本先校验归档条目，只解压与运行时选择规则一致的四个核心文件：非空 INT8 优先，缺少时才保留对应 FP32 版本。模型完整就绪后删除未选中的权重、官方测试音频与本模型固定名称的归档/断点文件；下载失败仍保留断点。已就绪目录重复执行脚本会直接离线瘦身，不重新下载；README 等来源说明保留。当前模型目录为 198,271,089 字节，原生加载校验前后均通过，详见[瘦身记录](storage-slim-2026-10-24.md)。
+
 下载中断时脚本支持断点续传，也可通过 `WHISPER_GUIDE_MODEL_URL` 指定可信镜像：
 
 ```bash
@@ -52,7 +54,7 @@ docker compose build && docker compose up -d --force-recreate --wait --wait-time
 
 WSL/Windows 浏览器访问 `http://localhost:8080`，首次更新后强制刷新页面。界面地址为 `/`、`/studio`、`/settings/models`。Nginx 将前端路由回退到 `index.html`，并将 `/api/`（含 WebSocket）代理给后端；不要将 API 404 改写成前端 HTML。
 
-`Dockerfile` 分别构建前端和后端运行镜像；前端先检查类型再构建，后端使用 uv 锁定生产依赖。模型层置于业务代码之前，运行固定单个 Uvicorn worker。`.dockerignore` 的模型忽略只能限定 `backend-core/models/`，不能使用 `**/models/**` 误排除 Python `app/models/`。
+`Dockerfile` 分别构建前端和后端运行镜像；前端先检查类型再构建，后端使用 uv 锁定生产依赖。模型层置于业务代码之前，运行固定单个 Uvicorn worker。运行镜像只复制已安装生产环境、应用与四份核心模型文件，不携带 uv、锁文件、开发入口或模型下载脚本；模型需在宿主机构建前准备。依赖安装不预编译 Python 字节码，运行时也不写入字节码。`.dockerignore` 的模型忽略只能限定 `backend-core/models/`，不能使用 `**/models/**` 误排除 Python `app/models/`。
 
 数据库及私有模型方案挂载至宿主机 `./data/sqlite`，备份挂载至 `./data/backups`。镜像更新继续使用原目录，不删除这些数据。日志单文件 10 MiB、最多 5 个。模型无需启动时下载；`edge-tts` 以及启用的云端服务仍需后端网络。
 
@@ -132,6 +134,6 @@ docker compose exec -T backend /app/backend-core/.venv/bin/python -c "import asy
 
 ## 离线发布与容量
 
-在 Docker daemon 可用的构建机执行 `./deploy/package.sh`。它将后端与前端合并保存为一个 gzip 镜像包，外层使用 tar；生成外层归档后移除内部大镜像副本。禁止将凭据、SQLite、node_modules、.venv、dist、测试音频或归档重新带入构建上下文。目标部署及备份见 [DEPLOY.md](../DEPLOY.md)。
+在 Docker daemon 可用的构建机执行 `./deploy/package.sh`。它将后端与前端合并保存为一个 gzip 镜像包，外层使用 tar；生成外层归档后移除内部大镜像副本。构建上下文排除文档、测试、凭据、SQLite、node_modules、.venv、dist、测试音频和归档；应用的 `app/models/` 仍作为 Python 源码保留。开发依赖只用于构建或本地检查，不进入后端运行环境。目标部署及备份见 [DEPLOY.md](../DEPLOY.md)。
 
 当前无用户认证与讲稿权限隔离，Compose 默认只绑定 localhost。远程使用需可信网络、HTTPS、认证和访问控制；不要仅修改端口暴露配置接口。

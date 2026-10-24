@@ -32,3 +32,17 @@ backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/*
 **/.model-configs-*.tmp
 **/test-results
 **/playwright-report
+# Documentation, checks and private runtime data are never build inputs.
+/docs/
+/.github/
+/data/
+/backend-core/data/
+/backend-core/tests/
+/backend-core/scripts/
+/frontend/tests/
+**/.mypy_cache
+**/.coverage
+**/.coverage.*
+**/coverage
+**/htmlcov
+**/.vite

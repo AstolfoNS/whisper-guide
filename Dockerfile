@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 FROM node:24-alpine AS frontend-build
 WORKDIR /src
 RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
@@ -10,7 +8,8 @@ RUN pnpm run build
 
 FROM python:3.12-slim AS backend-deps
 COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /uvx /bin/
-ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 PYTHONDONTWRITEBYTECODE=1
+# Keep only sources/native libraries; runtime disables bytecode writes too.
+ENV UV_LINK_MODE=copy PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app/backend-core
 COPY backend-core/pyproject.toml backend-core/uv.lock backend-core/README.md ./
 RUN uv sync --frozen --no-dev --no-cache
@@ -29,10 +28,9 @@ COPY --chown=appuser:appuser backend-core/models/sherpa-onnx-streaming-zipformer
     backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.int8.onnx \
     backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.int8.onnx \
     /models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/
-COPY backend-core/pyproject.toml backend-core/uv.lock ./
+# Runtime needs the application and installed environment only. Download tools,
+# lockfiles and the development entry point stay in the source checkout.
 COPY backend-core/app ./app
-COPY backend-core/main.py ./main.py
-COPY backend-core/scripts ./scripts
 RUN mkdir -p /data /backups \
     && chown appuser:appuser /data /backups
 USER appuser

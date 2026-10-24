@@ -1,0 +1,71 @@
+{
+  "isolated_network": "wg-slim-a03a901669",
+  "user_services_restarted": false,
+  "user_data_mounted": false,
+  "base": "http://127.0.0.1:59100",
+  "health": {
+    "status": "ok",
+    "service": "whisper-guide-backend",
+    "version": "0.1.0"
+  },
+  "pages": {
+    "/": 200,
+    "/studio": 200,
+    "/settings/models": 200
+  },
+  "speech": {
+    "stt": "ready",
+    "vad": "ready",
+    "tts": "ready"
+  },
+  "script_upload_status": 201,
+  "tts_memory_audio_bytes": 8496,
+  "websocket_states": [
+    "READY",
+    "LISTENING",
+    "PROMPTING",
+    "PAUSED",
+    "LISTENING",
+    "TERMINATED"
+  ],
+  "prompt_text": "大家好。",
+  "runtime": {
+    "model_files": [
+      "decoder-epoch-99-avg-1.int8.onnx",
+      "encoder-epoch-99-avg-1.int8.onnx",
+      "joiner-epoch-99-avg-1.int8.onnx",
+      "tokens.txt"
+    ],
+    "pyc_files": 0,
+    "pytest_present": false,
+    "ruff_present": false,
+    "uv_present": false,
+    "lockfiles_present": false,
+    "download_script_present": false,
+    "uid": 10001,
+    "pyc_scan_root": "/app/backend-core"
+  },
+  "images": [
+    {
+      "name": "whisper-guide-backend:0.1.0",
+      "id": "sha256:a3797668d52d12f69df852453159c0dd81196e33b40f3bd1110cfbcd4b9570dd",
+      "size_bytes": 781032790
+    },
+    {
+      "name": "whisper-guide-frontend:0.1.0",
+      "id": "sha256:ef9bbdcd2ee8abeaa65a237acdbb6a14e70f040c30aa54708109c7d53b8186da",
+      "size_bytes": 93537776
+    }
+  ],
+  "passed": true,
+  "test_containers_cleaned": true,
+  "backup": {
+    "script": "scripts/backup.py via stdin",
+    "source": "/data/whisper-guide.db",
+    "destination": "/backups/check.db",
+    "quick_check": "ok",
+    "storage": "isolated tmpfs, destroyed with test container"
+  },
+  "native_stt_silence_frames": 100,
+  "single_worker_verified": true
+}

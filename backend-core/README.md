@@ -49,9 +49,9 @@ uv run pytest
 uv run python scripts/download_asr_model.py
 ```
 
-脚本支持断点续传；下载中断后会保留 `models/.sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2.part`，下次运行会继续下载。网络受限时可通过 `--url` 或 `WHISPER_GUIDE_MODEL_URL` 指定可用镜像。脚本会在原子解压后严格检查 `tokens.txt` 及非空的 `encoder*.onnx`、`decoder*.onnx`、`joiner*.onnx`。
+脚本支持断点续传；下载中断后会保留 `models/.sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2.part`，下次运行会继续下载。网络受限时可通过 `--url` 或 `WHISPER_GUIDE_MODEL_URL` 指定可用镜像。脚本先验证归档路径、条目类型与重复项，只解压实际选用的 `tokens.txt` 及三份非空权重（INT8 优先，缺少时才选 FP32）。完整就绪后清除未选中权重、官方测试音频和本模型固定名称的归档/断点；失败时保留断点。已有完整目录再次执行会离线瘦身，不重新下载。默认模型当前保留四个核心文件和来源 README，共 198,271,089 字节；原生加载在清理前后均通过。
 
-模型放在 `models/`（已被 Git 忽略）。麦克风音频只在内存中处理；TTS
+模型放在 `models/`（已被 Git 忽略）。Docker 运行层只携带生产环境、应用与四份核心模型文件，不带模型下载工具；下载脚本在源码目录执行。语音入口统一使用 `app.infrastructure.speech`，旧 `app.speech` 兼容转发模块已移除。麦克风音频只在内存中处理；TTS
 通过 `edge-tts` 生成内存中的 MP3，不保存用户录音或临时提示音频。
 
 ## 当前实现状态

@@ -172,3 +172,32 @@ docker compose up -d --wait --wait-timeout 180
 列表请求经后端发送到当前 Base URL；编辑地址前确认目标服务，已有密钥也会被发送到该目标。修改地址、密钥、清除状态或预设会取消旧请求并清空旧列表；换方案或离开页面也会取消，迟到结果不能覆盖新草稿。
 
 2026-10-24，新发现实现通过一次只读方舟请求获取 137 个模型，479 ms，未截断。只读临时容器复用现有数据及源码的只读挂载，执行后自动清理；未调用文本生成、未发送讲稿/录音、未变更原方案或运行服务。该结果不代表 137 个模型全部完成生成接口验收。详见[模型发现实现与验收](model-discovery-2026-10-24.md)。
+
+## 开发与构建缓存清理
+
+先区分可再生缓存与运行数据：`data/sqlite`、`data/backups`、私有模型方案、当前使用的四份 STT 权重都需要保留。`.venv` 与 `frontend/node_modules` 是正在使用的开发环境，不因体积较大就删除。缓存清理后首次依赖同步或构建可能需要重新联网下载。
+
+在 WSL 项目根目录按需执行：
+
+```bash
+# 查看占用和 Docker 缓存，先判断是否有正在执行的构建。
+du -sh backend-core/models backend-core/.venv frontend/node_modules
+du -sh "$(uv cache dir)"
+pnpm --dir frontend store path
+docker system df
+docker buildx du
+
+# 移除可再生依赖下载缓存，保留已安装开发环境。
+uv cache clean
+pnpm --dir frontend store prune
+
+# 清理指定 builder 中超过 24 小时未用的构建缓存。
+# 该缓存可能与其他项目共享；执行前确认可接受下次重建。
+docker buildx prune --filter until=24h
+```
+
+不要把 `docker system prune -a --volumes` 当作本项目维护命令；它会影响其他镜像、容器或卷。运行中的服务继续引用旧镜像层，构建完成不会自动释放这些层，也不会自动更新现有容器。结束演讲、完成备份后再按本手册执行容器更新。
+
+本地模型目录已完整时，可在 `backend-core` 执行 `uv run python scripts/download_asr_model.py` 离线清除冗余权重、官方测试样本与本模型固定名称的残留归档。脚本只在四份核心文件完整时清理，下载失败保留断点；不要手工按通配符删除 `.onnx`。Docker 运行镜像不包含下载脚本，应在构建机源码目录执行。
+
+本轮实际移除 uv 缓存 6.6 GiB、pnpm 孤立缓存 189 MB，以及 152 条 Docker 构建缓存（工具报告 10.85 GB）；后续构建会重新产生缓存。这些统计来自不同工具，可能含共享文件或不同计量口径，不直接累加成物理磁盘释放量。WSL/Docker 虚拟磁盘内部释放空间也不代表 Windows 的 VHDX 文件立即缩小。本轮没有执行虚拟磁盘压缩、数据卷删除或用户服务重启。详见[瘦身记录](storage-slim-2026-10-24.md)。
