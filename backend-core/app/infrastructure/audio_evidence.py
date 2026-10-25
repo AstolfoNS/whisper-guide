@@ -69,6 +69,7 @@ class AudioEvidence:
         self._noise_features: deque[tuple[float, float, float]] = deque(maxlen=_NOISE_MAX_FEATURES)
         self._noise_floor = 0.0
         self._vad_run_ms = 0.0
+        self._fallback_run_ms = 0.0
         self._activity_id = -1
         self._last_activity_end = -math.inf
         self._untimed_activity_watermark = -1
@@ -81,10 +82,20 @@ class AudioEvidence:
     @property
     def pending_voice(self) -> bool:
         """A short AC/VAD onset needs its remaining frames before a timer tick."""
-        return 0 < self._vad_run_ms < _VAD_CONFIRM_MS - _EPSILON
+        return any(
+            0 < duration < _VAD_CONFIRM_MS - _EPSILON
+            for duration in (self._vad_run_ms, self._fallback_run_ms)
+        )
 
-    def observe(self, pcm: bytes, vad: bool) -> bool:
-        """Advance the PCM clock and report confirmed VAD, without retaining PCM."""
+    def observe(self, pcm: bytes, vad: bool, *, vad_is_fallback: bool = False) -> bool:
+        """Report confirmed detector voice, keeping RMS fallback as energy evidence.
+
+        Energy alone cannot distinguish speech from a stationary fan or hum.
+        RMS fallback protects a fresh onset but remains subject to stationary
+        noise learning. Once learned noise loses energy support it stops the
+        fallback clock. A real detector's positive, including quiet voice, stays
+        trusted independently of that floor.
+        """
         if not pcm or len(pcm) % 2:
             return False
         confirmed = False
@@ -98,8 +109,9 @@ class AudioEvidence:
             average = sum(samples) / len(samples)
             variance = sum(value * value for value in samples) / len(samples) - average * average
             ac_rms = math.sqrt(max(0.0, variance))
-            vad_supported = bool(vad and ac_rms >= _VAD_MIN_AC_RMS)
-            self._observe_noise(start, end, ac_rms, vad)
+            detector_voice = bool(vad and not vad_is_fallback)
+            vad_supported = bool(detector_voice and ac_rms >= _VAD_MIN_AC_RMS)
+            self._observe_noise(start, end, ac_rms, detector_voice)
             energy_supported = ac_rms >= max(
                 _WEAK_MIN_AC_RMS, self._noise_floor * _NOISE_ENERGY_RATIO
             )
@@ -108,6 +120,11 @@ class AudioEvidence:
                 confirmed = confirmed or self._vad_run_ms >= _VAD_CONFIRM_MS - _EPSILON
             else:
                 self._vad_run_ms = 0.0
+            if vad and vad_is_fallback and energy_supported:
+                self._fallback_run_ms += end - start
+                confirmed = confirmed or self._fallback_run_ms >= _VAD_CONFIRM_MS - _EPSILON
+            else:
+                self._fallback_run_ms = 0.0
             if vad_supported or energy_supported:
                 if start - self._last_activity_end >= _BURST_GAP_MS - _EPSILON:
                     self._activity_id += 1
@@ -121,7 +138,7 @@ class AudioEvidence:
         return confirmed
 
     def _observe_noise(self, start: float, end: float, ac_rms: float, vad: bool) -> None:
-        """Learn only sustained, steady VAD-negative energy, never quiet VAD voice.
+        """Learn steady energy without detector voice, including RMS-fallback positives.
 
         The energy-only escape hatch remains available at stream startup and
         above the current floor. Once a whole window proves stationary, revoke

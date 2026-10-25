@@ -84,6 +84,14 @@ export class SessionController {
   private onEvent = (event: SessionServerEvent) => {
     if (this.destroyed) return
     if (event.type === 'error') { this.store.error = event.message; return }
+    if (event.type === 'audio_diagnostics') {
+      const snapshot = this.store.snapshot
+      if (snapshot?.id === event.session_id && snapshot.generation === event.generation
+        && snapshot.state === 'LISTENING' && !this.store.localPaused) {
+        Object.assign(snapshot, event.diagnostics)
+      }
+      return
+    }
     if (event.type === 'snapshot') {
       const next = event.session
       const current = this.store.snapshot

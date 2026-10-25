@@ -49,6 +49,8 @@ def make_app(tmp_path):
 
 def state(ws, expected):
     event = ws.receive_json()
+    while event["type"] == "audio_diagnostics":
+        event = ws.receive_json()
     assert event["type"] == "snapshot"
     assert event["session"]["state"] == expected
     return event["session"]

@@ -117,6 +117,7 @@ class SpeechStream:
         self.sample_rate = sample_rate
         self._recognizer = recognizer
         self._vad = vad
+        self.vad_is_fallback = vad is None
         self._closed = False
         self.fallback_reason: dict[str, Any] | None = None
 
@@ -153,6 +154,10 @@ class SpeechStream:
     @property
     def available(self) -> bool:
         return self._recognizer is not None
+
+    def accept_pcm_batch(self, frames: list[bytes]) -> list[RecognitionUpdate | None]:
+        """Keep one ordered outcome per packet, including silent/no-result packets."""
+        return [self.accept_pcm(pcm) for pcm in frames]
 
     def accept_pcm(self, pcm: bytes) -> RecognitionUpdate | None:
         if self._closed or not pcm or self._recognizer is None:
@@ -211,7 +216,9 @@ class SpeechStream:
             except Exception:
                 pass
             else:
+                self.vad_is_fallback = False
                 return voiced
+        self.vad_is_fallback = True
         if len(pcm) % 2:
             return False
         samples = array("h", pcm)
@@ -802,6 +809,10 @@ class FallbackSpeechStream:
     def fallback_active(self) -> bool:
         return self.active is self.local
 
+    @property
+    def vad_is_fallback(self) -> bool:
+        return bool(getattr(self.local, "vad_is_fallback", False))
+
     def is_speech(self, pcm: bytes) -> bool:
         return self.local.is_speech(pcm)
 
@@ -810,6 +821,10 @@ class FallbackSpeechStream:
             notify = getattr(self.remote, "notify_voice", None)
             if callable(notify):
                 notify()
+
+    def accept_pcm_batch(self, frames: list[bytes]) -> list[RecognitionUpdate | None]:
+        """Keep one ordered outcome per packet, including silent/no-result packets."""
+        return [self.accept_pcm(pcm) for pcm in frames]
 
     def accept_pcm(self, pcm: bytes) -> RecognitionUpdate | None:
         if self._closed:

@@ -165,6 +165,7 @@ class SpeechSession:
             "transition_history": list(self.transition_history),
             "allowed_transitions": self.allowed_transitions(),
             "silence_timeout_ms": self.options.silence_timeout_ms,
+            "silence_prompt_policy": "saved_position",
             "reading_position": self.reading_position,
             "provisional_position": self.provisional_position,
             "provisional_transcript": self.provisional_transcript,
@@ -454,11 +455,22 @@ class SpeechSession:
             if (
                 self.state == SessionState.LISTENING
                 and not self.speaking
-                and self.reliable
                 and self.silence_since_ms is not None
                 and now_ms - self.silence_since_ms >= self.options.silence_timeout_ms
             ):
-                self._prompt(now_ms)
+                # Recognition may remain pending or genuinely mismatched after
+                # silence. The user's saved prompt anchor is still an explicit
+                # place to help from; playing it is not evidence of a new read.
+                unconfirmed = not self.reliable
+                self._prompt(
+                    now_ms,
+                    "recognition_wait_timeout" if unconfirmed else "silence_threshold_reached",
+                )
+                if unconfirmed and self.state == SessionState.PROMPTING:
+                    self._feedback(
+                        "静音等待已到，当前朗读位置尚未确认，先从已保存的提示起点播报；"
+                        "继续朗读可自动重新定位，也可手动定位。"
+                    )
         elif event == "manual_prompt":
             self._require(SessionState.LISTENING)
             self._prompt(now_ms, "manual_prompt")

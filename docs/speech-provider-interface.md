@@ -42,6 +42,14 @@ GET /api/app-config返回`{"app_title":"whisper-guide"}`，只包含显示标题
 
 stt_fallback_reason为null或受控对象，字段error_code、stage、http_status、provider_error_code、timeout_ms。stage为configuration/capacity/connect/initialize/send/result/buffer/receive/closed/unknown之一，数字字段可为null。不含URL、请求头、密钥、上游正文或异常对象。
 
+## 静音策略与实时处理诊断
+
+快照silence_prompt_policy=saved_position表示：有效静音到期后，先结算已接受草稿；位置仍不可靠则从保存prompt_position播报（transition_trigger=recognition_wait_timeout），不伪造新朗读位置、恢复成功或可靠分数。音频未就绪、断流、排队未处理、当前人声和全文末尾不满足提示条件。
+
+服务端在识别中每秒最多发送一个小事件：type=audio_diagnostics、session_id、generation、diagnostics。diagnostics含prompt_wait_reason、silence_elapsed_ms/remaining_ms、last_audio_received_age_ms、audio_queued_ms、audio_inference_ms、audio_batch_frames、audio_ready、pending_voice、audio_inflight。首次快照也包含这些字段；无实际PCM或尚未开始静音时计时为null。前端只合并当前会话/代际的监听诊断，事件不含音频、全文、units或设备标识。
+
+prompt_wait_reason区分inactive、stt_connecting、audio_not_ready、audio_missing、audio_backlog、audio_processing、voice_active、voice_pending、at_end、silence_wait、recognition_settling、ready。云端result超时与静音等待是独立计时，result超时可回退本地，不能单凭raw文字不变断定当前是静音。
+
 ## 删除讲稿契约
 
 DELETE成功不返回JSON。404的detail为{code:SCRIPT_NOT_FOUND,message}，409为{code:SCRIPT_IN_USE,message}。READY/LISTENING/PROMPTING/PAUSED及断线未终止会话都算占用，TERMINATED不阻止删除。
@@ -127,7 +135,7 @@ class RecognitionUpdate:
 
 快照包含可选provisional_position（整数或null）、provisional_transcript、provisional_confidence、recovery_status（idle/searching/ambiguous/confirming）、recovery_attempts。临时位置来自稳定partial，仅供高亮，不改变reading/prompt游标或放行播报。字段不增加主状态，旧快照兼容。
 
-失锁后全文检索强字面/拼音锚点，附近唯一正文可恢复；远跳需两份独立连续且各至少6单位的证据。同段修订、重复文字及LLM纠错不重复计数。重复句等后文，确认后恢复原静音提示资格。
+失锁后全文检索强字面/拼音锚点，附近唯一正文可恢复；远跳需两份独立连续且各至少6单位的证据。同段修订、重复文字及LLM纠错不重复计数。重复句等后文，确认后更新提示起点；未确认时静音到期仍可使用保存的提示起点，不代表恢复成功。
 
 ## 识别过滤诊断
 

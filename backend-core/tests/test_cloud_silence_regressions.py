@@ -80,7 +80,7 @@ def test_revised_cloud_partial_in_same_segment_can_settle_after_failed_alignment
         runtime = await listening(stream)
         await frame(runtime, monkeypatch, 1000)
         await frame(runtime, monkeypatch, 1250)
-        await runtime.tick(2000)
+        runtime.commit_transcript("火星飞船发射", 1900)
         assert runtime.session.state.value == "LISTENING"
         assert not runtime.session.reliable
         assert runtime.session.reading_position is None
@@ -115,14 +115,17 @@ def test_identical_partial_is_not_resettled_after_vad_clears_transient_text(monk
         monkeypatch.setattr(runtime, "commit_transcript", commit)
         await frame(runtime, monkeypatch, 1000)
         await frame(runtime, monkeypatch, 1250)
-        await runtime.tick(2000)
-        await runtime.tick(2050)
+        runtime.commit_transcript("火星飞船发射", 1900)
+        await runtime.tick(1950)
         await frame(runtime, monkeypatch, 2100)
         await frame(runtime, monkeypatch, 2350)
         await runtime.tick(3100)
         assert commits == ["火星飞船发射"]
         assert runtime.session.reading_position is None
-        assert runtime.session.state.value == "LISTENING"
+        assert runtime.session.state.value == "PROMPTING"
+        assert runtime.session.transition_trigger == "recognition_wait_timeout"
+        assert runtime.session.prompt.start == 0
+        assert runtime.session.aligned_transcript == ""
         assert not runtime.session.reliable
         runtime.release_stream()
 
@@ -144,15 +147,18 @@ def test_revised_but_unmatched_partial_preserves_reliable_cursor_and_single_warn
         position = runtime.session.reading_position
         await frame(runtime, monkeypatch, 1000)
         await frame(runtime, monkeypatch, 1250)
-        await runtime.tick(2000)
+        runtime.commit_transcript("火星飞船发射", 1900)
         feedback = runtime.session.feedback_id
         await frame(runtime, monkeypatch, 2100)
         await frame(runtime, monkeypatch, 2350)
         await runtime.tick(3100)
         assert runtime.session.reading_position == position == 2
-        assert runtime.session.feedback_id == feedback
+        assert runtime.session.feedback_id == feedback + 1
         assert not runtime.session.reliable
-        assert runtime.session.state.value == "LISTENING"
+        assert runtime.session.state.value == "PROMPTING"
+        assert runtime.session.transition_trigger == "recognition_wait_timeout"
+        assert runtime.session.prompt.text == "欢迎测试。"
+        assert runtime.session.aligned_transcript == "大家好"
         runtime.release_stream()
 
     asyncio.run(scenario())

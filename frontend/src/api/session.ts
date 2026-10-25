@@ -15,6 +15,12 @@ export interface SessionSnapshot {
   stt_provider_active?: string; stt_fallback?: boolean; stt_ready?: boolean; stt_fallback_reason?: SpeechFallbackReason | null
   recognition_filtered?: boolean; recognition_filter_reason?: string; recognition_filtered_count?: number
   alignment_status?: 'reliable' | 'pending' | 'mismatch'; raw_transcript_is_current?: boolean
+  silence_prompt_policy?: 'saved_position'
+  prompt_wait_reason?: 'inactive' | 'stt_connecting' | 'audio_not_ready' | 'audio_missing' | 'audio_backlog' | 'audio_processing' | 'voice_active' | 'voice_pending' | 'at_end' | 'silence_wait' | 'recognition_settling' | 'ready'
+  silence_elapsed_ms?: number | null; silence_remaining_ms?: number | null
+  last_audio_received_age_ms?: number | null; audio_queued_ms?: number
+  audio_inference_ms?: number; audio_batch_frames?: number; audio_inflight?: boolean
+  audio_ready?: boolean; pending_voice?: boolean; recognition_segment_id?: number
   provisional_position?: number | null; provisional_transcript?: string; provisional_confidence?: number | null
   recovery_status?: 'idle' | 'searching' | 'ambiguous' | 'confirming'; recovery_attempts?: number
   model_config_id?: string; model_config_name?: string; model_config_revision?: number
@@ -27,6 +33,7 @@ export interface SessionSnapshot {
 }
 export type SessionServerEvent =
   | { type: 'snapshot'; session: SessionSnapshot }
+  | { type: 'audio_diagnostics'; session_id: string; generation: number; diagnostics: Pick<SessionSnapshot, 'prompt_wait_reason' | 'silence_elapsed_ms' | 'silence_remaining_ms' | 'last_audio_received_age_ms' | 'audio_queued_ms' | 'audio_inference_ms' | 'audio_batch_frames' | 'audio_ready' | 'pending_voice' | 'audio_inflight'> }
   | { type: 'audio'; prompt_id: string; mime_type: string; data: string }
   | { type: 'error'; message: string }
 

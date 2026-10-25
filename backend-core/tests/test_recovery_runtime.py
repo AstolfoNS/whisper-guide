@@ -269,7 +269,11 @@ def test_stationary_noise_withdraws_early_partial_before_silence_settlement(monk
         await runtime.audio(bytes(8000))
         await runtime.tick(5000)
         assert runtime.session.reading_position is None
-        assert runtime.session.prompt is None
+        assert runtime.session.state.value == "PROMPTING"
+        assert runtime.session.prompt.start == 0
+        assert runtime.session.transition_trigger == "recognition_wait_timeout"
+        assert runtime.session.aligned_transcript == ""
+        runtime.cancel_prompt()
         assert not runtime.session.reliable
         runtime.release_stream()
 
@@ -361,11 +365,16 @@ def test_withdrawn_stationary_noise_finals_invalidate_confirmed_jump(monkeypatch
         assert not runtime.session.reliable
         assert not runtime.session._last_reliable
         assert runtime.session.snapshot()["alignment_status"] == "mismatch"
+        saved_prompt = runtime.session.prompt_position
         clock[0] = 1000
         await runtime.audio(bytes(8000))
         await runtime.tick(3000)
-        assert runtime.session.state.value == "LISTENING"
-        assert runtime.session.prompt is None
+        assert runtime.session.state.value == "PROMPTING"
+        assert runtime.session.prompt.start == saved_prompt
+        assert runtime.session.reading_position == position
+        assert not runtime.session.reliable
+        assert runtime.session.transition_trigger == "recognition_wait_timeout"
+        runtime.cancel_prompt()
         runtime.release_stream()
 
     asyncio.run(scenario())
@@ -410,8 +419,12 @@ def test_old_model_cannot_settle_new_vad_activity_without_text(monkeypatch):
         await runtime.audio(bytes(8000))
         await runtime.tick(3500)
         assert not runtime.session.reliable
-        assert runtime.session.prompt is None
-        assert runtime.session.state.value == "LISTENING"
+        assert runtime.session.state.value == "PROMPTING"
+        assert runtime.session.transition_trigger == "recognition_wait_timeout"
+        assert runtime.session.prompt.text == following + "。"
+        assert runtime.session.reading_position == len(quote) - 1
+        assert runtime.session.aligned_transcript == quote
+        runtime.cancel_prompt()
         runtime.release_stream()
 
     asyncio.run(scenario())

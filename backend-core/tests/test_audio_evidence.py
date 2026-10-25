@@ -319,3 +319,90 @@ def test_noise_estimation_keeps_bounded_scalar_history():
     assert len(evidence._features) <= 1500
     assert len(evidence._noise_features) <= 100
     assert not evidence.allows(0)
+
+
+@pytest.mark.parametrize("amplitude,offset", [(500, 0), (1000, 0), (3000, 0), (1, 16000)])
+def test_rms_fallback_positive_cannot_bypass_stationary_noise_learning(amplitude, offset):
+    evidence = AudioEvidence()
+    results = [
+        evidence.observe(pcm(amplitude, offset=offset), True, vad_is_fallback=True)
+        for _ in range(100)
+    ]
+    assert not any(results[29:])
+    assert not evidence.pending_voice
+    assert not evidence.allows(0, 0, 2000, is_final=True)
+    assert not evidence.allows(1)
+
+
+def test_stationary_rms_fallback_revokes_its_early_energy_only_partial():
+    evidence = AudioEvidence()
+    for _ in range(4):
+        evidence.observe(pcm(1000), True, vad_is_fallback=True)
+    assert evidence.allows(0, 0, 80)
+    assert evidence.is_supported(0)
+    for _ in range(46):
+        evidence.observe(pcm(1000), True, vad_is_fallback=True)
+    assert not evidence.is_supported(0)
+    assert not evidence.allows(0, 0, 1000, is_final=True)
+
+
+def test_real_quiet_detector_voice_is_not_suppressed_by_learned_rms_fallback_noise():
+    evidence = AudioEvidence()
+    for _ in range(50):
+        evidence.observe(pcm(3000), True, vad_is_fallback=True)
+    assert [evidence.observe(pcm(16), True) for _ in range(3)] == [False, False, True]
+    assert evidence.allows(0, 1000, 1060, is_final=True)
+    for _ in range(50):
+        evidence.observe(pcm(3000), True, vad_is_fallback=True)
+    assert evidence.allows(0, 1000, 2060, is_final=True)
+    assert not evidence.allows(1, 1060, 2060, is_final=True)
+
+
+def test_varying_rms_fallback_keeps_fresh_onset_and_transcript_support():
+    evidence = AudioEvidence()
+    for amplitude in [500, 3000, 1000, 4000, 500, 3000, 1000, 4000]:
+        for _ in range(5):
+            evidence.observe(pcm(amplitude), True, vad_is_fallback=True)
+    assert not evidence.pending_voice
+    assert evidence.allows(0, 0, 800, is_final=True)
+
+
+def test_rms_fallback_does_not_finish_a_real_detectors_pending_onset():
+    evidence = AudioEvidence()
+    assert not evidence.observe(pcm(16), True)
+    assert evidence.pending_voice
+    assert not evidence.observe(pcm(1000), True, vad_is_fallback=True)
+    assert evidence.pending_voice
+    assert not evidence.observe(pcm(16), True)
+    assert not evidence.observe(pcm(16), True)
+    assert evidence.observe(pcm(16), True)
+
+
+def test_weak_energy_transcript_support_remains_available_with_a_fallback_negative():
+    evidence = AudioEvidence()
+    for _ in range(4):
+        assert not evidence.observe(pcm(64), False, vad_is_fallback=True)
+    assert evidence.allows(0, 0, 80, is_final=True)
+
+
+def test_rms_fallback_noise_history_remains_bounded_and_contains_no_pcm():
+    evidence = AudioEvidence()
+    for _ in range(1600):
+        evidence.observe(pcm(1000), True, vad_is_fallback=True)
+    assert len(evidence._features) <= 1500
+    assert len(evidence._noise_features) <= 100
+    assert not evidence.allows(0)
+    assert all(
+        not isinstance(value, (bytes, bytearray, memoryview)) for value in vars(evidence).values()
+    )
+
+
+def test_fresh_rms_fallback_onset_waits_for_sixty_ms_before_stationarity_is_known():
+    evidence = AudioEvidence()
+    assert not evidence.observe(pcm(1000), True, vad_is_fallback=True)
+    assert evidence.pending_voice
+    assert not evidence.observe(pcm(1000), True, vad_is_fallback=True)
+    assert evidence.pending_voice
+    assert evidence.observe(pcm(1000), True, vad_is_fallback=True)
+    assert not evidence.pending_voice
+    assert not evidence.observe(pcm(0), False, vad_is_fallback=True)

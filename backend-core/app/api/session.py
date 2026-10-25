@@ -39,6 +39,38 @@ class SettledTranscript:
     acoustic_support: bool
 
 
+class AudioFrameQueue(asyncio.Queue[tuple[int, bytes]]):
+    """Bound both packet count and PCM duration; never discard accepted audio."""
+
+    def __init__(self) -> None:
+        super().__init__(maxsize=50)
+        self.queued_bytes = 0
+
+    def put_nowait(self, item: tuple[int, bytes]) -> None:
+        if self.queued_bytes + len(item[1]) > 32000:
+            raise asyncio.QueueFull
+        super().put_nowait(item)
+        self.queued_bytes += len(item[1])
+
+    def get_nowait(self) -> tuple[int, bytes]:
+        item = super().get_nowait()
+        self.queued_bytes -= len(item[1])
+        return item
+
+    def take_batch(self, first: tuple[int, bytes], *, enabled: bool) -> list[bytes]:
+        frames = [first[1]]
+        size = len(first[1])
+        # Peeking is encapsulated here so a generation boundary is never dequeued
+        # into a preceding batch. No await or input mutation occurs in this loop.
+        while enabled and self._queue and len(frames) < 5:
+            following = self._queue[0]
+            if following[0] != first[0] or size + len(following[1]) > 3200:
+                break
+            frames.append(self.get_nowait()[1])
+            size += len(frames[-1])
+        return frames
+
+
 class SessionRuntime:
     MAX_REFINEMENT_CATCHUP = 4
     PREVIEW_STABLE_MS = 300
@@ -74,6 +106,7 @@ class SessionRuntime:
         self.preview_hypothesis: tuple[int, str] | None = None
         self.preview_since_ms = 0
         self.preview_observations = 0
+        self.preview_applied: tuple[int, str] | None = None
         self.acoustic_segments: deque[int] = deque(maxlen=32)
         self.settled_hypothesis: tuple[int, str] | None = None
         # A single accepted hypothesis survives VAD display resets until settled.
@@ -94,13 +127,101 @@ class SessionRuntime:
         self.last_segment_id = -1
         self.last_update_final = False
         self.ready_generation = -1
-        self.audio_queue: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(maxsize=50)
+        self.audio_queue = AudioFrameQueue()
+        self.audio_received_ms: int | None = None
+        self.audio_processed_ms: int | None = None
+        self.audio_inference_ms = 0.0
+        self.audio_batch_frames = 0
         self.audio_inflight = False
         self.audio_pending = False
         self.audio_evidence = AudioEvidence()
         self.filtered_text = ""
         self.filtered_final = False
         self.filtered_count = 0
+        self.last_prompt_diagnostics_ms = now_ms()
+
+    @property
+    def audio_queued_ms(self) -> int:
+        return self.audio_queue.queued_bytes // 32
+
+    def prompt_diagnostics(self, timestamp: int | None = None) -> dict[str, Any]:
+        """Explain the real prompt gates using scalars, without audio or script data."""
+        timestamp = now_ms() if timestamp is None else timestamp
+        received_age = (
+            None if self.audio_received_ms is None else max(0, timestamp - self.audio_received_ms)
+        )
+        pending_voice = bool(self.audio_evidence.pending_voice)
+        queued_ms = self.audio_queued_ms
+        elapsed = remaining = None
+        if (
+            self.session.state == SessionState.LISTENING
+            and self.stt_ready
+            and self.audio_ready
+            and received_age is not None
+            and received_age <= 5000
+            and not self.session.speaking
+            and self.session.silence_since_ms is not None
+        ):
+            elapsed = max(0, timestamp - self.session.silence_since_ms)
+            remaining = max(0, self.session.options.silence_timeout_ms - elapsed)
+        if self.session.state != SessionState.LISTENING:
+            reason = "inactive"
+        elif not self.stt_ready:
+            reason = "stt_connecting"
+        elif not self.audio_ready:
+            reason = "audio_not_ready"
+        elif received_age is None or received_age > 5000:
+            # audio_ready seeds last_frame_ms but does not prove any PCM arrived.
+            reason = "audio_missing"
+        elif not self.audio_queue.empty():
+            reason = "audio_backlog"
+        elif self.audio_inflight or self.audio_pending:
+            reason = "audio_processing"
+        elif self.session.speaking:
+            reason = "voice_active"
+        elif pending_voice:
+            reason = "voice_pending"
+        elif self.session.prompt_position >= len(self.session.tracker.text):
+            reason = "at_end"
+        elif elapsed is None or remaining:
+            reason = "silence_wait"
+        elif self.pending_hypothesis and self.pending_hypothesis != self.settled_hypothesis:
+            reason = "recognition_settling"
+        else:
+            # Alignment uncertainty is not a permanent gate under saved-position
+            # policy. The next eligible tick uses the saved prompt anchor.
+            reason = "ready"
+        return {
+            "prompt_wait_reason": reason,
+            "silence_elapsed_ms": elapsed,
+            "silence_remaining_ms": remaining,
+            "last_audio_received_age_ms": received_age,
+            "audio_queued_ms": queued_ms,
+            "audio_inference_ms": max(0, int(self.audio_inference_ms)),
+            "audio_batch_frames": self.audio_batch_frames,
+            "audio_ready": self.audio_ready,
+            "pending_voice": pending_voice,
+            "audio_inflight": self.audio_inflight,
+        }
+
+    async def publish_prompt_diagnostics(self, timestamp: int | None = None) -> None:
+        """At most one small diagnostic event per second while listening."""
+        timestamp = now_ms() if timestamp is None else timestamp
+        if (
+            self.socket is None
+            or self.session.state != SessionState.LISTENING
+            or timestamp - self.last_prompt_diagnostics_ms < 1000
+        ):
+            return
+        self.last_prompt_diagnostics_ms = timestamp
+        await self.send(
+            {
+                "type": "audio_diagnostics",
+                "session_id": self.session.id,
+                "generation": self.session.generation,
+                "diagnostics": self.prompt_diagnostics(timestamp),
+            }
+        )
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self.session.snapshot()
@@ -142,6 +263,7 @@ class SessionRuntime:
             recognition_filter_reason="缺少本段有效人声证据" if self.filtered_text else "",
             recognition_segment_id=self.last_segment_id,
         )
+        snapshot.update(self.prompt_diagnostics())
         return snapshot
 
     async def send(self, message: dict[str, Any]) -> None:
@@ -187,6 +309,10 @@ class SessionRuntime:
         self.filtered_count = 0
         self.audio_inflight = False
         self.audio_pending = False
+        self.audio_received_ms = None
+        self.audio_processed_ms = None
+        self.audio_inference_ms = 0.0
+        self.audio_batch_frames = 0
 
     @staticmethod
     def _stream_ready(stream: Any) -> bool:
@@ -266,6 +392,7 @@ class SessionRuntime:
         self.refinement_evidence_id = None
 
     def clear_preview(self) -> None:
+        self.preview_applied = None
         self.preview_hypothesis = None
         self.preview_observations = 0
         self.session.clear_provisional()
@@ -313,6 +440,7 @@ class SessionRuntime:
         if (
             not candidate
             or candidate != self.pending_hypothesis
+            or candidate == self.preview_applied
             or not self.audio_evidence.is_supported(candidate[0])
             or candidate[0] <= self.finalized_segment_id
             or (
@@ -323,6 +451,7 @@ class SessionRuntime:
             return False
         before = self.session.snapshot()
         self.session.preview_transcript(candidate[1])
+        self.preview_applied = candidate
         after = self.session.snapshot()
         return any(
             before.get(key) != after.get(key)
@@ -480,6 +609,9 @@ class SessionRuntime:
                     # Keep its true verdict for later filler handling, while the
                     # current activity still waits for its own settled evidence.
                     self.session.mark_alignment_pending()
+                # Model replay can move the committed anchor and clear the
+                # provisional display even when the new partial is unchanged.
+                self.preview_applied = None
                 self.preview_partial(now_ms())
                 await self.publish()
         except asyncio.CancelledError:
@@ -657,7 +789,27 @@ class SessionRuntime:
         else:
             raise SessionError("不支持的会话命令。")
 
+    @staticmethod
+    def _can_batch_audio(stream: Any) -> bool:
+        # Cloud result deadlines must observe voice before PCM is enqueued.
+        # Local inference has no network watchdog and can safely amortize dispatch.
+        return callable(getattr(stream, "accept_pcm_batch", None)) and (
+            getattr(stream, "effective_provider", None) == "local"
+            or bool(getattr(stream, "fallback_active", False))
+        )
+
     async def audio(self, pcm: bytes, generation: int | None = None) -> None:
+        await self.audio_batch([pcm], generation)
+
+    async def audio_batch(self, frames: list[bytes], generation: int | None = None) -> None:
+        if len(frames) > 1 and not self._can_batch_audio(self.stream):
+            # Keep the same ordering for explicit callers as for the socket worker.
+            # Even if the first packet falls back, every remaining packet is owned
+            # by this generation and no already-sent cloud audio is replayed.
+            generation = self.session.generation if generation is None else generation
+            for pcm in frames:
+                await self.audio(pcm, generation)
+            return
         async with self.lock:
             if (
                 self.session.state != SessionState.LISTENING
@@ -666,38 +818,36 @@ class SessionRuntime:
                 or (generation is not None and generation != self.session.generation)
             ):
                 return
-            if not pcm or len(pcm) > 32000 or len(pcm) % 2:
+            if any(not pcm or len(pcm) > 32000 or len(pcm) % 2 for pcm in frames):
                 raise SessionError("音频必须是有效的 16 kHz 单声道 PCM16 数据。")
             received = now_ms()
             self.last_frame_ms = received
             generation = self.session.generation
             stream = self.stream
-            voiced = self.audio_evidence.observe(pcm, stream.is_speech(pcm))
-            changed = self.retract_unsupported_evidence()
-            if voiced:
-                notify = getattr(stream, "notify_voice", None)
-                if callable(notify):
-                    notify()
-                self.last_voice_ms = received
-                if not self.session.speaking:
-                    # Voice activity changes display state, not the immutable
-                    # settled evidence owned by an in-flight recovery request.
-                    self.last_text = ""
-                    self.last_update_final = False
-                    self.raw_transcript_is_current = False
-                    self.voice_activity_revision += 1
-                    self.session.handle("speech_start", received)
-                    changed = True
-            elif self.session.speaking and self.last_voice_ms is not None:
-                if received - self.last_voice_ms >= 200:
-                    self.session.handle("speech_end", self.last_voice_ms)
-                    changed = True
-            if changed:
-                await self.publish()
-        # Native inference must not hold the control lock: pause and terminate stay
-        # responsive. Results are accepted only for the generation that requested them.
+            if self.audio_received_ms is None:
+                self.audio_received_ms = received
+        if len(frames) == 1 and not await self._observe_packet(
+            frames[0], received, generation, stream
+        ):
+            return
+        # One worker call per bounded batch; individual packet hypotheses and
+        # endpoint/fallback ordering are retained by the infrastructure adapter.
         provider_before = getattr(stream, "effective_provider", self.provider_name)
-        update = await asyncio.to_thread(stream.accept_pcm, pcm)
+        started = time.perf_counter()
+        batch = getattr(stream, "accept_pcm_batch", None)
+        if len(frames) > 1 and callable(batch):
+            updates = await asyncio.to_thread(batch, frames)
+        else:
+
+            def infer_packets():
+                updates = []
+                for pcm in frames:
+                    update = stream.accept_pcm(pcm)
+                    updates.append(update)
+                return updates
+
+            updates = await asyncio.to_thread(infer_packets)
+        elapsed = (time.perf_counter() - started) * 1000
         async with self.lock:
             if (
                 generation != self.session.generation
@@ -705,8 +855,68 @@ class SessionRuntime:
                 or self.stream is not stream
             ):
                 return
+            self.audio_inference_ms = elapsed
+            self.audio_batch_frames = sum((len(pcm) + 639) // 640 for pcm in frames)
+            self.audio_processed_ms = now_ms()
             if provider_before != getattr(stream, "effective_provider", self.provider_name):
                 await self.publish()
+        for index, update in enumerate(updates):
+            if len(frames) > 1 and not await self._observe_packet(
+                frames[index], received, generation, stream
+            ):
+                return
+            await self._accept_update(update, received, generation, stream)
+
+    async def _observe_packet(
+        self, packet: bytes, received: int, generation: int, stream: Any
+    ) -> bool:
+        async with self.lock:
+            if (
+                generation != self.session.generation
+                or self.session.state != SessionState.LISTENING
+                or self.stream is not stream
+            ):
+                return False
+            for offset in range(0, len(packet), 640):
+                pcm = packet[offset : offset + 640]
+                voiced = self.audio_evidence.observe(
+                    pcm,
+                    stream.is_speech(pcm),
+                    vad_is_fallback=getattr(stream, "vad_is_fallback", False),
+                )
+                changed = self.retract_unsupported_evidence()
+                if voiced:
+                    notify = getattr(stream, "notify_voice", None)
+                    if callable(notify):
+                        notify()
+                    self.last_voice_ms = received
+                    if not self.session.speaking:
+                        # Voice activity changes display state, not the immutable
+                        # settled evidence owned by an in-flight recovery request.
+                        self.last_text = ""
+                        self.last_update_final = False
+                        self.raw_transcript_is_current = False
+                        self.voice_activity_revision += 1
+                        self.session.handle("speech_start", received)
+                        changed = True
+                elif self.session.speaking and self.last_voice_ms is not None:
+                    if received - self.last_voice_ms >= 200:
+                        self.session.handle("speech_end", self.last_voice_ms)
+                        changed = True
+                if changed:
+                    await self.publish()
+            return True
+
+    async def _accept_update(
+        self, update: Any, received: int, generation: int, stream: Any
+    ) -> None:
+        async with self.lock:
+            if (
+                generation != self.session.generation
+                or self.session.state != SessionState.LISTENING
+                or self.stream is not stream
+            ):
+                return
             if not update:
                 return
             # VAD clears transient display state, but must never make an old
@@ -847,27 +1057,42 @@ async def session_socket(socket: WebSocket) -> None:
     registry = runtimes(socket.app)
 
     async def check_idle(current: SessionRuntime, expected_generation: int | None = None) -> None:
-        # The periodic task can repeatedly coincide with native inference even
-        # when a healthy 20 ms audio pipeline has brief idle gaps. Also check
-        # after a completed frame, without overtaking queued voice or controls.
+        # Frame completion and the periodic timer share the same ownership guard.
+        # Queued/inflight voice remains ahead of timeout prompting, but must not
+        # hide the small, throttled explanation of why the timeout is waiting.
         async with current.lock:
             if (
-                runtime is current
-                and current.socket is socket
-                and (
-                    expected_generation is None or expected_generation == current.session.generation
+                runtime is not current
+                or current.socket is not socket
+                or (
+                    expected_generation is not None
+                    and expected_generation != current.session.generation
                 )
-                and current.audio_ready
-                and current.session.state == SessionState.LISTENING
+                or current.session.state != SessionState.LISTENING
+            ):
+                return
+            timestamp = now_ms()
+            if (
+                current.audio_ready
                 and not current.audio_inflight
                 and not current.audio_pending
                 and current.audio_queue.empty()
             ):
-                timestamp = now_ms()
-                if current.last_frame_ms and timestamp - current.last_frame_ms > 5000:
+                received = current.audio_received_ms
+                if received is None:
+                    # The browser acknowledgement is not a real PCM frame. Give
+                    # startup the existing bounded grace, without prompting early.
+                    if (
+                        current.last_frame_ms is not None
+                        and timestamp - current.last_frame_ms > 5000
+                    ):
+                        await current.change("service_fault", reason="麦克风数据中断，已暂停。")
+                elif timestamp - received > 5000:
                     await current.change("service_fault", reason="麦克风数据中断，已暂停。")
                 elif not current.audio_evidence.pending_voice:
                     await current.tick(timestamp)
+            # Never serialize a long script/units list for this heartbeat.
+            await current.publish_prompt_diagnostics(timestamp)
 
     async def audio_worker() -> None:
         while True:
@@ -876,9 +1101,15 @@ async def session_socket(socket: WebSocket) -> None:
                 continue
             current = runtime
             generation, pcm = await current.audio_queue.get()
+            frames = current.audio_queue.take_batch(
+                (generation, pcm), enabled=current._can_batch_audio(current.stream)
+            )
             current.audio_inflight = True
             try:
-                await current.audio(pcm, generation)
+                if len(frames) == 1:
+                    await current.audio(pcm, generation)
+                else:
+                    await current.audio_batch(frames, generation)
             except (SpeechUnavailableError, RuntimeError):
                 async with current.lock:
                     if (
@@ -910,7 +1141,11 @@ async def session_socket(socket: WebSocket) -> None:
             try:
                 if "bytes" in message and message["bytes"] is not None:
                     if runtime and runtime.session.state == SessionState.LISTENING:
+                        pcm = message["bytes"]
+                        if not pcm or len(pcm) > 32000 or len(pcm) % 2:
+                            raise SessionError("音频必须是有效的 16 kHz 单声道 PCM16 数据。")
                         try:
+                            runtime.audio_received_ms = now_ms()
                             runtime.audio_pending = True
                             runtime.audio_queue.put_nowait(
                                 (runtime.session.generation, message["bytes"])

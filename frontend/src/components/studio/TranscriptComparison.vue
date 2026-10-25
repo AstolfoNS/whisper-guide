@@ -16,6 +16,10 @@ const alignmentStatus = computed(() => {
   const snapshot = props.snapshot
   if (!snapshot || snapshot.state !== 'LISTENING') return ''
   if (snapshot.stt_ready === false) return '正在连接语音识别，请稍候再朗读。'
+  if (snapshot.silence_prompt_policy === 'saved_position' && !positionReliable.value) {
+    if (snapshot.speaking) return '正在接收语音；位置尚未确认，停止讲话并达到静音等待后从已保存的提示起点播报。'
+    return recovery.value || '本轮位置尚未确认；静音等待到期后从已保存的提示起点播报，不把该起点认定为新的朗读位置。'
+  }
   if (snapshot.alignment_status === 'mismatch') return `最近一次有效识别未能可靠匹配讲稿，${recovery.value || '自动提示暂缓；正在尝试自动恢复，可继续朗读更完整的一段，也可手动定位。'}`
   if (recovery.value) return recovery.value
   if (positionReliable.value) return ''

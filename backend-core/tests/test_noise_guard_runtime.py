@@ -156,10 +156,13 @@ def test_audible_unmatched_single_word_and_off_script_speech_still_trigger_ac14(
         )
         await frame(runtime, speech, clock, 1250, silence(250))
         await runtime.tick(2000)
-        assert runtime.session.state.value == "LISTENING"
+        assert runtime.session.state.value == "PROMPTING"
+        assert runtime.session.transition_trigger == "recognition_wait_timeout"
+        assert runtime.session.aligned_transcript == "我会坚持自律，好好"
+        assert runtime.session.prompt.start == runtime.session.prompt_position
         assert runtime.session.reading_position == position
         assert not runtime.session.reliable
-        assert runtime.session.feedback_id == 1
+        assert runtime.session.feedback_id == 2
         assert not runtime.snapshot()["recognition_filtered"]
         runtime.release_stream()
 

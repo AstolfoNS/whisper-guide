@@ -6,6 +6,7 @@ import { useSessionStore } from '../../stores/session'
 import { refreshHealth } from '../../services/healthMonitor'
 import { getSessionController } from '../../services/sessionController'
 import { speechFallbackMessage } from '../../services/speechDiagnostics'
+import { promptWaitLabel, silenceTimingLabel } from '../../services/promptDiagnostics'
 const health = useHealthStore()
 const session = useSessionStore()
 const open = ref(false)
@@ -37,6 +38,10 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
         <div><dt>当前会话 STT</dt><dd>{{ sessionProvider }}</dd></div>
         <div v-if="session.snapshot?.state === 'LISTENING'"><dt>会话识别连接</dt><dd>{{ connecting ? '正在连接，请稍候再朗读' : session.snapshot.stt_ready === true ? '已就绪' : '未上报' }}</dd></div>
         <div v-if="fallbackReason"><dt>本次回退原因</dt><dd data-testid="fallback-reason">{{ fallbackReason }}</dd></div>
+        <div v-if="session.snapshot?.prompt_wait_reason"><dt>自动提示等待原因</dt><dd>{{ promptWaitLabel(session.snapshot) }}</dd></div>
+        <div v-if="session.snapshot?.prompt_wait_reason"><dt>静音计时</dt><dd>{{ silenceTimingLabel(session.snapshot) }}</dd></div>
+        <div v-if="session.snapshot?.last_audio_received_age_ms != null"><dt>最近音频到达</dt><dd>{{ session.snapshot.last_audio_received_age_ms }} ms 前</dd></div>
+        <div v-if="session.snapshot?.audio_queued_ms != null"><dt>音频处理</dt><dd>排队 {{ session.snapshot.audio_queued_ms }} ms · 最近推理 {{ session.snapshot.audio_inference_ms ?? 0 }} ms / {{ session.snapshot.audio_batch_frames ?? 0 }} 帧</dd></div>
         <div><dt>VAD</dt><dd>{{ labels[health.vad] }}</dd></div>
         <div><dt>TTS 依赖</dt><dd>{{ health.tts === 'ready' ? '已安装，合成时检查网络' : labels[health.tts] }}</dd></div>
         <div><dt>最近播放</dt><dd>{{ { unknown: '尚未播放', pending: '准备或播放中', success: '浏览器播放结束', failed: '播放失败', stopped: '已取消播放' }[health.playback] }}</dd></div>

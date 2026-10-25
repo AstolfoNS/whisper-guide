@@ -104,24 +104,40 @@ def test_options_only_change_ready_or_paused_and_remain_strict(session) -> None:
     assert session.handle("tick", 11500)["state"] == "PROMPTING"
 
 
-def test_location_loss_warns_once_and_disables_automatic_prompt(session) -> None:
+def test_location_loss_warns_once_then_prompts_saved_anchor_without_recovering_position(
+    session,
+) -> None:
     session.handle("start", 0)
     session.handle("speech_start", 1)
     first = session.handle("transcript", 2, text="一段毫无关系的话语")
     session.handle("transcript", 3, text="另一段无关文本")
     assert session.feedback_id == first["feedback_id"] == 1
     session.handle("speech_end", 4)
-    assert session.handle("tick", 99999)["state"] == "LISTENING"
+    before = (session.reading_position, session.prompt_position, session.aligned_transcript)
+    snapshot = session.handle("tick", 3004)
+    assert snapshot["state"] == "PROMPTING"
+    assert snapshot["transition_trigger"] == "recognition_wait_timeout"
+    assert snapshot["alignment_status"] == "mismatch"
     assert not session.reliable
-    assert session.handle("manual_prompt", 100000)["state"] == "PROMPTING"
+    assert (session.reading_position, session.prompt_position, session.aligned_transcript) == before
+    assert snapshot["prompt"]["start"] == before[1]
+    assert "已保存的提示起点" in snapshot["message"]
 
 
-def test_pending_stt_never_uses_old_location_for_prompt(session) -> None:
+def test_pending_stt_prompts_saved_anchor_after_deadline_without_guessing_a_position(
+    session,
+) -> None:
     session.handle("start", 0)
     session.handle("speech_start", 1)
     session.handle("speech_end", 100)
-    assert session.handle("tick", 5000)["state"] == "LISTENING"
+    assert session.handle("tick", 3099)["state"] == "LISTENING"
+    snapshot = session.handle("tick", 3100)
+    assert snapshot["state"] == "PROMPTING"
+    assert snapshot["transition_trigger"] == "recognition_wait_timeout"
+    assert snapshot["alignment_status"] == "pending"
     assert not session.reliable
+    assert session.reading_position is None
+    assert session.prompt_position == 0
 
 
 def test_user_can_resume_near_prompt_after_system_has_read_ahead() -> None:

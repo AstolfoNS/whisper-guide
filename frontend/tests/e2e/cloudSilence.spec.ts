@@ -4,9 +4,9 @@ import { mkdir } from 'node:fs/promises'
 
 const screenshots = 'test-results/screenshots/cloud-silence'
 
-test.beforeEach(async ({ page }) => { await useSyntheticMicrophone(page) })
+test.beforeEach(async ({ page }) => { await useSyntheticMicrophone(page, 2000) })
 
-test('cloud revisions recover from an unreliable partial and automatically prompt after silence', async ({ page }) => {
+test('cloud revisions replace an unmatched partial before the silence deadline and automatically prompt', async ({ page }) => {
   const created = await page.request.post('/api/settings/model-configs', { data: { name: '云端静音修订验证', settings: {
     stt_provider: 'cloud', cloud_opt_in: true, cloud_stt_protocol: 'volcengine-ws', cloud_stt_auth_mode: 'api-key',
     cloud_stt_resource_id: 'volc.seedasr.sauc.duration', cloud_stt_endpoint: 'ws://127.0.0.1:8010/mock/asr/revising/bigmodel_async',
@@ -29,13 +29,13 @@ test('cloud revisions recover from an unreliable partial and automatically promp
     await page.getByRole('textbox', { name: '静音等待', exact: true }).fill('1000')
     await page.getByRole('button', { name: '开始演讲', exact: true }).click()
     await expect(page.getByRole('region', { name: '实时语音识别', exact: true })).toContainText('完全不相干的文字')
-    await expect(page.getByRole('alert').filter({ hasText: '自动提示' })).toBeVisible()
+    await expect(page.getByRole('region', { name: '讲稿匹配', exact: true })).toContainText('位置尚未确认')
     await mkdir(screenshots, { recursive: true })
-    await page.screenshot({ path: `${screenshots}/alignment-warning.png`, fullPage: true, animations: 'disabled' })
+    await page.screenshot({ path: `${screenshots}/recognition-pending.png`, fullPage: true, animations: 'disabled' })
     await expect(page.getByRole('button', { name: '打断播报', exact: true })).toBeVisible({ timeout: 12000 })
     await expect(page.locator('.reading-cursor')).toHaveText('好')
     await expect(page.getByRole('region', { name: '讲稿匹配', exact: true })).toContainText('大家好')
-    await expect(page.getByRole('alert').filter({ hasText: '自动提示' })).toHaveCount(0)
+    await expect(page.getByRole('alert').filter({ hasText: '正在尝试自动恢复' })).toHaveCount(0)
     await expect.poll(() => audio).toBeGreaterThan(0)
     expect(states.some((state) => state.state === 'LISTENING' && !state.reliable && state.reading === null)).toBe(true)
     expect(states.some((state) => state.state === 'PROMPTING' && state.reliable && state.reading === 2)).toBe(true)

@@ -397,3 +397,19 @@ it('publishes only input rate and channel metadata while capture is open', async
   expect(useHealthStore().captureInputRate).toBe(0)
   controller.dispose()
 })
+
+it('accepts only current-session listening diagnostics and ignores stale heartbeat events', async () => {
+  const { controller, store, receiveEvent } = harness()
+  await controller.start()
+  const heartbeat = { type: 'audio_diagnostics' as const, session_id: store.snapshot!.id, generation: store.snapshot!.generation,
+    diagnostics: { prompt_wait_reason: 'silence_wait' as const, silence_elapsed_ms: 600, audio_queued_ms: 0 } }
+  receiveEvent(heartbeat)
+  expect(store.snapshot!.silence_elapsed_ms).toBe(600)
+  receiveEvent({ ...heartbeat, generation: heartbeat.generation - 1, diagnostics: { silence_elapsed_ms: 900 } })
+  receiveEvent({ ...heartbeat, session_id: 'another', diagnostics: { silence_elapsed_ms: 1000 } })
+  expect(store.snapshot!.silence_elapsed_ms).toBe(600)
+  controller.pause()
+  receiveEvent({ ...heartbeat, generation: store.snapshot!.generation, diagnostics: { silence_elapsed_ms: 3000 } })
+  expect(store.snapshot!.silence_elapsed_ms).toBe(600)
+  controller.dispose()
+})

@@ -27,6 +27,7 @@ const sessionFeedback = computed(() => {
   if (snapshot.state === 'PAUSED' && snapshot.transition_trigger !== 'user_paused') {
     return snapshot.pause_reason || snapshot.message || session.notice
   }
+  if (snapshot.state === 'PROMPTING' && snapshot.transition_trigger === 'recognition_wait_timeout') return snapshot.message || session.notice
   if (snapshot.state === 'LISTENING' && snapshot.stt_ready === false) return ''
   const recovery = recoveryFeedback(snapshot)
   if (recovery) return recovery

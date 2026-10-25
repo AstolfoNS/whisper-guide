@@ -83,7 +83,6 @@ it('shows a service pause reason but hides the stale reason after resuming', asy
   expect(wrapper.find('[role="alert"]').exists()).toBe(false)
 })
 
-
 it('keeps confirmed mismatch feedback stable while VAD speech starts and ends', async () => {
   const { wrapper, session } = await studio(snapshot({ alignment_status: 'mismatch', raw_transcript: '来', raw_transcript_is_final: true, raw_transcript_is_current: true, last_transcript: '来', aligned_transcript: '我要', message: mismatchMessage }))
   for (const speaking of [false, true, false, true]) {
@@ -131,10 +130,17 @@ it('shows recovery progress without repeating a stale failure or promising succe
   expect(wrapper.find('[role="alert"]').exists()).toBe(false)
 })
 
-
 it('shows the connecting state without reviving an old mismatch instruction before speech is ready', async () => {
   const { wrapper } = await studio(snapshot({ stt_ready: false, alignment_status: 'mismatch', message: mismatchMessage }))
   expect(wrapper.text()).toContain('连接识别中')
   expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   expect(wrapper.get('[aria-label="讲稿匹配"] [role="status"]').text()).toContain('正在连接语音识别，请稍候再朗读')
+})
+
+it('shows saved-position prompting without claiming the reading position was recovered', async () => {
+  const notice = '静音等待已到，当前朗读位置尚未确认，先从已保存的提示起点播报。'
+  const { wrapper } = await studio(snapshot({ state: 'PROMPTING', silence_prompt_policy: 'saved_position',
+    transition_trigger: 'recognition_wait_timeout', message: notice, alignment_status: 'mismatch', reliable: false }))
+  expect(wrapper.get('[role="alert"]').text()).toContain('从已保存的提示起点播报')
+  expect(wrapper.text()).not.toContain('自动提示暂缓')
 })

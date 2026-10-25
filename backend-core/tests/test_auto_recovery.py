@@ -21,18 +21,28 @@ def start(script: str) -> SpeechSession:
     return session
 
 
-def test_audible_short_mismatch_does_not_authorize_prompt_at_old_cursor():
+def test_audible_short_mismatch_prompts_saved_anchor_without_revalidating_reading():
     session = start("大家好。欢迎测试。")
     session.handle("transcript", 1, text="大家好")
     position = session.reading_position
     session.handle("speech_start", 2)
     session.handle("transcript", 3, text="来")
     session.handle("speech_end", 4)
+    prompt_position = session.prompt_position
+    aligned = session.aligned_transcript
+    attempts = session.recovery_attempts
     session.handle("tick", 2000)
     assert session.reading_position == position
     assert not session.reliable
-    assert session.state.value == "LISTENING"
+    assert session.state.value == "PROMPTING"
+    assert session.transition_trigger == "recognition_wait_timeout"
+    assert session.prompt is not None
+    assert session.prompt.start == prompt_position
+    assert session.prompt.text == "欢迎测试。"
+    assert session.aligned_transcript == aligned
+    assert session.recovery_attempts == attempts
     assert session.snapshot()["alignment_status"] == "mismatch"
+    assert "已保存的提示起点" in session.message
 
 
 def test_unique_nearby_text_recovers_without_reposition():
@@ -227,11 +237,24 @@ def test_withdrawing_either_distant_anchor_invalidates_confirmed_location(withdr
     session.retract_evidence(withdrawn)
     session.handle("filler", 3)
     session.handle("speech_end", 4)
+    prompt_position = session.prompt_position
+    aligned = session.aligned_transcript
+    attempts = session.recovery_attempts
     session.handle("tick", 2000)
     assert not session.reliable
+    assert not session._last_reliable
+    assert session.match_confidence is None
+    assert not session._alignment_evidence_ids
     assert session.reading_position == position
     assert session.snapshot()["alignment_status"] == "mismatch"
-    assert session.state.value == "LISTENING"
+    assert session.state.value == "PROMPTING"
+    assert session.transition_trigger == "recognition_wait_timeout"
+    assert session.prompt is not None
+    assert session.prompt.start == prompt_position
+    assert session.prompt.text == "接下来开始演示。"
+    assert session.aligned_transcript == aligned
+    assert session.recovery_attempts == attempts
+    assert "已保存的提示起点" in session.message
 
 
 def test_manual_position_is_not_invalidated_by_withdrawn_old_alignment():

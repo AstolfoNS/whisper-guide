@@ -37,6 +37,8 @@ def upload(client):
 
 def receive_state(ws, expected):
     message = ws.receive_json()
+    while message["type"] == "audio_diagnostics":
+        message = ws.receive_json()
     assert message["type"] == "snapshot"
     assert message["session"]["state"] == expected
     return message["session"]

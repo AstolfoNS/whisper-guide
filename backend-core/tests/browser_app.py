@@ -78,8 +78,12 @@ class BrowserSpeech(ProviderSpeechServices):
                 "/mock/asr/noise/",
                 "/mock/asr/revising/",
                 "/mock/asr/ready-delay/",
+                "/mock/asr/no-result/",
             )
         )
+        if "/mock/asr/no-result/" in remote.config.endpoint:
+            # One cloud final, then no new words; warm standby must not replay a fake final.
+            local.silent = True
         return FallbackSpeechStream(remote.create_stream(vad=None, turn_token=turn_token), local)
 
     async def synthesize(self, text):
@@ -142,6 +146,7 @@ def mock_asr_frame(payload, final=False):
 @app.websocket("/mock/asr/pending/bigmodel_async")
 @app.websocket("/mock/asr/recovery/bigmodel_async")
 @app.websocket("/mock/asr/ready-delay/bigmodel_async")
+@app.websocket("/mock/asr/no-result/bigmodel_async")
 @app.websocket("/mock/asr/boundary/bigmodel_async")
 @app.websocket("/mock/asr/complete/bigmodel_async")
 async def mock_asr(socket: WebSocket):
@@ -161,6 +166,25 @@ async def mock_asr(socket: WebSocket):
                 await socket.send_bytes(mock_asr_frame({}, final=True))
                 return
             packets += 1
+            if "/no-result/" in socket.url.path:
+                if packets == 2:
+                    await socket.send_bytes(
+                        mock_asr_frame(
+                            {
+                                "result": {
+                                    "utterances": [
+                                        {
+                                            "text": "大家好",
+                                            "start_time": 0,
+                                            "end_time": 400,
+                                            "definite": True,
+                                        }
+                                    ]
+                                }
+                            }
+                        )
+                    )
+                continue
             if "/ready-delay/" in socket.url.path:
                 hypotheses = ["我将", "我将继续", "我将继续立足", "我将继续立足岗位"]
                 if packets <= 5:
@@ -274,7 +298,7 @@ async def mock_asr(socket: WebSocket):
                     )
                 continue
             if "/revising/" in socket.url.path:
-                if packets in {1, 15}:
+                if packets in {1, 12}:
                     await socket.send_bytes(
                         mock_asr_frame(
                             {

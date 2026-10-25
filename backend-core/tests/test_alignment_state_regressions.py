@@ -42,8 +42,11 @@ def test_real_unmatched_final_stays_protected_after_voice_and_filler():
     session.handle("tick", 5000)
     assert not session.reliable
     assert session.reading_position == position
-    assert session.feedback_id == 1
-    assert session.state.value == "LISTENING"
+    assert session.feedback_id == 2
+    assert session.state.value == "PROMPTING"
+    assert session.transition_trigger == "recognition_wait_timeout"
+    assert session.prompt.start == session.prompt_position
+    assert session.prompt.text == "欢迎测试。"
     assert session.snapshot()["alignment_status"] == "mismatch"
 
 
@@ -121,14 +124,18 @@ def test_settled_unmatched_partial_is_not_committed_again_after_vad_burst(monkey
             update = RecognitionUpdate("来", segment_id=0)
             await frame(runtime, speech, clock, 1000, ac_pcm(), update, vad=True)
             await frame(runtime, speech, clock, 1250, silence(250))
-            await runtime.tick(2000)
+            runtime.commit_transcript("来", 1900)
             await frame(runtime, speech, clock, 2100, ac_pcm(), update, vad=True)
             await frame(runtime, speech, clock, 2350, silence(250))
             await runtime.tick(3100)
             assert commits == ["来"]
-            assert runtime.session.feedback_id == 1
+            assert runtime.session.feedback_id == 2
             assert not runtime.session.reliable
-            assert runtime.session.state.value == "LISTENING"
+            assert runtime.session.state.value == "PROMPTING"
+            assert runtime.session.transition_trigger == "recognition_wait_timeout"
+            assert runtime.session.reading_position is None
+            assert runtime.session.aligned_transcript == ""
+            assert runtime.session.prompt.start == 0
         finally:
             runtime.cancel_prompt()
             runtime.release_stream()
@@ -160,8 +167,11 @@ def test_finalized_old_segment_cannot_replay_after_new_voice_without_text(monkey
             await runtime.tick(3000)
             assert runtime.session.reading_position == position
             assert runtime.session.aligned_transcript == "欢迎测试"
-            assert runtime.session.feedback_id == 0
-            assert runtime.session.state.value == "LISTENING"
+            assert runtime.session.feedback_id == 1
+            assert runtime.session.state.value == "PROMPTING"
+            assert runtime.session.transition_trigger == "recognition_wait_timeout"
+            assert not runtime.session.reliable
+            assert runtime.session.prompt.text == "继续下一句。"
         finally:
             runtime.cancel_prompt()
             runtime.release_stream()
@@ -249,7 +259,10 @@ def test_voice_without_any_valid_transcript_does_not_guess_a_reliable_position(m
             await runtime.tick(5000)
             assert runtime.session.reading_position is None
             assert not runtime.session.reliable
-            assert runtime.session.state.value == "LISTENING"
+            assert runtime.session.state.value == "PROMPTING"
+            assert runtime.session.transition_trigger == "recognition_wait_timeout"
+            assert runtime.session.prompt.start == 0
+            assert runtime.session.aligned_transcript == ""
             assert runtime.snapshot()["alignment_status"] == "pending"
         finally:
             runtime.cancel_prompt()
@@ -318,7 +331,10 @@ def test_same_segment_explicit_empty_final_retracts_old_partial(monkeypatch):
             await runtime.tick(2000)
             assert runtime.session.reading_position is None
             assert runtime.session.aligned_transcript == ""
-            assert runtime.session.feedback_id == 0
+            assert runtime.session.feedback_id == 1
+            assert runtime.session.state.value == "PROMPTING"
+            assert runtime.session.transition_trigger == "recognition_wait_timeout"
+            assert runtime.session.prompt.start == 0
         finally:
             runtime.cancel_prompt()
             runtime.release_stream()
@@ -349,7 +365,7 @@ def test_identical_final_after_settled_partial_does_not_recommit(monkeypatch, te
                 vad=True,
             )
             await frame(runtime, speech, clock, 1250, silence(250))
-            await runtime.tick(2000)
+            runtime.commit_transcript(text, 1900)
             assert runtime.session.state.value == "LISTENING"
             assert commits == [text]
             position = runtime.session.reading_position
@@ -365,8 +381,11 @@ def test_identical_final_after_settled_partial_does_not_recommit(monkeypatch, te
             assert commits == [text]
             assert runtime.session.reading_position == position
             if text == "来":
-                assert runtime.session.feedback_id == 1
+                assert runtime.session.feedback_id == 2
                 assert not runtime.session.reliable
+                assert runtime.session.state.value == "PROMPTING"
+                assert runtime.session.transition_trigger == "recognition_wait_timeout"
+                assert runtime.session.prompt.start == 0
             else:
                 assert runtime.session.feedback_id == 0
                 assert runtime.session.reliable
@@ -391,7 +410,7 @@ def test_revised_final_in_same_segment_can_repair_settled_mismatch(monkeypatch):
                 vad=True,
             )
             await frame(runtime, speech, clock, 1250, silence(250))
-            await runtime.tick(2000)
+            runtime.commit_transcript("来", 1900)
             assert not runtime.session.reliable
             assert runtime.session.feedback_id == 1
             await frame(
@@ -454,7 +473,11 @@ def test_empty_revision_marks_fallback_to_last_committed_text_as_historical(monk
             assert snapshot["alignment_status"] == "pending"
             await runtime.tick(5000)
             assert runtime.session.reading_position == 2
-            assert runtime.session.state.value == "LISTENING"
+            assert runtime.session.state.value == "PROMPTING"
+            assert runtime.session.transition_trigger == "recognition_wait_timeout"
+            assert not runtime.session.reliable
+            assert runtime.session.aligned_transcript == "大家好"
+            assert runtime.session.prompt.text == "欢迎测试。"
         finally:
             runtime.cancel_prompt()
             runtime.release_stream()
