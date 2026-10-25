@@ -73,7 +73,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${WHISPER_GUIDE_HTTP_PORT:-8080}:8080"
+      - "${WHISPER_GUIDE_HTTP_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
       interval: 30s
