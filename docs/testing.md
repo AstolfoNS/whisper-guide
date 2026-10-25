@@ -7,7 +7,7 @@
 后端：
 
 ```bash
-cd backend-core
+cd apps/backend-core
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest
@@ -16,7 +16,7 @@ uv run pytest
 前端：
 
 ```bash
-cd frontend
+cd apps/frontend
 pnpm test
 pnpm typecheck
 pnpm build
@@ -25,13 +25,13 @@ pnpm build
 Chromium集成：
 
 ```bash
-cd frontend
+cd apps/frontend
 # 仅首次需要，已安装时跳过
 pnpm exec playwright install --with-deps chromium
 pnpm test:e2e
 ```
 
-浏览器测试使用8010/5174独立服务、临时数据库、合成麦克风、模拟ASR和内存音频，不调用真实付费模型、不操作8080服务。截图在frontend/test-results/screenshots，失败trace/report位于忽略的测试产物目录。文档截图仅保留明确引用的当前示例，不在每次测试时重写。
+浏览器测试使用8010/5174独立服务、临时数据库、合成麦克风、模拟ASR和内存音频，不调用真实付费模型、不操作8080服务。截图在apps/frontend/test-results/screenshots，失败trace/report位于忽略的测试产物目录。文档截图仅保留明确引用的当前示例，不在每次测试时重写。
 
 ## 覆盖范围
 
@@ -46,19 +46,16 @@ pnpm test:e2e
 
 ## 当前验证
 
-最近验证：2026-10-25，完成静音到期保存起点提示、音频调度与等待原因诊断后。
+目录迁移检查日期：2026-10-26。以下状态专指apps目录重组后的代码；迁移前的通过数量不能视为迁移后验收。
 
-| 检查 | 结果 |
+| 检查 | 状态 |
 |---|---|
-| 后端pytest | 770通过；保留1条既有Starlette/httpx弃用提示 |
-| Ruff检查与格式 | 通过，72个Python文件格式合规 |
-| 前端Node兼容回归 | 23通过 |
-| Vitest音频与界面回归 | 211通过 |
-| Vue/TypeScript与前端生产构建 | 通过 |
-| Chromium端到端 | 完整23项通过，约1.2分钟；最后收紧仅本地合批后，云端/静音直接相关6项再次通过（31.5秒） |
-| Docker镜像 | 本次未重建或替换运行容器；此前标题和ASR镜像验证记录见Git历史与下文 |
-| Compose与部署脚本 | 本次未修改部署配置与脚本；此前验证记录见Git历史 |
-| 文档校验 | 11个Markdown相对链接/UTF-8有效，AC-01至AC-27完整，唯一截图有引用 |
+| 后端pytest、Ruff检查与格式 | 770通过；72个Python文件格式合规，保留1条既有Starlette/httpx弃用提示 |
+| 前端Node兼容回归、Vitest、Vue/TypeScript与生产构建 | 23＋211项通过；类型检查及生产构建通过 |
+| Chromium端到端 | 新目录下完整23项通过，约1.2分钟；8010/5174独立服务、临时数据库和合成音频 |
+| Compose与部署脚本 | compose config --quiet与两个脚本bash -n通过；服务/镜像名和数据挂载不变 |
+| Docker镜像 | 前后端runtime构建通过，使用独立apps-layout-check验证标签；未替换运行容器或正式镜像标签 |
+| 文档校验 | 11个Markdown文件UTF-8与相对链接有效，AC-01至AC-27保留；159个应用文件全部迁移，除后端README外内容不变 |
 
 标题专项覆盖WHISPER_GUIDE_APP_TITLE默认与空白回退、模型方案不可覆盖、公开接口仅返回标题、配置失败回退、异步配置晚到、导航/无障碍名称/标签页同步和纯文本显示。前端只在页面启动请求一次配置，标题变化无需重新编译。
 

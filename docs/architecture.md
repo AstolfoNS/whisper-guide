@@ -4,6 +4,8 @@
 
 ## 模块与数据流
 
+apps包含独立的Vue前端和FastAPI后端，应用分别安装依赖和运行。根deploy负责Nginx、打包与部署，根scripts负责运维工具；data与备份、模型资源、release产物不属于业务源码。目录重组不改变容器内/app/backend-core路径、服务/镜像名或持久卷挂载。
+
 ```mermaid
 flowchart LR
   V[Vue工作台] --> C[SessionController]
@@ -21,18 +23,18 @@ flowchart LR
 
 | 文件/目录 | 职责 |
 |---|---|
-| backend-core/app/api/session.py | WebSocket、连接归属、音频队列、识别/合成任务与快照 |
-| app/domain/session.py | 五状态、双游标、对齐证据、事件优先级与最近10条流转 |
-| app/domain/tracking.py | 原文单位边界、附近评分、全文字面/拼音trigram索引 |
-| app/infrastructure/audio_evidence.py | 有界声学特征、噪声底与分段证据，不保存PCM |
-| app/infrastructure/speech.py | 本地/HTTP识别、VAD、热备回退、内存TTS |
-| app/infrastructure/speech_websocket.py / speech_protocols.py | 有界传输与厂商协议适配 |
-| app/infrastructure/llm.py / model_catalog.py | 语义原文建议、模型目录与受控失败 |
-| app/repositories/ | SQLite讲稿、私有版本化模型方案 |
-| frontend/src/services/sessionController.ts | 应用级唯一采音、连接与播放器所有者 |
-| frontend/src/stores/ | 可展示快照、讲稿、模型方案与主题 |
-| frontend/src/views/ / components/ | 三视图、讲稿显示、模型表单与诊断 |
-| frontend/src/audio/ / public/pcm-capture.js | PCM采集/重采样、播放与取消令牌 |
+| apps/backend-core/app/api/session.py | WebSocket、连接归属、音频队列、识别/合成任务与快照 |
+| apps/backend-core/app/domain/session.py | 五状态、双游标、对齐证据、事件优先级与最近10条流转 |
+| apps/backend-core/app/domain/tracking.py | 原文单位边界、附近评分、全文字面/拼音trigram索引 |
+| apps/backend-core/app/infrastructure/audio_evidence.py | 有界声学特征、噪声底与分段证据，不保存PCM |
+| apps/backend-core/app/infrastructure/speech.py | 本地/HTTP识别、VAD、热备回退、内存TTS |
+| apps/backend-core/app/infrastructure/speech_websocket.py / speech_protocols.py | 有界传输与厂商协议适配 |
+| apps/backend-core/app/infrastructure/llm.py / model_catalog.py | 语义原文建议、模型目录与受控失败 |
+| apps/backend-core/app/repositories/ | SQLite讲稿、私有版本化模型方案 |
+| apps/frontend/src/services/sessionController.ts | 应用级唯一采音、连接与播放器所有者 |
+| apps/frontend/src/stores/ | 可展示快照、讲稿、模型方案与主题 |
+| apps/frontend/src/views/ / components/ | 三视图、讲稿显示、模型表单与诊断 |
+| apps/frontend/src/audio/ / public/pcm-capture.js | PCM采集/重采样、播放与取消令牌 |
 
 ## 声音、识别与位置
 

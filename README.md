@@ -27,11 +27,16 @@
 默认容器入口为localhost:8080。麦克风需要localhost或HTTPS；当前没有用户认证和讲稿权限隔离，远程部署需要HTTPS和认证层。
 
 ```text
-backend-core/  FastAPI、语音适配、定位与状态机
-frontend/      Vue工作台、采音、播放和浏览器测试
-deploy/        Nginx、离线打包与部署脚本
-scripts/       SQLite备份工具
-docs/          按用途维护的现行文档
+apps/
+  backend-core/  独立的FastAPI应用：语音适配、定位与状态机
+  frontend/      独立的Vue应用：工作台、采音、播放和浏览器测试
+deploy/          Nginx、离线打包与部署脚本
+scripts/         运维工具，例如SQLite备份
+docs/            按用途维护的现行文档
+data/            容器挂载的持久数据，不属于应用源码
+release/         离线发布产物，不属于应用源码
 ```
+
+apps中的两个应用各自维护依赖和开发命令；部署编排仍在项目根目录。源码开发的模型、数据和备份默认相对apps/backend-core解析；models和backups属于运行资源或数据，不是应用模块。容器内/app/backend-core、/data、/backups、/models及宿主data挂载保持原有约定，目录整理不迁移Docker宿主持久数据或改服务/镜像名；旧检出中的本地忽略文件与开发环境更新见[开发指南](docs/development.md#从旧目录更新)。
 
 讲稿和私有模型方案位于数据目录；会话、录音帧和提示音频仅在内存。提交源码或构建镜像不会自动更新运行容器。旧实现过程、验收日志与截图可通过Git历史查阅。

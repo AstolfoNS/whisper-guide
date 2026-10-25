@@ -10,13 +10,13 @@ jobs:
           version: "0.11.18"
           python-version: "3.12"
       - run: uv sync --locked
-        working-directory: backend-core
+        working-directory: apps/backend-core
       - run: uv run ruff check .
-        working-directory: backend-core
+        working-directory: apps/backend-core
       - run: uv run ruff format --check .
-        working-directory: backend-core
+        working-directory: apps/backend-core
       - run: uv run pytest
-        working-directory: backend-core
+        working-directory: apps/backend-core
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -26,11 +26,11 @@ jobs:
           node-version: "24"
       - run: corepack enable && corepack prepare pnpm@11.24.0 --activate
       - run: pnpm install --frozen-lockfile
-        working-directory: frontend
+        working-directory: apps/frontend
       - run: pnpm test
-        working-directory: frontend
+        working-directory: apps/frontend
       - run: pnpm build
-        working-directory: frontend
+        working-directory: apps/frontend
   browser:
     runs-on: ubuntu-latest
     steps:
@@ -40,14 +40,14 @@ jobs:
           version: "0.11.18"
           python-version: "3.12"
       - run: uv sync --locked
-        working-directory: backend-core
+        working-directory: apps/backend-core
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
       - run: corepack enable && corepack prepare pnpm@11.24.0 --activate
       - run: pnpm install --frozen-lockfile
-        working-directory: frontend
+        working-directory: apps/frontend
       - run: pnpm exec playwright install --with-deps chromium
-        working-directory: frontend
+        working-directory: apps/frontend
       - run: pnpm test:e2e
-        working-directory: frontend
+        working-directory: apps/frontend

@@ -82,9 +82,9 @@ docker compose up -d --wait --wait-timeout 180
 模型、SQLite、备份和私有方案是运行数据；.venv和node_modules是开发环境，不因体积大就删除。先查看占用和正在执行的构建：
 
 ```bash
-du -sh backend-core/models backend-core/.venv frontend/node_modules
+du -sh apps/backend-core/models apps/backend-core/.venv apps/frontend/node_modules
 du -sh "$(uv cache dir)"
-pnpm --dir frontend store path
+pnpm --dir apps/frontend store path
 docker system df
 docker buildx du
 ```
@@ -93,10 +93,10 @@ docker buildx du
 
 ```bash
 uv cache clean
-pnpm --dir frontend store prune
+pnpm --dir apps/frontend store prune
 docker buildx prune --filter until=24h
 ```
 
 缓存可能跨项目共享，下次构建可能重新联网。不要使用docker system prune -a --volumes作为本项目维护步骤。模型冗余用开发指南中的下载脚本清理，容器内没有该工具。
 
-浏览器截图与报告写入frontend/test-results、playwright-report等忽略目录，不写版本化文档。保留需要排查的trace后可清理测试产物。
+浏览器截图与报告写入apps/frontend/test-results、apps/frontend/playwright-report等忽略目录，不写版本化文档。保留需要排查的trace后可清理测试产物。

@@ -4,12 +4,14 @@
 
 ## 开发环境
 
+apps/frontend与apps/backend-core是两个独立应用，分别维护package.json/pnpm与pyproject.toml/uv依赖。以下cd命令均从仓库根目录执行；两个终端不共用应用工作目录。deploy和根scripts用于部署/运维，数据、备份、模型及release发布产物不混入应用源码。
+
 在WSL/Linux项目目录使用Python 3.12、uv、Node.js ^22.18.0或>=24.12.0，以及package.json指定版本的pnpm。不要混用Windows与WSL的虚拟环境和node_modules。
 
 后端：
 
 ```bash
-cd backend-core
+cd apps/backend-core
 uv sync --locked
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
@@ -17,14 +19,22 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 另一个终端启动前端：
 
 ```bash
-cd frontend
+cd apps/frontend
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
 浏览器访问localhost:5173，后端OpenAPI在localhost:8000/docs。Vite将/api和WebSocket代理到8000；pnpm preview使用4173并保留代理。VITE_API_PROXY_TARGET覆盖开发代理目标；VITE_API_BASE_URL用于不同API地址，会进入前端构建，不能放密钥。
 
-后端默认读取backend-core/.env，需要覆盖时复制同目录.env.example；相对数据、备份和模型路径按backend-core解析。监听地址与端口使用Uvicorn命令行参数。
+后端默认读取apps/backend-core/.env，需要覆盖时复制同目录.env.example；相对数据、备份和模型路径按apps/backend-core解析（不是按仓库根目录或当前工作目录解析）。监听地址与端口使用Uvicorn命令行参数。源码开发默认数据与备份分别为apps/backend-core/data和apps/backend-core/backups；已有自定义绝对路径继续使用原值；本地默认数据、模型和私有配置随应用目录保留，Docker宿主持久目录data不迁移。容器内/app/backend-core与/data、/backups、/models路径及Compose挂载不变。
+
+## 从旧目录更新
+
+源码根目录的frontend和backend-core现移入apps；分别从apps/frontend、apps/backend-core运行开发命令。Playwright的../backend-core仍指向同级后端，不需要改成仓库根目录。Docker只改变构建输入路径，Compose服务名、镜像名、容器/app/backend-core和data挂载不变。
+
+Git只移动版本化文件。其他机器更新后，旧目录可能留下未跟踪的.env、data、backups或models：先确认旧文件与新位置，再将需要保留的本地资源移到对应应用目录；新位置已有内容时先比较和备份，不覆盖数据库、模型方案或密钥。自定义绝对路径继续使用原值；相对路径现在基于apps/backend-core，使用旧相对跨目录路径时需重新核对。Docker宿主持久目录data不需要移动。
+
+Python虚拟环境包含旧绝对路径，不能直接搬迁后继续使用；在apps/backend-core重新创建.venv，再运行uv sync --locked。前端在apps/frontend运行pnpm install --frozen-lockfile，缓存和依赖不进入Git。本次工作区已将本地资源随应用一起保留，并重建了Python环境；其他检出或部署机器需按各自文件状态处理。
 
 ## 项目标题
 
@@ -44,16 +54,16 @@ docker compose up -d --no-build --pull never --force-recreate --wait --wait-time
 
 刷新浏览器后生效，不需要重编译前端。不要只用docker compose restart，它不会读取新的容器环境。离线包同样读取部署目录.env，旧.env不会被模板自动覆盖。
 
-源码开发时在backend-core/.env设置同名变量并重启Uvicorn，前端不需要VITE标题变量。页面启动异步请求/api/app-config；失败时保留默认标题，不影响工作台。固定服务标识、数据库、会话存储键和Docker项目名不随显示标题改变。
+源码开发时在apps/backend-core/.env设置同名变量并重启Uvicorn，前端不需要VITE标题变量。页面启动异步请求/api/app-config；失败时保留默认标题，不影响工作台。固定服务标识、数据库、会话存储键和Docker项目名不随显示标题改变。
 
 ## STT模型
 
 ```bash
-cd backend-core
+cd apps/backend-core
 uv run python scripts/download_asr_model.py
 ```
 
-默认目录为models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20，不进Git。脚本验证归档路径、类型及重复项，只保留tokens.txt、INT8 encoder、FP32 decoder和INT8 joiner。decoder必须优先FP32：现用模型的INT8 decoder在原始中文对照中会产生明显叠字，不能只按体积选择。
+从后端目录运行时，模型默认位于models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20，即仓库内apps/backend-core/models下，不进Git。脚本验证归档路径、类型及重复项，只保留tokens.txt、INT8 encoder、FP32 decoder和INT8 joiner。decoder必须优先FP32：现用模型的INT8 decoder在原始中文对照中会产生明显叠字，不能只按体积选择。
 
 下载中断保留断点，可通过--url或WHISPER_GUIDE_MODEL_URL指定归档镜像。已有旧INT8-only目录也应重新运行脚本：只补约13.9MB的FP32 decoder，校验大小和固定SHA-256后原子安装；失败保留旧可用模型。单文件镜像使用--decoder-url或WHISPER_GUIDE_DECODER_URL。已经有FP32 decoder时重复执行不联网，并清理未选权重、官方测试音频与固定残留归档。保留来源说明，不手工按通配符删除onnx。
 
@@ -113,4 +123,4 @@ Docker前端构建先检查类型；后端只安装锁定生产依赖。运行�
 
 环境兼容注册表 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 继续可用，详见 [接口参考](speech-provider-interface.md)。云端语音与聊天模型 Base URL 不是同一协议；语音 API Key 不会自动复用方舟文本 API Key。容器中的 localhost 指向当前容器；Ollama 等外部服务应填写后端容器可访问的地址。预设只是可修改示例，不证明账号已开通。
 
-Compose参数以根.env.example与docker-compose.yml为准，后端本地默认值以app/config.py为准。已有私有仓储的生效快照优先于模型环境默认值，改环境不会隐式激活新方案。界面设置见[模型配置](model-configuration.md)，检查见[测试指南](testing.md)。
+Compose参数以根.env.example与docker-compose.yml为准，后端本地默认值以apps/backend-core/app/config.py为准。已有私有仓储的生效快照优先于模型环境默认值，改环境不会隐式激活新方案。界面设置见[模型配置](model-configuration.md)，检查见[测试指南](testing.md)。

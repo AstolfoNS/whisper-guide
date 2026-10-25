@@ -19,13 +19,13 @@ release/
 *.bz2
 .uv-cache-test
 # Exclude acoustic model downloads only; app/models is Python source.
-backend-core/models/*
-!backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/
-backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/*
-!backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt
-!backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.int8.onnx
-!backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.onnx
-!backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.int8.onnx
+apps/backend-core/models/*
+!apps/backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/
+apps/backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/*
+!apps/backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt
+!apps/backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.int8.onnx
+!apps/backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.onnx
+!apps/backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.int8.onnx
 **/.model-settings.json
 **/.model-settings-*.tmp
 **/.model-configs.json
@@ -36,10 +36,14 @@ backend-core/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/*
 /docs/
 /.github/
 /data/
-/backend-core/data/
-/backend-core/tests/
-/backend-core/scripts/
-/frontend/tests/
+/apps/backend-core/data/
+/apps/backend-core/backups/
+# Old checkout leftovers must not enter the Docker build context.
+/backend-core/
+/frontend/
+/apps/backend-core/tests/
+/apps/backend-core/scripts/
+/apps/frontend/tests/
 **/.mypy_cache
 **/.coverage
 **/.coverage.*

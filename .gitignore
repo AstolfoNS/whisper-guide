@@ -34,7 +34,12 @@ npm-debug.log*
 # Runtime data and speech model downloads
 /data/
 /models/
+/apps/backend-core/data/
+/apps/backend-core/backups/
+/apps/backend-core/models/
+# Protect ignored local resources left by checkouts before the apps migration.
 /backend-core/data/
+/backend-core/backups/
 /backend-core/models/
 *.db
 *.db-journal
