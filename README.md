@@ -4,17 +4,17 @@
 
 ## 文档入口
 
-| 任务 | 文档 |
-|---|---|
-| 上传/删除讲稿、快捷键、实时定位与限制 | [使用指南](docs/user-guide.md) |
-| 本地/云端识别、大模型、模型发现与诊断 | [模型配置](docs/model-configuration.md) |
-| 新服务器、离线发布、升级、迁移与回滚 | [部署手册](DEPLOY.md) |
-| 源码开发、模型准备、构建与环境变量 | [开发指南](docs/development.md) |
-| 健康检查、备份恢复、故障排查与缓存 | [运维指南](docs/maintenance.md) |
-| 模块边界、定位、并发与存储 | [架构说明](docs/architecture.md) |
+| 任务                                    | 文档                                          |
+| --------------------------------------- | --------------------------------------------- |
+| 上传/删除讲稿、快捷键、实时定位与限制   | [使用指南](docs/user-guide.md)                |
+| 本地/云端识别、大模型、模型发现与诊断   | [模型配置](docs/model-configuration.md)       |
+| 新服务器、离线发布、升级、迁移与回滚    | [部署手册](DEPLOY.md)                         |
+| 源码开发、模型准备、构建与环境变量      | [开发指南](docs/development.md)               |
+| 健康检查、备份恢复、故障排查与缓存      | [运维指南](docs/maintenance.md)               |
+| 模块边界、定位、并发与存储              | [架构说明](docs/architecture.md)              |
 | HTTP、WebSocket、识别事件与模型方案契约 | [接口参考](docs/speech-provider-interface.md) |
-| 状态机、双游标、隐私与行为基线 | [行为规范](docs/requirements.md) |
-| 检查命令、测试范围与当前验证结果 | [测试指南](docs/testing.md) |
+| 状态机、双游标、隐私与行为基线          | [行为规范](docs/requirements.md)              |
+| 检查命令、测试范围与当前验证结果        | [测试指南](docs/testing.md)                   |
 
 ## 运行与目录
 
