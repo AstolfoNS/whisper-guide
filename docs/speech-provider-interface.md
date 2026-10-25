@@ -12,6 +12,10 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
                  LLMSemanticRefiner（可选 OpenAI 兼容接口）
 ```
 
+## 公开显示配置
+
+GET /api/app-config返回`{"app_title":"whisper-guide"}`，只包含显示标题，不包含模型或凭据。值由WHISPER_GUIDE_APP_TITLE在后端启动时读取，空白回默认。前端每次页面启动读取一次，配置失败保留默认，不依赖健康轮询。
+
 ## 讲稿HTTP接口
 
 

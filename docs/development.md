@@ -26,6 +26,26 @@ pnpm dev
 
 后端默认读取backend-core/.env，需要覆盖时复制同目录.env.example；相对数据、备份和模型路径按backend-core解析。监听地址与端口使用Uvicorn命令行参数。
 
+## 项目标题
+
+统一使用后端环境变量WHISPER_GUIDE_APP_TITLE，默认whisper-guide；未设置、空字符串或纯空白均回到默认。导航品牌、浏览器路由标题和API文档标题采用同一值。标题是纯文本，不作为HTML执行，也不属于模型方案配置。
+
+Docker在项目根目录.env加入：
+
+```dotenv
+WHISPER_GUIDE_APP_TITLE="我的语音提示助手"
+```
+
+首次使用新版本按构建与发布步骤更新镜像。此后只改标题时，结束会话后执行：
+
+```bash
+docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 backend
+```
+
+刷新浏览器后生效，不需要重编译前端。不要只用docker compose restart，它不会读取新的容器环境。离线包同样读取部署目录.env，旧.env不会被模板自动覆盖。
+
+源码开发时在backend-core/.env设置同名变量并重启Uvicorn，前端不需要VITE标题变量。页面启动异步请求/api/app-config；失败时保留默认标题，不影响工作台。固定服务标识、数据库、会话存储键和Docker项目名不随显示标题改变。
+
 ## STT模型
 
 ```bash
@@ -60,6 +80,7 @@ Docker前端构建先检查类型；后端只安装锁定生产依赖。运行�
 
 | 环境变量 | 默认或规则 |
 |---|---|
+| `WHISPER_GUIDE_APP_TITLE` | 显示标题，默认whisper-guide；后端启动读取，前端运行时加载 |
 | `WHISPER_GUIDE_DATA_DIR` | 容器 `/data`，SQLite 与私有模型方案目录 |
 | `WHISPER_GUIDE_BACKUP_DIR` | 容器 `/backups` |
 | `WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS` | 默认 3000；整数且不小于 1000 |
@@ -68,7 +89,7 @@ Docker前端构建先检查类型；后端只安装锁定生产依赖。运行�
 | `WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES` | 默认 10 |
 | `WHISPER_GUIDE_TTS_VOICE` | `zh-CN-XiaoxiaoNeural` |
 | `WHISPER_GUIDE_CORS_ORIGINS` | JSON 来源数组 |
-| `WHISPER_GUIDE_HTTP_PORT` | Compose 对外 localhost 端口，默认 8080 |
+| `WHISPER_GUIDE_HTTP_PORT` | Compose宿主发布端口，默认8080；按当前配置对外监听 |
 
 模型环境值作为首次配置的默认值；已有私有仓储的生效版本优先：
 

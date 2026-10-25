@@ -1,7 +1,7 @@
 [project]
 name = "backend-core"
 version = "0.1.0"
-description = "Server-side speech tracking and prompting API for 芯创客无障碍语音提示助手"
+description = "Server-side speech tracking and prompting API for whisper-guide"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

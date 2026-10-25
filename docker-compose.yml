@@ -15,6 +15,7 @@ services:
       target: backend-runtime
     environment:
       WHISPER_GUIDE_ENVIRONMENT: ${WHISPER_GUIDE_ENVIRONMENT:-production}
+      WHISPER_GUIDE_APP_TITLE: ${WHISPER_GUIDE_APP_TITLE:-whisper-guide}
       WHISPER_GUIDE_CORS_ORIGINS: '${WHISPER_GUIDE_CORS_ORIGINS:-["http://localhost:8080"]}'
       WHISPER_GUIDE_DATA_DIR: ${WHISPER_GUIDE_DATA_DIR:-/data}
       WHISPER_GUIDE_BACKUP_DIR: ${WHISPER_GUIDE_BACKUP_DIR:-/backups}

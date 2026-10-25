@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.app_config import router as app_config_router
 from app.api.health import router as health_router
 from app.api.recovery import router as recovery_router
 from app.api.scripts import router as scripts_router
@@ -39,7 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             engine.dispose()
 
     application = FastAPI(
-        title="芯创客无障碍语音提示助手 API",
+        title=f"{configuration.app_title} API",
         description="Server-side speech tracking and prompting application.",
         version="0.1.0",
         lifespan=lifespan,
@@ -54,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
+    application.include_router(app_config_router, prefix="/api")
     application.include_router(health_router, prefix="/api")
     application.include_router(recovery_router, prefix="/api")
     application.include_router(scripts_router, prefix="/api")

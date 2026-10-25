@@ -1,4 +1,4 @@
-# 芯创客无障碍语音提示助手后端
+# whisper-guide 后端
 
 Python 3.12 + FastAPI，使用uv管理依赖。统一入口为app.main:app，保持单个Uvicorn worker。
 

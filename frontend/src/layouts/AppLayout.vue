@@ -5,6 +5,7 @@ import RecoverableSessions from '../components/health/RecoverableSessions.vue'
 import ServiceHealthBar from '../components/health/ServiceHealthBar.vue'
 import { usePreferencesStore } from '../stores/preferences'
 import { useSessionStore } from '../stores/session'
+import { appTitle } from '../services/appConfig'
 
 const route = useRoute()
 const preferences = usePreferencesStore()
@@ -25,9 +26,9 @@ function applyTheme(event: Event) {
   <div class="app-shell">
     <header class="app-header">
       <div class="app-header__inner">
-        <RouterLink to="/" class="app-brand" aria-label="芯创客无障碍语音提示助手 概览">
+        <RouterLink to="/" class="app-brand" :aria-label="`${appTitle} 概览`">
           <span class="app-brand__mark" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M5 10v4m4-8v12m4-15v18m4-15v12m4-8v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></span>
-          <span>芯创客无障碍语音提示助手</span>
+          <span>{{ appTitle }}</span>
         </RouterLink>
         <nav class="app-navigation" aria-label="主导航">
           <RouterLink to="/" active-class="is-active">概览</RouterLink>

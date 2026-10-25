@@ -54,4 +54,4 @@ echo "Checking backend health..."
 docker compose -f "$COMPOSE_FILE" exec -T backend \
   /app/backend-core/.venv/bin/python -c \
   "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read().decode())"
-echo "芯创客无障碍语音提示助手 is available at http://localhost:${WHISPER_GUIDE_HTTP_PORT:-8080}"
+echo "Service is available at http://localhost:${WHISPER_GUIDE_HTTP_PORT:-8080}"

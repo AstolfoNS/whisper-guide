@@ -1,6 +1,6 @@
 # 新服务器部署指南（已安装 Docker）
 
-面向 Linux 服务器，使用两份已构建镜像运行 芯创客无障碍语音提示助手。本文可随交付目录或离线发布包单独阅读。
+面向 Linux 服务器，使用两份已构建镜像运行 whisper-guide。本文可随交付目录或离线发布包单独阅读。
 
 目标服务器需要 Docker、Compose 插件、Bash 及常见系统工具（gzip、tar、sha256sum）；远程传输/访问示例使用 SSH/SCP，HTTP 检查示例使用 curl。导入镜像运行时不需要安装 Python、uv、Node.js、pnpm，也不需要下载 STT 模型。`scripts/backup.py` 使用容器内 Python 执行。
 
@@ -145,7 +145,8 @@ test -f .env || cp .env.example .env
 chmod 600 .env
 
 # 如需修改端口等初始参数，用编辑器编辑 .env。
-# 默认保留 localhost:8080；云端参数也可启动后在模型配置页填写。
+# 默认端口8080；当前Compose对外监听，请按实际网络部署策略使用。
+# 页面标题使用WHISPER_GUIDE_APP_TITLE，默认whisper-guide；云端参数也可在界面填写。
 mkdir -p data/sqlite data/backups
 sudo chown -R 10001:10001 data/sqlite data/backups
 sudo chmod -R u+rwX data/sqlite data/backups
@@ -167,7 +168,8 @@ docker compose ps
 
 | 设置 | 值与含义 |
 |---|---|
-| `WHISPER_GUIDE_HTTP_PORT` | 宿主机端口，默认 `8080`，仍仅绑定 `127.0.0.1` |
+| `WHISPER_GUIDE_HTTP_PORT` | 宿主机端口，默认 `8080`，按当前Compose对外监听 |
+| `WHISPER_GUIDE_APP_TITLE` | 页面/导航与API文档标题，默认 `whisper-guide` |
 | `WHISPER_GUIDE_DATA_DIR` | `/data`，对应宿主 `./data/sqlite` |
 | `WHISPER_GUIDE_BACKUP_DIR` | `/backups`，对应宿主 `./data/backups` |
 | `WHISPER_GUIDE_SPEECH_MODEL_DIR` | 保留模板中的容器内 `/models/...` 路径 |
@@ -177,11 +179,19 @@ docker compose ps
 
 不要将宿主机路径填入容器的模型/数据库路径，也不要增加后端 worker 或后端副本。活跃会话仅由单个进程维护；重启会清空会话，讲稿和方案依靠挂载持久化。
 
+标题由后端运行时环境提供，前端不需要按标题重新构建。已部署支持该功能的镜像时，在.env设置WHISPER_GUIDE_APP_TITLE后重建后端容器并刷新页面：
+
+```bash
+docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 backend
+```
+
+`restart`不会更新环境；原.env不会被新模板覆盖。升级旧版本需先导入含新接口/前端的镜像，再设置标题。
+
 ## 5. 从自己的电脑打开前端
 
 ### 推荐：SSH 隧道
 
-Compose 默认发布 `127.0.0.1:8080:8080`，服务器公网 IP 的 8080 无法直接访问。在你自己的电脑终端执行并保持窗口打开：
+当前Compose将8080发布到宿主网络接口；浏览器采音仍需localhost或HTTPS。采用SSH隧道时，在你自己的电脑终端执行并保持窗口打开：
 
 ```bash
 ssh -N -L 8080:127.0.0.1:8080 deploy@server.example.com
@@ -195,7 +205,7 @@ http://localhost:8080/studio
 http://localhost:8080/settings/models
 ```
 
-这样不需要开放服务器 8080，且浏览器通过 localhost 采集麦克风。若服务器实际发布端口不是 8080，修改隧道中右侧的 `127.0.0.1:端口`；若电脑本地 8080 已占用，可使用 `-L 18080:127.0.0.1:8080`，浏览器改为 `http://localhost:18080`。
+SSH隧道让浏览器通过localhost采音；当前Compose对外发布端口，若只需隧道访问，可自行将发布地址限制为127.0.0.1并配置防火墙。若服务器实际发布端口不是 8080，修改隧道中右侧的 `127.0.0.1:端口`；若电脑本地 8080 已占用，可使用 `-L 18080:127.0.0.1:8080`，浏览器改为 `http://localhost:18080`。
 
 ### 需要通过公网域名使用
 
@@ -367,7 +377,7 @@ docker compose exec -T backend /app/backend-core/.venv/bin/python - \
 | 找不到 `Dockerfile` / 尝试联网构建 | 先加载两份镜像，启动加 `--no-build --pull never`；部署机不需要源码 |
 | 镜像 gzip 不存在 | A 路线传整个交付目录；B 路线传根目录 tar 并在目标解包，不能传构建机已删 gzip 的 release |
 | SQLite 打不开、backend unhealthy、保存配置 503 | 检查 `data/sqlite`、`data/backups` 对 UID `10001` 的权限与磁盘余量 |
-| 服务器 IP:8080 打不开 | 默认仅 localhost；按第 5 节建立 SSH 隧道 |
+| 服务器 IP:8080 打不开 | 核对发布端口、防火墙与入口；采音使用第5节localhost隧道或HTTPS |
 | 页面有了但无麦克风 | localhost/HTTPS、浏览器授权、麦克风设备 |
 | 已进入播报但没有声音 | edge-tts 网络、浏览器播放权限、耳机输出、最近播放错误 |
 | STT unavailable | 检查容器模型路径；内置模型部署无需在服务器补装大型 SDK |

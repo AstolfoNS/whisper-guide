@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    app_title: str = "whisper-guide"
     environment: Literal["development", "test", "production"] = "development"
     data_dir: Path = BACKEND_ROOT / "data"
     backup_dir: Path = BACKEND_ROOT / "backups"
@@ -76,6 +77,11 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
+
+    @field_validator("app_title")
+    @classmethod
+    def normalize_app_title(cls, value: str) -> str:
+        return value.strip() or "whisper-guide"
 
     @property
     def resolved_data_dir(self) -> Path:
