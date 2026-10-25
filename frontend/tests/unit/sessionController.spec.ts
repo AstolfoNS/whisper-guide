@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { SessionController } from '../../src/services/sessionController'
+import { PlaybackCancelled } from '../../src/audio/player'
 import { useSessionStore } from '../../src/stores/session'
+import { useHealthStore } from '../../src/stores/health'
 import type { SessionSnapshot, SessionServerEvent } from '../../src/api/session'
 
 function harness(sttReady?: boolean) {
@@ -30,7 +32,7 @@ function harness(sttReady?: boolean) {
   const controller = new SessionController(store, { microphone, player, clientFactory: (event) => { onEvent = event; return client } })
   controller.enterStudio()
   store.selectedScript = { id: 's', name: '测试稿', content: '大家好。', character_count: 4, created_at: '' }
-  return { store, microphone, player, client, controller, emit, receive }
+  return { store, microphone, player, client, controller, emit, receive, receiveEvent: (event: SessionServerEvent) => onEvent(event) }
 }
 
 beforeEach(() => { setActivePinia(createPinia()); sessionStorage.clear() })
@@ -136,7 +138,6 @@ describe('application session runtime', () => {
   })
 })
 
-
 it('waits for speech readiness, opens only one microphone and forwards each PCM callback once', async () => {
   const { controller, microphone, client, store, emit } = harness(false)
   await controller.start()
@@ -219,7 +220,6 @@ it('shares one in-flight microphone open across repeated ready snapshots and gen
   controller.dispose()
 })
 
-
 it('stops forwarding PCM while a new ready generation is enabling capture', async () => {
   const { controller, microphone, client, store, emit } = harness(true)
   await controller.start()
@@ -235,5 +235,165 @@ it('stops forwarding PCM while a new ready generation is enabling capture', asyn
   expect(client.sendAudio).toHaveBeenCalledTimes(2)
   expect(microphone.open).toHaveBeenCalledTimes(1)
   expect(client.send.mock.calls.filter(([command]) => command.type === 'audio_ready')).toHaveLength(2)
+  controller.dispose()
+})
+
+it('starts capture without waiting for output unlock and records its failure separately', async () => {
+  const { controller, microphone, player, store } = harness()
+  let failOutput!: (reason: Error) => void
+  player.unlock.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { failOutput = reject }))
+  await controller.start()
+  await vi.waitFor(() => expect(store.microphone).toBe('active'))
+  expect(store.busy).toBe(false)
+  expect(microphone.open).toHaveBeenCalledTimes(1)
+  failOutput(new Error('音频输出不可用'))
+  await vi.waitFor(() => expect(useHealthStore().playback).toBe('failed'))
+  expect(useHealthStore().playbackDetail).toBe('音频输出不可用')
+  expect(store.state).toBe('LISTENING')
+  controller.dispose()
+})
+
+it('retries output from the resume gesture and resets the previous playback result', async () => {
+  const { controller, player, store } = harness()
+  useHealthStore().playback = 'success'
+  await controller.start()
+  expect(useHealthStore().playback).toBe('unknown')
+  controller.pause()
+  player.unlock.mockRejectedValueOnce(new Error('系统暂停了输出'))
+  await controller.resume()
+  await vi.waitFor(() => expect(useHealthStore().playback).toBe('failed'))
+  expect(store.state).toBe('LISTENING')
+  expect(store.microphone).toBe('active')
+  controller.dispose()
+})
+
+it('retains microphone failure state after pausing and releases resources', async () => {
+  const { controller, microphone, store } = harness()
+  await controller.start()
+  await vi.waitFor(() => expect(store.microphone).toBe('active'))
+  const fail = microphone.open.mock.calls[0]![1] as (reason: string) => void
+  fail('麦克风已中断')
+  expect(store.state).toBe('PAUSED')
+  expect(store.microphone).toBe('error')
+  expect(store.error).toBe('麦克风已中断')
+  expect(microphone.isOpen).toBe(false)
+  controller.dispose()
+})
+
+it('shows a microphone opening error without leaving the session busy', async () => {
+  const { controller, microphone, store } = harness()
+  microphone.open.mockRejectedValueOnce(new Error('输入设备采样率不兼容'))
+  await controller.start()
+  expect(store.busy).toBe(false)
+  expect(store.microphone).toBe('error')
+  expect(store.error).toBe('输入设备采样率不兼容')
+  controller.dispose()
+})
+
+it('reports playback failure with a reason and never sends playback_finished', async () => {
+  const { controller, player, store, receiveEvent, emit, client } = harness()
+  await controller.start()
+  const prompt = { id: 'p-1', text: '大家好', start: 0, end: 3, next_position: 3 }
+  emit({ ...store.snapshot!, state: 'PROMPTING', generation: store.snapshot!.generation + 1, prompt })
+  receiveEvent({ type: 'audio', prompt_id: prompt.id, mime_type: 'audio/mpeg', data: 'YQ==' })
+  expect(useHealthStore().playback).toBe('pending')
+  const fail = player.play.mock.calls[0]![2] as (reason: string) => void
+  fail('浏览器已暂停音频输出，请返回页面后继续。')
+  expect(useHealthStore().playback).toBe('failed')
+  expect(useHealthStore().playbackDetail).toContain('浏览器已暂停')
+  expect(client.send).toHaveBeenCalledWith({ type: 'playback_failed', prompt_id: prompt.id })
+  expect(client.send).not.toHaveBeenCalledWith({ type: 'playback_finished', prompt_id: prompt.id })
+  controller.dispose()
+})
+
+it('marks interrupted playback as cancelled and ignores late completion', async () => {
+  const { controller, player, store, receiveEvent, emit, client } = harness()
+  await controller.start()
+  const prompt = { id: 'p-2', text: '大家好', start: 0, end: 3, next_position: 3 }
+  emit({ ...store.snapshot!, state: 'PROMPTING', generation: store.snapshot!.generation + 1, prompt })
+  receiveEvent({ type: 'audio', prompt_id: prompt.id, mime_type: 'audio/mpeg', data: 'YQ==' })
+  const done = player.play.mock.calls[0]![1] as () => void
+  controller.pause()
+  done()
+  expect(useHealthStore().playback).toBe('stopped')
+  expect(client.send).not.toHaveBeenCalledWith({ type: 'playback_finished', prompt_id: prompt.id })
+  controller.dispose()
+})
+
+it('does not reuse a cancelled microphone opening when immediately resuming', async () => {
+  const { controller, microphone, store, emit } = harness(false)
+  await controller.start()
+  microphone.isOpen = false
+  let finishOld!: () => void
+  microphone.open.mockImplementationOnce(() => new Promise<void>(resolve => { finishOld = resolve }))
+  emit({ ...store.snapshot!, stt_ready: true })
+  expect(microphone.open).toHaveBeenCalledTimes(2)
+  controller.pause()
+  const resuming = controller.resume()
+  expect(microphone.open).toHaveBeenCalledTimes(3)
+  finishOld()
+  await resuming
+  await vi.waitFor(() => expect(store.microphone).toBe('active'))
+  expect(store.state).toBe('LISTENING')
+  controller.dispose()
+})
+
+it('preserves input failure after a delayed server pause acknowledgement', async () => {
+  const { controller, microphone, store, client, emit } = harness()
+  await controller.start()
+  await vi.waitFor(() => expect(store.microphone).toBe('active'))
+  const listening = { ...store.snapshot! }
+  client.send.mockImplementation(() => {})
+  const fail = microphone.open.mock.calls[0]![1] as (reason: string) => void
+  fail('输入设备已断开')
+  expect(store.microphone).toBe('error')
+  emit({ ...listening, state: 'PAUSED', generation: listening.generation + 1 })
+  expect(store.microphone).toBe('error')
+  expect(store.error).toBe('输入设备已断开')
+  controller.dispose()
+})
+
+it('does not acknowledge capture if enabling it synchronously reports a device failure', async () => {
+  const { controller, microphone, client, store } = harness()
+  microphone.setEnabled.mockImplementation(enabled => {
+    if (!enabled) return
+    const fail = microphone.open.mock.calls[0]![1] as (reason: string) => void
+    fail('麦克风音频中断')
+  })
+  await controller.start()
+  await vi.waitFor(() => expect(store.state).toBe('PAUSED'))
+  expect(store.microphone).toBe('error')
+  expect(client.send).not.toHaveBeenCalledWith({ type: 'audio_ready' })
+  controller.dispose()
+})
+
+it('does not report routine output unlock cancellation as a device failure', async () => {
+  const { controller, player } = harness()
+  player.unlock.mockRejectedValueOnce(new PlaybackCancelled())
+  await controller.start()
+  expect(useHealthStore().playback).toBe('unknown')
+  expect(useHealthStore().playbackDetail).toBe('')
+  controller.dispose()
+})
+
+it('pauses instead of acknowledging an input graph closed while resume was waiting', async () => {
+  const { controller, microphone, client, store } = harness()
+  microphone.resume.mockImplementationOnce(async () => { microphone.isOpen = false })
+  await controller.start()
+  await vi.waitFor(() => expect(store.state).toBe('PAUSED'))
+  expect(store.microphone).toBe('error')
+  expect(client.send).not.toHaveBeenCalledWith({ type: 'audio_ready' })
+  controller.dispose()
+})
+
+it('publishes only input rate and channel metadata while capture is open', async () => {
+  const { controller, microphone } = harness()
+  Object.assign(microphone, { contextSampleRate: 48000, processingSettings: { sampleRate: 48000, channelCount: 2 } })
+  await controller.start()
+  expect(useHealthStore().captureInputRate).toBe(48000)
+  expect(useHealthStore().captureContextRate).toBe(48000)
+  expect(useHealthStore().captureChannels).toBe(2)
+  controller.pause()
+  expect(useHealthStore().captureInputRate).toBe(0)
   controller.dispose()
 })

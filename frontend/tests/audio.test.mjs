@@ -9,6 +9,7 @@ test('stopping an audio decode prevents stale playback and completion', async ()
   let started = 0
   let ended = 0
   globalThis.AudioContext = class {
+    state = 'running'
     async resume() {}
     decodeAudioData() { return new Promise(resolve => { finishDecode = resolve }) }
     createBufferSource() { return { connect() {}, disconnect() {}, start() { started++ }, stop() {}, onended: null } }
@@ -18,7 +19,7 @@ test('stopping an audio decode prevents stale playback and completion', async ()
   const pending = player.play('YQ==', () => ended++, () => {})
   await new Promise(resolve => setImmediate(resolve))
   player.stop()
-  finishDecode({})
+  finishDecode({ duration: 0.1 })
   await pending
   assert.equal(started, 0)
   assert.equal(ended, 0)
@@ -28,8 +29,9 @@ test('manual stop detaches completion callback', async () => {
   let source
   let completed = 0
   globalThis.AudioContext = class {
+    state = 'running'
     async resume() {}
-    async decodeAudioData() { return {} }
+    async decodeAudioData() { return { duration: 0.1 } }
     createBufferSource() {
       source = { connect() {}, disconnect() {}, start() {}, stop() { this.onended?.() }, onended: null }
       return source
@@ -77,8 +79,8 @@ function workletAt(sampleRate) {
   return { processor, frames }
 }
 
-test('actual 16, 44.1 and 48 kHz clocks each produce 50 unique mono frames per second', () => {
-  for (const rate of [16000, 44100, 48000]) {
+test('actual 8–96 kHz clocks each produce 50 unique mono frames per second', () => {
+  for (const rate of [8000, 16000, 22050, 32000, 44100, 48000, 96000]) {
     const { processor, frames } = workletAt(rate)
     for (let start = 0; start < rate; start += 128) {
       const channel = Float32Array.from({ length: Math.min(128, rate - start) }, (_, index) => (start + index) / rate - 0.5)
@@ -99,4 +101,22 @@ test('duplicate enabled messages preserve a partial frame instead of discarding 
   assert.equal(frames.length, 1)
   assert.equal(new DataView(frames[0]).getInt16(0, true), 8192)
   assert.equal(new DataView(frames[0]).getInt16(256, true), 16384)
+})
+
+
+test('a stereo input with speech on the second channel is downmixed to mono instead of discarded', () => {
+  const { processor, frames } = workletAt(48000)
+  processor.process([[new Float32Array(960), new Float32Array(960).fill(0.5)]])
+  assert.equal(frames.length, 1)
+  assert.equal(frames[0].byteLength, 640)
+  assert.equal(new DataView(frames[0]).getInt16(0, true), 8192)
+})
+
+test('multichannel downmix stays bounded and invalid input samples cannot poison subsequent PCM', () => {
+  const { processor, frames } = workletAt(16000)
+  processor.process([[new Float32Array(320).fill(1), new Float32Array(320).fill(1), new Float32Array(320).fill(1)]])
+  processor.process([[new Float32Array(320).fill(NaN), new Float32Array(320).fill(0.5)]])
+  assert.equal(frames.length, 2)
+  assert.equal(new DataView(frames[0]).getInt16(0, true), 32767)
+  assert.equal(new DataView(frames[1]).getInt16(0, true), 8192)
 })

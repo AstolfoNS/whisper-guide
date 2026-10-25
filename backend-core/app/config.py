@@ -51,7 +51,8 @@ class Settings(BaseSettings):
     speech_model_dir: Path = (
         BACKEND_ROOT / "models" / "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
     )
-    speech_sample_rate: int = 16_000
+    # Browser transport, acoustic evidence, and session PCM all use 16 kHz.
+    speech_sample_rate: Literal[16_000] = 16_000
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
     stt_provider: str = "local"
     stt_provider_configs: list[dict[str, Any]] = Field(default_factory=list)
@@ -77,6 +78,21 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
+
+    @field_validator("speech_sample_rate", mode="before")
+    @classmethod
+    def validate_speech_sample_rate(cls, value: Any) -> int:
+        # Environment files supply strings; normalize only the supported value.
+        if (type(value) is int and value == 16_000) or (
+            isinstance(value, str) and value.strip() == "16000"
+        ):
+            return 16_000
+        raise ValueError(
+            "会话音频协议固定为 16000 Hz（16 kHz）；请将 "
+            "WHISPER_GUIDE_SPEECH_SAMPLE_RATE 设为 16000。"
+            "麦克风可使用设备原生采样率，浏览器会转换为 16 kHz；"
+            "不要将后端设置改成设备的 44100/48000 Hz。"
+        )
 
     @field_validator("app_title")
     @classmethod

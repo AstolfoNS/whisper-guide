@@ -1,12 +1,13 @@
 import { SessionClient, type SessionServerEvent, type SessionSnapshot } from '../api/session'
 import { Microphone } from '../audio/microphone'
-import { PromptPlayer } from '../audio/player'
+import { PlaybackCancelled, PromptPlayer } from '../audio/player'
 import { useSessionStore } from '../stores/session'
 import { useHealthStore } from '../stores/health'
 
 type Store = ReturnType<typeof useSessionStore>
 type Client = Pick<SessionClient, 'connected' | 'connect' | 'close' | 'send' | 'sendAudio' | 'prepare' | 'attach' | 'waitFor'>
 type Mic = Pick<Microphone, 'open' | 'close' | 'resume' | 'setEnabled' | 'isOpen'>
+  & Partial<Pick<Microphone, 'contextSampleRate' | 'processingSettings'>>
 type Player = Pick<PromptPlayer, 'unlock' | 'stop' | 'close' | 'play'>
 export interface SessionDependencies {
   microphone?: Mic; player?: Player
@@ -42,13 +43,32 @@ export class SessionController {
     if (operation !== this.operation || this.destroyed || !this.inStudio) throw new Error('操作已取消。')
   }
   private stopCapture() {
+    const microphoneFailed = this.store.microphone === 'error'
     this.captureAttempt++
     this.captureGeneration = -1
     this.captureSessionId = ''
     this.microphone.close()
-    this.store.microphone = 'idle'
+    this.openingMicrophone = undefined
+    this.store.microphone = microphoneFailed ? 'error' : 'idle'
+    const health = useHealthStore()
+    health.captureInputRate = 0; health.captureContextRate = 0; health.captureChannels = 0
   }
-  private stopPrompt() { this.expectedPrompt = ''; this.player.stop() }
+  private stopPrompt() {
+    this.expectedPrompt = ''; this.player.stop()
+    if (useHealthStore().playback === 'pending') useHealthStore().playback = 'stopped'
+  }
+  private async preparePlayback(operation: number) {
+    const health = useHealthStore()
+    health.playback = 'unknown'; health.playbackDetail = ''
+    try { await this.player.unlock() }
+    catch (error) {
+      if (operation !== this.operation || this.destroyed || !this.inStudio || health.playback !== 'unknown') return
+      // A normal stop may cancel an in-flight unlock without indicating an output fault.
+      if (error instanceof PlaybackCancelled) return
+      health.playback = 'failed'
+      health.playbackDetail = error instanceof Error ? error.message : '无法启用浏览器播放，请检查系统输出设备后点击继续。'
+    }
+  }
   private validTimeout() {
     if (!Number.isInteger(this.store.silenceTimeout) || this.store.silenceTimeout < 1000) throw new Error('静音等待时间必须为不小于 1000 毫秒的整数。')
   }
@@ -106,16 +126,20 @@ export class SessionController {
     }
     if (event.type === 'audio' && this.inStudio && this.store.state === 'PROMPTING' && event.prompt_id === this.expectedPrompt) {
       const id = event.prompt_id
+      useHealthStore().playback = 'pending'
+      useHealthStore().playbackDetail = ''
       void this.player.play(event.data, () => {
         if (id === this.expectedPrompt && this.client.connected) {
           this.expectedPrompt = ''
           useHealthStore().playback = 'success'
+          useHealthStore().playbackDetail = ''
           this.client.send({ type: 'playback_finished', prompt_id: id })
         }
-      }, () => {
+      }, (reason?: string) => {
         if (id === this.expectedPrompt && this.client.connected) {
           this.expectedPrompt = ''
           useHealthStore().playback = 'failed'
+          useHealthStore().playbackDetail = reason || '浏览器播放失败，请检查输出设备、音量和页面音频权限后继续。'
           this.client.send({ type: 'playback_failed', prompt_id: id })
         }
       })
@@ -136,8 +160,19 @@ export class SessionController {
   }
   private async openMicrophone() {
     if (this.microphone.isOpen) return
-    const opening = this.openingMicrophone ??= this.microphone.open(this.sendFrame, reason => this.pause(reason))
-    try { await opening }
+    const opening = this.openingMicrophone ??= this.microphone.open(this.sendFrame, reason => {
+      this.pause(reason)
+      this.store.microphone = 'error'
+    })
+    try {
+      await opening
+      if (this.microphone.isOpen) {
+        const health = useHealthStore()
+        health.captureInputRate = this.microphone.processingSettings?.sampleRate ?? 0
+        health.captureContextRate = this.microphone.contextSampleRate ?? 0
+        health.captureChannels = this.microphone.processingSettings?.channelCount ?? 0
+      }
+    }
     finally { if (this.openingMicrophone === opening) this.openingMicrophone = undefined }
   }
   private async enableCapture(next: SessionSnapshot) {
@@ -157,12 +192,14 @@ export class SessionController {
       await this.microphone.resume()
       if (!current()) return
       this.microphone.setEnabled(true)
+      if (!current()) return
+      if (!this.microphone.isOpen) throw new Error('麦克风已中断，请检查输入设备后继续。')
       this.store.microphone = 'active'
       this.client.send({ type: 'audio_ready' })
     } catch (error) {
       if (current()) {
-        this.store.microphone = 'error'
         this.pause(error instanceof Error ? error.message : '麦克风无法启用。')
+        this.store.microphone = 'error'
       }
     }
   }
@@ -172,9 +209,11 @@ export class SessionController {
     this.store.busy = true; this.store.error = ''
     try {
       this.validTimeout()
-      await this.player.unlock(); this.ensure(operation)
+      // Start output unlock inside the user gesture; recognition can still run if output fails.
+      void this.preparePlayback(operation)
       this.store.microphone = 'requesting'
-      await this.openMicrophone()
+      try { await this.openMicrophone() }
+      catch (error) { this.store.microphone = 'error'; throw error }
       this.ensure(operation)
       if (!this.client.connected) await this.connect()
       this.ensure(operation)
@@ -189,7 +228,9 @@ export class SessionController {
       this.client.send({ type: 'start' })
       await listening
     } catch (error) {
+      const microphoneFailed = this.store.microphone === 'error'
       this.stopCapture()
+      if (microphoneFailed) this.store.microphone = 'error'
       if (operation === this.operation && !this.destroyed) this.store.error = error instanceof Error ? error.message : '无法开始会话。'
     } finally { this.store.busy = false }
   }
@@ -211,8 +252,11 @@ export class SessionController {
     this.store.busy = true; this.store.error = ''
     try {
       this.validTimeout()
-      await this.player.unlock(); this.ensure(operation)
-      await this.openMicrophone()
+      // Start output unlock inside the user gesture; recognition can still run if output fails.
+      void this.preparePlayback(operation)
+      this.store.microphone = 'requesting'
+      try { await this.openMicrophone() }
+      catch (error) { this.store.microphone = 'error'; throw error }
       this.ensure(operation)
       if (!this.client.connected) {
         await this.connect(); this.ensure(operation)
@@ -226,7 +270,9 @@ export class SessionController {
       this.client.send({ type: 'resume' })
       await listening
     } catch (error) {
+      const microphoneFailed = this.store.microphone === 'error'
       this.stopCapture()
+      if (microphoneFailed) this.store.microphone = 'error'
       if (operation === this.operation && !this.destroyed) this.store.error = error instanceof Error ? error.message : '无法继续会话。'
     } finally { this.store.busy = false }
   }
