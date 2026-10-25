@@ -8,14 +8,14 @@
 
 ## 1. 先确认需要迁移哪些内容
 
-| 内容 | 交付方式 | 是否含私密信息 |
-|---|---|---|
-| 后端与前端镜像 | 一个 `whisper-guide-image.tar.gz`，内含两个镜像 | 不含现有用户数据和密钥 |
-| 启动配置、部署脚本、本文、备份脚本 | 与镜像包放在同一交付目录 | `.env.example` 只含模板 |
-| 已有讲稿与模型方案 | 可选：另行迁移 `data/sqlite` 整个目录 | 私有模型方案含 API Key/Token |
-| 原运行环境配置 | 可选：另行迁移 `.env` | 可能含密钥 |
-| 旧备份 | 按需另行迁移 `data/backups` | 按私密数据保护 |
-| 实时会话进度 | 不迁移；新服务器重新准备会话 | 仅在旧进程内存中 |
+| 内容                               | 交付方式                                        | 是否含私密信息               |
+| ---------------------------------- | ----------------------------------------------- | ---------------------------- |
+| 后端与前端镜像                     | 一个 `whisper-guide-image.tar.gz`，内含两个镜像 | 不含现有用户数据和密钥       |
+| 启动配置、部署脚本、本文、备份脚本 | 与镜像包放在同一交付目录                        | `.env.example` 只含模板      |
+| 已有讲稿与模型方案                 | 可选：另行迁移 `data/sqlite` 整个目录           | 私有模型方案含 API Key/Token |
+| 原运行环境配置                     | 可选：另行迁移 `.env`                           | 可能含密钥                   |
+| 旧备份                             | 按需另行迁移 `data/backups`                     | 按私密数据保护               |
+| 实时会话进度                       | 不迁移；新服务器重新准备会话                    | 仅在旧进程内存中             |
 
 全新使用无需复制旧 `data`，首次启动会建立数据库。保留旧讲稿和模型方案则先阅读第 8 节；发布镜像不会自动包含它们。不要把私有迁移文件放进公共发布包。
 
@@ -166,16 +166,16 @@ docker compose ps
 
 建议保留的容器路径：
 
-| 设置 | 值与含义 |
-|---|---|
-| `WHISPER_GUIDE_HTTP_PORT` | 宿主机端口，默认 `8080`，按当前Compose对外监听 |
-| `WHISPER_GUIDE_APP_TITLE` | 页面/导航与API文档标题，默认 `whisper-guide` |
-| `WHISPER_GUIDE_DATA_DIR` | `/data`，对应宿主 `./data/sqlite` |
-| `WHISPER_GUIDE_BACKUP_DIR` | `/backups`，对应宿主 `./data/backups` |
-| `WHISPER_GUIDE_SPEECH_MODEL_DIR` | 保留模板中的容器内 `/models/...` 路径 |
-| `WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS` | 默认 `3000`，整数且不小于 `1000` |
-| `WHISPER_GUIDE_STT_PROVIDER` | 首次默认 `local`；不代表覆盖已有模型方案 |
-| `WHISPER_GUIDE_CLOUD_OPT_IN` | 首次默认 `false`；使用云端音频需显式授权 |
+| 设置                                       | 值与含义                                       |
+| ------------------------------------------ | ---------------------------------------------- |
+| `WHISPER_GUIDE_HTTP_PORT`                  | 宿主机端口，默认 `8080`，按当前Compose对外监听 |
+| `WHISPER_GUIDE_APP_TITLE`                  | 页面/导航与API文档标题，默认 `whisper-guide`   |
+| `WHISPER_GUIDE_DATA_DIR`                   | `/data`，对应宿主 `./data/sqlite`              |
+| `WHISPER_GUIDE_BACKUP_DIR`                 | `/backups`，对应宿主 `./data/backups`          |
+| `WHISPER_GUIDE_SPEECH_MODEL_DIR`           | 保留模板中的容器内 `/models/...` 路径          |
+| `WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS` | 默认 `3000`，整数且不小于 `1000`               |
+| `WHISPER_GUIDE_STT_PROVIDER`               | 首次默认 `local`；不代表覆盖已有模型方案       |
+| `WHISPER_GUIDE_CLOUD_OPT_IN`               | 首次默认 `false`；使用云端音频需显式授权       |
 
 不要将宿主机路径填入容器的模型/数据库路径，也不要增加后端 worker 或后端副本。活跃会话仅由单个进程维护；重启会清空会话，讲稿和方案依靠挂载持久化。
 
@@ -244,10 +244,10 @@ docker compose exec -T backend /app/backend-core/.venv/bin/python -c \
 
 默认本地 STT 不需要云端 Key。需要双云配置时，在 `/settings/models` 新建方案：
 
-| 环节 | 填写内容 |
-|---|---|
-| 豆包流式语音 STT | 云端 STT、协议 `volcengine-ws`、`wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`、已开通语音资源、**语音服务 API Key**、云端音频授权；`api-key` 鉴权不填 App ID |
-| 方舟或其他兼容文本 LLM | 单独设置语义模式、Base URL、实际模型 ID、**文本服务 API Key**；可先获取模型列表，再测试调用权限 |
+| 环节                   | 填写内容                                                                                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 豆包流式语音 STT       | 云端 STT、协议 `volcengine-ws`、`wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`、已开通语音资源、**语音服务 API Key**、云端音频授权；`api-key` 鉴权不填 App ID |
+| 方舟或其他兼容文本 LLM | 单独设置语义模式、Base URL、实际模型 ID、**文本服务 API Key**；可先获取模型列表，再测试调用权限                                                                            |
 
 这些端点是当前项目预设，部署时应核对服务商控制台实际开通情况。语音 Key 与方舟文本 Key 不会自动复用；旧 `app-token` 鉴权才使用 App ID 与 Access Token。先分别测试，再保存，结束所有未终止会话（包括暂停会话）后设为生效。
 
@@ -369,20 +369,20 @@ docker compose exec -T backend /app/backend-core/.venv/bin/python - \
 
 ## 9. 常见问题
 
-| 现象 | 操作 |
-|---|---|
-| `docker info` 失败 | 检查 daemon 与当前账号权限；不要只看 CLI 版本 |
-| `docker compose` 不存在 | 安装或启用与服务器 Docker 配套的 Compose 插件 |
-| `exec format error` | 核对 `linux/amd64` 与服务器 CPU 架构 |
-| 找不到 `Dockerfile` / 尝试联网构建 | 先加载两份镜像，启动加 `--no-build --pull never`；部署机不需要源码 |
-| 镜像 gzip 不存在 | A 路线传整个交付目录；B 路线传根目录 tar 并在目标解包，不能传构建机已删 gzip 的 release |
-| SQLite 打不开、backend unhealthy、保存配置 503 | 检查 `data/sqlite`、`data/backups` 对 UID `10001` 的权限与磁盘余量 |
-| 服务器 IP:8080 打不开 | 核对发布端口、防火墙与入口；采音使用第5节localhost隧道或HTTPS |
-| 页面有了但无麦克风 | localhost/HTTPS、浏览器授权、麦克风设备 |
-| 已进入播报但没有声音 | edge-tts 网络、浏览器播放权限、耳机输出、最近播放错误 |
-| STT unavailable | 检查容器模型路径；内置模型部署无需在服务器补装大型 SDK |
-| 匹配提示反复变化或不播报 | 核对第6节诊断，继续读正文自动重定位；旧分数为历史信息，持续噪声和设备效果需现场排查 |
-| 无法激活模型 | 结束 READY/LISTENING/PROMPTING/PAUSED 会话；包括断线恢复入口的未结束会话 |
-| 重启后讲稿或方案丢失 | 确认一直从同一部署目录启动、原 `data` 挂载完整；仅实时会话应因重启丢失 |
+| 现象                                           | 操作                                                                                    |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `docker info` 失败                             | 检查 daemon 与当前账号权限；不要只看 CLI 版本                                           |
+| `docker compose` 不存在                        | 安装或启用与服务器 Docker 配套的 Compose 插件                                           |
+| `exec format error`                            | 核对 `linux/amd64` 与服务器 CPU 架构                                                    |
+| 找不到 `Dockerfile` / 尝试联网构建             | 先加载两份镜像，启动加 `--no-build --pull never`；部署机不需要源码                      |
+| 镜像 gzip 不存在                               | A 路线传整个交付目录；B 路线传根目录 tar 并在目标解包，不能传构建机已删 gzip 的 release |
+| SQLite 打不开、backend unhealthy、保存配置 503 | 检查 `data/sqlite`、`data/backups` 对 UID `10001` 的权限与磁盘余量                      |
+| 服务器 IP:8080 打不开                          | 核对发布端口、防火墙与入口；采音使用第5节localhost隧道或HTTPS                           |
+| 页面有了但无麦克风                             | localhost/HTTPS、浏览器授权、麦克风设备                                                 |
+| 已进入播报但没有声音                           | edge-tts 网络、浏览器播放权限、耳机输出、最近播放错误                                   |
+| STT unavailable                                | 检查容器模型路径；内置模型部署无需在服务器补装大型 SDK                                  |
+| 匹配提示反复变化或不播报                       | 核对第6节诊断，继续读正文自动重定位；旧分数为历史信息，持续噪声和设备效果需现场排查     |
+| 无法激活模型                                   | 结束 READY/LISTENING/PROMPTING/PAUSED 会话；包括断线恢复入口的未结束会话                |
+| 重启后讲稿或方案丢失                           | 确认一直从同一部署目录启动、原 `data` 挂载完整；仅实时会话应因重启丢失                  |
 
 默认部署为双容器、单后端worker。发布包只含公共配置与应用镜像；源代码变更需重新构建并导出交付物，切换后重新准备会话验收。
