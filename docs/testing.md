@@ -50,10 +50,10 @@ pnpm test:e2e
 
 | 检查 | 状态 |
 |---|---|
-| 后端pytest、Ruff检查与格式 | 828通过（含29项发布专项）；75个应用Python文件及2个发布工具格式合规，保留1条既有Starlette/httpx弃用提示 |
+| 后端pytest、Ruff检查与格式 | 830通过（含29项发布专项）；75个应用Python文件及2个发布工具格式合规，保留1条既有Starlette/httpx弃用提示 |
 | 前端Node兼容回归、Vitest、Vue/TypeScript与生产构建 | 24＋227项通过；类型检查及生产构建通过 |
 | Chromium端到端 | 完整24项通过，约1.2分钟；8010/5174独立服务、临时数据库和合成音频 |
-| Compose与部署脚本 | 真实Compose环境文件、Shell优先级、自定义挂载目标、发布包插值及fake deploy保留数据/强制重建通过；bash -n通过；前次actionlint 1.7.12结果保留，工作流本轮未修改 |
+| Compose与部署脚本 | Compose2.38.2与5.6.1各41项发布/环境专项通过，2.38.2全量830项通过；长挂载语法、默认/自定义容器目标及相对宿主来源正常。CI增加Compose版本输出；bash -n通过，前次actionlint结果不代表本轮工作流已复验 |
 | Docker镜像 | 双runtime独立env-config-check-20261027镜像构建通过；无网络只读后端容器HTTP/WebSocket验证1500ms进入真实会话、临时数据隔离；前端容器nginx -t通过，未部署业务服务 |
 | 文档校验 | 11个Markdown文件UTF-8与相对链接校验、全部公开模板变量分类覆盖、AC-01至AC-27保留 |
 
@@ -125,6 +125,10 @@ Chromium使用原生Web Audio与fake-device，验证输入报告48000Hz、图480
 
 
 ## 版本发布专项
+
+2026-10-27复现v0.1.2 CI失败：Docker官方Compose2.38.2在`config --no-interpolate`时把短挂载中的`${VAR:-default}`按冒号拆开，导出JSON的target只剩`${VAR`，二次解析报invalid interpolation。以官方SHA256校验过的2.38.2独立临时二进制复现，系统Compose5.6.1未受影响。源模板改成长挂载后，两版本各41项发布/环境专项通过；2.38.2运行后端全量830项通过。没有替换系统Compose、启动服务、移动v0.1.2标签或推送远端。
+
+回归额外检查导出JSON保留完整数据/备份target表达式，默认与自定义容器路径解析正确，宿主来源仍相对部署目录；测试子进程失败包含stderr，CI记录Compose版本。此轮未修改前端，前端与浏览器结果沿用上述既有验证；完整GitHub工作流仍需推送包含修复的新提交/新版本标签验证。
 
 29项发布回归在临时Git仓库和fake Docker中验证：精确标签/SHA、清单及锁文件版本一致、脏/未跟踪文件拒绝、非法版本拒绝、prepare失败回滚、固定Compose无build且不烘焙私有环境、镜像ID/标签/架构校验、白名单打包与内外SHA256、已有产物拒绝覆盖、部署校验失败不触碰.env/data，以及成功后保留既有配置/数据库。测试不会创建正式标签、调用GitHub或启动生产服务。
 

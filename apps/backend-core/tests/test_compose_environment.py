@@ -60,7 +60,10 @@ def resolve(root, compose_file="docker-compose.yml", env_file=".env", overrides=
         env=environment,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"Compose config failed ({result.returncode}) for {compose_file}:\n{result.stderr}"
     )
     return json.loads(result.stdout)["services"]
 
@@ -156,10 +159,26 @@ def test_release_pins_images_but_preserves_runtime_interpolation(isolated_compos
         raw["backend"]["environment"]["WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS"]
         == DOLLAR + "{WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS:-3000}"
     )
+    assert {item["source"]: item["target"] for item in raw["backend"]["volumes"]} == {
+        "./data/sqlite": DOLLAR + "{WHISPER_GUIDE_DATA_DIR:-/data}",
+        "./data/backups": DOLLAR + "{WHISPER_GUIDE_BACKUP_DIR:-/backups}",
+    }
     services = resolve(
         root, "release-compose.json", overrides={"WHISPER_GUIDE_VERSION": "wrong-shell-version"}
     )
     assert services["backend"]["environment"]["WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS"] == "1500"
+    services = resolve(
+        root,
+        "release-compose.json",
+        overrides={
+            "WHISPER_GUIDE_DATA_DIR": "/runtime/data",
+            "WHISPER_GUIDE_BACKUP_DIR": "/runtime/backups",
+        },
+    )
+    assert {item["source"]: item["target"] for item in services["backend"]["volumes"]} == {
+        "./data/sqlite": "/runtime/data",
+        "./data/backups": "/runtime/backups",
+    }
     for name, service in services.items():
         assert service["image"] == f"whisper-guide-{name}:0.1.2"
         assert service["platform"] == "linux/amd64"
@@ -269,3 +288,29 @@ def test_proxy_does_not_override_configurable_upload_limits():
     source = re.sub(r"#[^\n]*", "", source)
     limits = re.findall(r"\bclient_max_body_size\s+([^;]+);", source)
     assert limits == ["0"]
+
+
+def test_mount_interpolation_uses_long_syntax_before_compose_normalization():
+    """Compose 2.x truncates unexpanded ${VAR:-default} in short volume syntax."""
+    volumes = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]["backend"][
+        "volumes"
+    ]
+    assert volumes == [
+        {
+            "type": "bind",
+            "source": "./data/sqlite",
+            "target": DOLLAR + "{WHISPER_GUIDE_DATA_DIR:-/data}",
+        },
+        {
+            "type": "bind",
+            "source": "./data/backups",
+            "target": DOLLAR + "{WHISPER_GUIDE_BACKUP_DIR:-/backups}",
+        },
+    ]
+
+
+def test_invalid_compose_reports_cli_error_in_failure(isolated_compose):
+    source = {"services": {"backend": {"image": DOLLAR + "{UNFINISHED"}}}
+    (isolated_compose / "invalid.json").write_text(json.dumps(source))
+    with pytest.raises(AssertionError, match="invalid interpolation"):
+        resolve(isolated_compose, "invalid.json", env_file=".env.example")

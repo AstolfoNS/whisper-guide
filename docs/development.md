@@ -87,6 +87,10 @@ Docker前端构建先检查类型；后端只安装锁定生产依赖。运行�
 
 发布工具只用Python 3.12标准库、Git、uv、Docker和gzip，不新增应用运行依赖。prepare只同步项目自身版本，保留第三方依赖解析结果，并用uv lock --locked --offline严格验证。prepare失败回滚前后端清单与uv.lock；pnpm锁不存根应用版本，无需随版本号改写。ci.yml支持workflow_call检查指定SHA；release.yml的package任务依赖checks成功，publish任务仅在打包后获contents:write并上传草稿附件后发布。当前流程不推镜像仓库，不远程部署；不要把个人密钥塞进公开工作流。
 
+发布Compose使用卷长语法保存`type/source/target`，防止Compose 2.38.2在`--no-interpolate`规范化短语法时把`${VAR:-default}`目标截断。生成后仍须用部署.env重新解析，确认运行默认值与相对宿主挂载完整；不能只验证渲染步骤退出成功。兼容验证需覆盖Compose 2.38.2及本机版本，具体结果见[测试记录](testing.md)。
+
+修复已推标签中的代码缺陷后，不要直接重跑旧标签期待使用main新代码；保留失败标签，用新版本提交和新标签发布。`v0.1.2`首次发布失败后的`v0.1.3`示例及定位日志的方法见[部署手册](../DEPLOY.md#发布失败后的恢复)。
+
 ## 环境变量与生效顺序
 
 2026-10-27按公开模板与代码逐项核对。变量为空不等于无效：例如云端地址、密钥可在部署环境或模型方案中填写；是否使用取决于对应能力是否启用。不要把生产.env、完整docker inspect或完整compose config粘贴到日志/工单，可能包含凭据。

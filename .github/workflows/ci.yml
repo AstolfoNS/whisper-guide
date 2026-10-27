@@ -33,6 +33,8 @@ jobs:
       - run: uv run ruff format --check --config pyproject.toml ../../scripts/release.py ../../deploy/verify_release.py
         working-directory: apps/backend-core
       - run: bash -n deploy/package.sh deploy/deploy.sh
+      - name: Report Docker Compose version
+        run: docker compose version
       - run: uv run pytest
         working-directory: apps/backend-core
   frontend:

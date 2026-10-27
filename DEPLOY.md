@@ -47,6 +47,26 @@ git push origin v0.1.2
 
 GitHub自动提供的Source code压缩包只是源码，不含离线镜像，请下载版本化tar和对应.sha256。
 
+### 发布失败后的恢复
+
+先在Actions打开失败任务的具体步骤，查看末尾`FAILURES`和`short test summary info`；后端测试失败会使package和publish跳过，不会生成公开Release。排查Compose解析错误时同时记录`docker compose version`及命令的stderr，不用只看`CalledProcessError`退出码。
+
+`v0.1.2`的首次发布在`test_release_pins_images_but_preserves_runtime_interpolation`失败：Compose 2.38.2对含`${VAR:-default}`的卷短语法执行`config --no-interpolate`时会截断挂载目标，生成的发布Compose再次解析便报`invalid interpolation format`。修复改用卷长语法，显式区分type、source和target；宿主来源仍为相对部署目录的`./data/sqlite`、`./data/backups`，容器目标仍由部署.env插值。本机较新Compose通过不代表旧版兼容性已通过。
+
+代码修复提交到main后，直接Re-run旧`v0.1.2`仍会检出旧标签的提交，不会采用main上的修复。保留失败的`v0.1.2`标签，在包含修复的干净工作区准备新版本，例如：
+
+```bash
+python3 scripts/release.py prepare 0.1.3
+git diff
+git add apps/frontend/package.json apps/backend-core/pyproject.toml apps/backend-core/uv.lock
+git commit -m "chore: prepare v0.1.3"
+git push origin main
+git tag -a v0.1.3 -m "Release v0.1.3"
+git push origin v0.1.3
+```
+
+以上命令由维护者在审核修复后执行，不移动旧标签或覆盖已有Release。新标签触发的检查、镜像和发布包均来自包含修复的同一提交。
+
 ## 3. 本机构建同样的发布包
 
 安装Docker/Compose、Bash、gzip、Python 3.12；使用已打标签的干净源码，先按完整源码仓库docs/development.md准备ASR模型：

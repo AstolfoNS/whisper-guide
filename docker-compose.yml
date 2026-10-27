@@ -49,8 +49,13 @@ services:
       WHISPER_GUIDE_LLM_TIMEOUT_MS: ${WHISPER_GUIDE_LLM_TIMEOUT_MS:-1500}
     volumes:
       # Sources stay beside this Compose file; variables select container paths.
-      - ./data/sqlite:${WHISPER_GUIDE_DATA_DIR:-/data}
-      - ./data/backups:${WHISPER_GUIDE_BACKUP_DIR:-/backups}
+      # Long syntax keeps interpolation intact with Compose 2.x --no-interpolate.
+      - type: bind
+        source: ./data/sqlite
+        target: ${WHISPER_GUIDE_DATA_DIR:-/data}
+      - type: bind
+        source: ./data/backups
+        target: ${WHISPER_GUIDE_BACKUP_DIR:-/backups}
     expose:
       - "8000"
     healthcheck:
