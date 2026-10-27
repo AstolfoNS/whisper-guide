@@ -15,6 +15,9 @@ COPY apps/backend-core/pyproject.toml apps/backend-core/uv.lock apps/backend-cor
 RUN uv sync --frozen --no-dev --no-cache
 
 FROM python:3.12-slim AS backend-runtime
+ARG APP_VERSION=dev
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.version=$APP_VERSION org.opencontainers.image.revision=$VCS_REF
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libgomp1 libstdc++6 \
@@ -44,6 +47,9 @@ EXPOSE 8000
 CMD ["/app/backend-core/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
 
 FROM nginx:1.29-alpine AS frontend-runtime
+ARG APP_VERSION=dev
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.version=$APP_VERSION org.opencontainers.image.revision=$VCS_REF
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=frontend-build /src/dist /usr/share/nginx/html
 EXPOSE 8080

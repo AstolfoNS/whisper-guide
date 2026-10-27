@@ -8,11 +8,14 @@ x-logging: &logging
 
 services:
   backend:
-    image: whisper-guide-backend:0.1.0
+    image: whisper-guide-backend:${WHISPER_GUIDE_VERSION:-dev}
     build:
       context: .
       dockerfile: Dockerfile
       target: backend-runtime
+      args:
+        APP_VERSION: ${WHISPER_GUIDE_VERSION:-dev}
+        VCS_REF: ${WHISPER_GUIDE_REVISION:-unknown}
     environment:
       WHISPER_GUIDE_ENVIRONMENT: ${WHISPER_GUIDE_ENVIRONMENT:-production}
       WHISPER_GUIDE_APP_TITLE: ${WHISPER_GUIDE_APP_TITLE:-whisper-guide}
@@ -65,11 +68,14 @@ services:
     logging: *logging
 
   frontend:
-    image: whisper-guide-frontend:0.1.0
+    image: whisper-guide-frontend:${WHISPER_GUIDE_VERSION:-dev}
     build:
       context: .
       dockerfile: Dockerfile
       target: frontend-runtime
+      args:
+        APP_VERSION: ${WHISPER_GUIDE_VERSION:-dev}
+        VCS_REF: ${WHISPER_GUIDE_REVISION:-unknown}
     depends_on:
       backend:
         condition: service_healthy

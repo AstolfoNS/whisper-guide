@@ -20,6 +20,10 @@
 
 显示标题由环境变量WHISPER_GUIDE_APP_TITLE控制，默认whisper-guide。在根目录.env设置标题后重建后端容器并刷新页面即可；前端运行时读取配置，无需按标题重新编译。首次使用该功能需部署包含新接口和界面的版本，详见[开发指南](docs/development.md#项目标题)。
 
+## 版本发布
+
+Git标签vX.Y.Z自动关联GitHub Release、双镜像X.Y.Z标签和版本化离线包。先运行python3 scripts/release.py prepare X.Y.Z，审核提交版本清单后再创建并推送标签；Actions检查同一SHA通过后构建/打包、创建草稿、上传tar与.sha256并发布。稳定版本与linux/amd64限定、下载部署和升级回滚见[部署手册](DEPLOY.md)。历史v0.1.0/v0.1.1保持不变；本功能不会自动创建标签或更新服务器。
+
 ## 运行与目录
 
 已有Docker的服务器使用离线包，目标机不需要Python、uv、Node.js或pnpm；源码开发在WSL/Linux分别启动前后端。完整步骤分别维护在部署手册和开发指南。

@@ -77,6 +77,12 @@ docker compose up -d --wait --wait-timeout 180
 
 不记录录音帧、Base64或凭据。当前无用户隔离，公开部署应增加HTTPS、认证与访问控制。
 
+## 核对部署版本
+
+新版离线包根目录VERSION是部署版本，release.json记录Git标签、完整提交SHA、镜像ID、平台及OCI标签。部署脚本先校验SHA256SUMS与加载镜像再启动，不受.env中的源码构建版本变量影响。可用cat VERSION与docker compose images核对；不要在排障中打印完整.env或compose config，可能包含凭据。源码根Compose默认dev不是正式版本，正式交付按[部署手册](../DEPLOY.md)创建版本包。
+
+升级/回滚沿用原部署目录data挂载，保留原.env与私有模型方案，不能切到空目录后启动同名项目。旧版不含manifest，使用其随包旧脚本，不把新deploy.sh单独混入旧包。
+
 ## 缓存维护
 
 模型、SQLite、备份和私有方案是运行数据；.venv和node_modules是开发环境，不因体积大就删除。先查看占用和正在执行的构建：

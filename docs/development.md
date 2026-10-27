@@ -76,13 +76,16 @@ uv run python scripts/download_asr_model.py
 docker compose config --quiet
 docker compose build
 
-# 制作离线发布包
-./deploy/package.sh
+# 制作离线发布包：先按DEPLOY.md完成prepare、版本提交和标签创建。
+# 仅在v0.1.2标签对应的干净工作区执行：
+./deploy/package.sh --tag v0.1.2
 ```
 
-package.sh输出根目录whisper-guide-release.tar；生成外层包后删除release内的重复大镜像归档。交付、权限、初始化和回滚统一见部署手册。
+package.sh从Git标签生成release/0.1.2/linux-amd64/whisper-guide-release-0.1.2-linux-amd64.tar及同名.sha256，版本来自标签，不再写死0.1.0；拒绝脏工作区、版本不一致、已有版本镜像与产物覆盖。根Compose默认dev标签，WHISPER_GUIDE_VERSION/REVISION仅用于源码构建；发布包Compose固定版本且不包含build。完整prepare→commit→tag→push操作、Actions发布、服务器部署与回滚见[部署手册](../DEPLOY.md)。第一版仅稳定X.Y.Z、linux/amd64，不支持预发布后缀或ARM。
 
 Docker前端构建先检查类型；后端只安装锁定生产依赖。运行层不含开发工具、测试和模型下载脚本，固定单worker。构建前准备模型，模型层位于业务源码之前。Docker固定复制FP32 decoder；旧模型目录缺此文件时先运行模型更新脚本，再构建镜像。忽略规则不能误排除Python的app/models包；数据、凭据与测试产物不进入镜像。
+
+发布工具只用Python 3.12标准库、Git、uv、Docker和gzip，不新增应用运行依赖。prepare只同步项目自身版本，保留第三方依赖解析结果，并用uv lock --locked --offline严格验证。prepare失败回滚前后端清单与uv.lock；pnpm锁不存根应用版本，无需随版本号改写。ci.yml支持workflow_call检查指定SHA；release.yml的package任务依赖checks成功，publish任务仅在打包后获contents:write并上传草稿附件后发布。当前流程不推镜像仓库，不远程部署；不要把个人密钥塞进公开工作流。
 
 ## 环境变量
 

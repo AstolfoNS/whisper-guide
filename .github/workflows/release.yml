@@ -1,0 +1,132 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing stable tag, e.g. v0.1.2 (must match application versions)'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      revision: ${{ steps.version.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: version
+        name: Validate exact tag and manifest versions
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python3 scripts/release.py metadata --tag "$RELEASE_TAG" > "$RUNNER_TEMP/release-metadata.json"
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP'] + '/release-metadata.json') as stream:
+              metadata = json.load(stream)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              for key in ('tag', 'version', 'revision'):
+                  stream.write(f'{key}={metadata[key]}\n')
+          PY
+  checks:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.validate.outputs.revision }}
+    permissions:
+      contents: read
+  package:
+    needs: [validate, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.18'
+          python-version: '3.12'
+      - name: Install locked model preparation dependencies
+        run: uv sync --locked
+        working-directory: apps/backend-core
+      - name: Prepare and verify bundled ASR model
+        run: uv run --locked python scripts/download_asr_model.py
+        working-directory: apps/backend-core
+      - name: Build the exact tagged version and offline bundle
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: ./deploy/package.sh --tag "$RELEASE_TAG" --platform linux/amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.validate.outputs.version }}-linux-amd64
+          path: |
+            release/${{ needs.validate.outputs.version }}/linux-amd64/*.tar
+            release/${{ needs.validate.outputs.version }}/linux-amd64/*.tar.sha256
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [validate, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ needs.validate.outputs.version }}-linux-amd64
+          path: artifacts
+      - name: Create draft, upload complete assets, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_REVISION: ${{ needs.validate.outputs.revision }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd artifacts
+          ARCHIVE="whisper-guide-release-$RELEASE_VERSION-linux-amd64.tar"
+          sha256sum --strict -c "$ARCHIVE.sha256"
+          # Existing releases, including v0.1.0/v0.1.1, are never replaced.
+          # Creation itself also fails if a release already exists.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          printf 'Version: %s\nCommit: %s\nPlatform: linux/amd64\n\nDownload the versioned tar and its .sha256 file. GitHub Source code archives are not deployment bundles.\n' \
+            "$RELEASE_TAG" "$RELEASE_REVISION" > "$RUNNER_TEMP/release-notes.md"
+          # Refuse a remotely moved tag between validation/build and publication.
+          OBJECT="$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" --jq '.object.type + " " + .object.sha')"
+          for attempt in {1..10}; do
+            read -r KIND SHA <<< "$OBJECT"
+            if [[ "$KIND" == commit ]]; then break; fi
+            [[ "$KIND" == tag ]] || { echo 'Invalid tag object' >&2; exit 1; }
+            OBJECT="$(gh api "repos/$GH_REPO/git/tags/$SHA" --jq '.object.type + " " + .object.sha')"
+          done
+          [[ "$KIND" == commit && "$SHA" == "$RELEASE_REVISION" ]] || { echo 'Remote tag moved; aborting release' >&2; exit 1; }
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+          gh release upload "$RELEASE_TAG" "$ARCHIVE" "$ARCHIVE.sha256"
+          # Leave the complete draft available if uploading or validation fails.
+          gh release edit "$RELEASE_TAG" --draft=false --latest=false

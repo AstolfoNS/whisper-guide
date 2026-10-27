@@ -1,388 +1,136 @@
-# 新服务器部署指南（已安装 Docker）
+# 新服务器部署与版本发布指南
 
-面向 Linux 服务器，使用两份已构建镜像运行 whisper-guide。本文可随交付目录或离线发布包单独阅读。
+本项目使用 Git 标签关联源码、前后端镜像和离线包。当前正式发布支持稳定版本 `vX.Y.Z` 和 `linux/amd64`；预发布后缀、ARM 架构会明确拒绝。历史 v0.1.0/v0.1.1 不重新打标或覆盖。
 
-目标服务器需要 Docker、Compose 插件、Bash 及常见系统工具（gzip、tar、sha256sum）；远程传输/访问示例使用 SSH/SCP，HTTP 检查示例使用 curl。导入镜像运行时不需要安装 Python、uv、Node.js、pnpm，也不需要下载 STT 模型。`scripts/backup.py` 使用容器内 Python 执行。
+## 1. 版本对应关系
 
-**“离线包”指镜像可以离线传输，不代表语音提示完全断网可用。** 本地 STT 模型内置，`edge-tts` 合成仍需服务器联网；启用云端语音或文本模型后，还需访问对应 HTTPS/WSS 服务。
+以 v0.1.2 为例：
 
-## 1. 先确认需要迁移哪些内容
+| 对象 | 对应值 |
+|---|---|
+| Git 标签 / GitHub Release | v0.1.2 |
+| 前后端声明版本 | 0.1.2 |
+| 镜像 | whisper-guide-backend:0.1.2、whisper-guide-frontend:0.1.2 |
+| 离线包 | whisper-guide-release-0.1.2-linux-amd64.tar |
+| 包校验文件 | 同名.tar.sha256 |
+| 来源证明 | release.json记录完整Git SHA、平台、镜像ID与OCI版本/提交标签 |
 
-| 内容                               | 交付方式                                        | 是否含私密信息               |
-| ---------------------------------- | ----------------------------------------------- | ---------------------------- |
-| 后端与前端镜像                     | 一个 `whisper-guide-image.tar.gz`，内含两个镜像 | 不含现有用户数据和密钥       |
-| 启动配置、部署脚本、本文、备份脚本 | 与镜像包放在同一交付目录                        | `.env.example` 只含模板      |
-| 已有讲稿与模型方案                 | 可选：另行迁移 `data/sqlite` 整个目录           | 私有模型方案含 API Key/Token |
-| 原运行环境配置                     | 可选：另行迁移 `.env`                           | 可能含密钥                   |
-| 旧备份                             | 按需另行迁移 `data/backups`                     | 按私密数据保护               |
-| 实时会话进度                       | 不迁移；新服务器重新准备会话                    | 仅在旧进程内存中             |
+只有从标签对应的干净工作区构建才允许发布；清单和uv.lock版本必须一致。发布包内Compose固定两个镜像版本，无build配置，不受旧.env中版本变量影响。源码根Compose默认使用dev标签，供本地构建。
 
-全新使用无需复制旧 `data`，首次启动会建立数据库。保留旧讲稿和模型方案则先阅读第 8 节；发布镜像不会自动包含它们。不要把私有迁移文件放进公共发布包。
+## 2. 维护者：准备并触发自动发布
 
-## 2. 在新服务器检查 Docker 和架构
-
-用之后实际部署的同一用户登录服务器：
+在包含本流程的主分支代码中，从干净工作区执行。构建机使用Python 3.12和uv；prepare只改声明版本和锁文件，不提交、不创建标签：
 
 ```bash
-docker --version
+python3 scripts/release.py prepare 0.1.2
+git diff
+git add apps/frontend/package.json apps/backend-core/pyproject.toml apps/backend-core/uv.lock
+git commit -m "chore: prepare v0.1.2"
+git push origin main
+git tag -a v0.1.2 -m "Release v0.1.2"
+git push origin v0.1.2
+```
+
+分支不叫main时替换为实际分支。prepare只调整项目自身版本，不升级或重新解析第三方依赖；同步uv.lock中的虚拟项目版本后运行uv lock --locked --offline验证，失败回滚这三个文件。需先安装uv，不能强行跳过锁校验发布。pnpm-lock.yaml不记录根应用版本，prepare不修改它，依赖变更仍由pnpm维护。
+
+推送标签触发.github/workflows/release.yml：
+
+1. 校验稳定版本格式、标签指向当前提交、前后端及uv.lock版本一致、工作区干净。
+2. 调用可复用ci.yml，检查同一SHA的后端、前端和浏览器流程。
+3. 检查成功后下载并验证ASR模型，构建带版本/SHA标签的双镜像。
+4. 打包固定Compose、镜像、清单和校验文件。
+5. 独立发布任务获得contents:write，确认远程标签未移动，创建Release草稿、上传tar和.sha256，再发布。
+
+在GitHub仓库Actions查看release流程。仓库策略须允许checkout、setup-python、setup-node、setup-uv、upload-artifact、download-artifact及写Release；无需配置个人访问令牌，工作流使用GITHUB_TOKEN。此流程不推送GHCR，也不SSH到服务器部署。发布默认不修改GitHub的Latest选择。
+
+检查/打包失败不会创建公开Release；已有Release永不覆盖。上传失败可能留下草稿，排查后在Actions手动运行release并选择同一个既有标签前，先审查草稿和附件：当前流程拒绝重写任何已有Release，必要时只删除失败草稿，不移动已发布标签。手动运行支持tag输入；运行于主分支工作流时也会检出并验证该标签，不会拿主分支HEAD冒充旧版本。
+
+GitHub自动提供的Source code压缩包只是源码，不含离线镜像，请下载版本化tar和对应.sha256。
+
+## 3. 本机构建同样的发布包
+
+安装Docker/Compose、Bash、gzip、Python 3.12；使用已打标签的干净源码，先按完整源码仓库docs/development.md准备ASR模型：
+
+```bash
+python3 scripts/release.py metadata --tag v0.1.2
+./deploy/package.sh --tag v0.1.2 --platform linux/amd64
+```
+
+输出位于release/0.1.2/linux-amd64/：tar和同名.sha256。不清空整个release目录、不prune镜像、不覆盖已有版本镜像或完成的发布包。若本地已有同版本镜像，脚本会拒绝构建；优先从GitHub下载已发布产物，或在独立构建机处理失败构建留下的标签，不改写已经交付的版本。模型/依赖/基础镜像下载需要网络，目标部署机导入镜像不需要这些开发工具。
+
+归档根目录包含：
+
+```text
+VERSION
+release.json
+SHA256SUMS
+whisper-guide-image.tar.gz
+docker-compose.yml
+.env.example
+deploy.sh
+verify_release.py
+DEPLOY.md
+scripts/backup.py
+```
+
+私有.env、SQLite、备份、模型凭据和录音不会放进发布包。内部镜像gzip只存在于外层tar，完成后不额外保留第二份大副本。校验和能发现损坏，不代替对GitHub仓库与发布来源的信任。
+
+## 4. 新服务器：下载、校验与解包
+
+服务器需要Docker Engine、Compose插件、Bash、gzip、tar、sha256sum；支持up --wait --wait-timeout。当前仅linux/amd64，服务器常见uname输出x86_64。确保Docker权限和磁盘空间（镜像导入需额外解压空间）：
+
+```bash
 docker info
 docker compose version
 uname -m
 df -h .
-docker system df
 ```
 
-`docker info` 必须能正常输出服务端信息。只有 `docker --version` 成功不足以证明 daemon 可用。若出现 permission denied，需要由服务器管理员授予该用户 Docker 使用权限，或在该服务器统一使用有权限的账户；不要修改 socket 为全员可写。
-
-需要 `docker compose` 插件，且支持 `up --wait --wait-timeout`。若缺失，先按服务器操作系统的 Docker 安装方式补齐插件。脚本还需要 root 或 sudo 权限，把应用数据目录交给容器 UID `10001`。本文权限命令针对常规 rootful Docker 且未启用 userns-remap；rootless 或自定义用户映射环境需先由管理员确认宿主 UID 映射，不直接套用 `10001`。
-
-当前已验证的镜像平台为 **`linux/amd64`**，对应服务器通常显示 `x86_64`。若为 `aarch64/arm64`，需先准备并验证该架构的镜像，不能直接假定现有镜像可运行。
-
-STT核心模型包含在后端镜像。镜像大小以实际docker image inspect为准；检查部署目录和Docker数据目录余量，导入还需要解压和数据层空间，不能仅按gzip大小估算。日志每服务最多5个、每个10MB；数据库和备份随使用增长。
-
-## 3. 从当前机器准备交付物
-
-选择 A 或 B 一条路线即可。本项目根目录指包含 `docker-compose.yml` 的源码目录，例如 `/path/to/whisper-guide`。
-
-### A. 已有验证通过的镜像：直接导出
-
-这条路线不会重新构建或停止正在运行的容器。镜像标签必须是你准备交付的版本；源码提交不会自动更新镜像。
-
-在构建机项目根目录执行：
+从同一GitHub Release下载tar及.sha256到一个临时下载目录，不把用户.env或data放在下载目录。校验、查看路径后解到新部署目录：
 
 ```bash
-set -euo pipefail
-# 不输出运行配置或密钥。
-docker image inspect whisper-guide-backend:0.1.0 whisper-guide-frontend:0.1.0 >/dev/null
-
-# 每次使用独立目录，避免混入旧交付物或运行数据。
-DELIVERY_DIR="release/delivery-$(date +%Y%m%d-%H%M%S)"
-test ! -e "$DELIVERY_DIR"
-mkdir -p "$DELIVERY_DIR/scripts"
-cp docker-compose.yml .env.example DEPLOY.md "$DELIVERY_DIR/"
-cp deploy/deploy.sh "$DELIVERY_DIR/"
-cp scripts/backup.py "$DELIVERY_DIR/scripts/"
-chmod +x "$DELIVERY_DIR/deploy.sh"
-
-# pipefail 及遇错停止，避免把失败的 docker save 当作完整交付。
-docker save whisper-guide-backend:0.1.0 whisper-guide-frontend:0.1.0 \
-  | gzip -c > "$DELIVERY_DIR/whisper-guide-image.tar.gz"
-(cd "$DELIVERY_DIR" && sha256sum whisper-guide-image.tar.gz > SHA256SUMS)
-ls -lh "$DELIVERY_DIR" "$DELIVERY_DIR/scripts"
-```
-
-交付目录如下：
-
-```text
-delivery-时间戳/
-├── whisper-guide-image.tar.gz
-├── docker-compose.yml
-├── .env.example
-├── deploy.sh
-├── DEPLOY.md
-├── SHA256SUMS
-└── scripts/
-    └── backup.py
-```
-
-直接传输该目录，不再生成第二份大型外层归档。将下面的 `deploy@server.example.com` 替换为你的服务器 SSH 用户和地址，在同一个构建机终端执行：
-
-```bash
-ssh deploy@server.example.com 'mkdir -p whisper-guide'
-scp -r "$DELIVERY_DIR/." deploy@server.example.com:whisper-guide/
-```
-
-随后在服务器执行：
-
-```bash
-set -euo pipefail
+sha256sum --strict -c whisper-guide-release-0.1.2-linux-amd64.tar.sha256
+tar -tf whisper-guide-release-0.1.2-linux-amd64.tar
+mkdir -p ~/whisper-guide
+tar -xf whisper-guide-release-0.1.2-linux-amd64.tar -C ~/whisper-guide
 cd ~/whisper-guide
-sha256sum -c SHA256SUMS
-```
-
-校验必须显示 `OK`，然后继续第 4 节。此时 `~/whisper-guide` 就是部署目录。
-
-### B. 需要重新构建并生成单一传输 tar
-
-构建机需要完整源码、四份默认 INT8 模型文件和可访问基础镜像/锁定依赖下载源的网络。执行：
-
-```bash
-set -euo pipefail
-./deploy/package.sh
-sha256sum whisper-guide-release.tar > release/whisper-guide-release.tar.sha256
-ssh deploy@server.example.com 'mkdir -p whisper-guide'
-scp whisper-guide-release.tar release/whisper-guide-release.tar.sha256 \
-  deploy@server.example.com:whisper-guide/
-```
-
-`package.sh` 会先重新构建前后端，再导出双镜像 gzip，放入外层 `whisper-guide-release.tar`。它会清空构建机原 `release/` 与同名外层 tar，`release/` 只能作为生成目录，不能存放唯一数据或运行中的数据库。
-
-**脚本完成后，构建机 `release/` 中的大镜像 gzip 已被删除，完整镜像在根目录的外层 tar 内。应传输这个 tar，不能直接复制脚本执行后的 `release/` 目录。** 归档过程会短暂同时存在内外文件，完成后立即删除内部副本；空间紧张时使用 A，直接传输交付目录。
-
-全新空缓存构建需要联网下载锁定依赖和基础镜像。现有镜像构建成功不代表另一台机器可联网重建；仅需部署时直接导出现有镜像或使用离线包。
-
-在服务器解包：
-
-```bash
-set -euo pipefail
-cd ~/whisper-guide
-sha256sum -c whisper-guide-release.tar.sha256
-# 首次安装使用空目录解包；升级时按第 7 节处理。
-tar -xf whisper-guide-release.tar
-cd release
-```
-
-归档内也包含前述镜像 gzip、Compose、模板、脚本和本文；此时 `~/whisper-guide/release` 是部署目录。后续所有命令均在包含 `docker-compose.yml` 的部署目录执行。
-
-## 4. 初始化配置并启动
-
-确认当前位置后执行：
-
-```bash
-set -euo pipefail
-test -f docker-compose.yml && test -f whisper-guide-image.tar.gz
-test -f .env || cp .env.example .env
+cp .env.example .env
 chmod 600 .env
-
-# 如需修改端口等初始参数，用编辑器编辑 .env。
-# 默认端口8080；当前Compose对外监听，请按实际网络部署策略使用。
-# 页面标题使用WHISPER_GUIDE_APP_TITLE，默认whisper-guide；云端参数也可在界面填写。
-mkdir -p data/sqlite data/backups
-sudo chown -R 10001:10001 data/sqlite data/backups
-sudo chmod -R u+rwX data/sqlite data/backups
-
-docker compose config --quiet
-chmod +x deploy.sh
-./deploy.sh ./whisper-guide-image.tar.gz
-
-# 等待前后端实际健康；目标服务器不进行构建或镜像拉取。
-docker compose up -d --no-build --pull never --wait --wait-timeout 180
-docker compose ps
+# 用编辑器检查端口、CORS、标题和网络设置，勿把密钥提交到Git。
+./deploy.sh
 ```
 
-若使用 root 账户，可省略命令中的 sudo。若需要保留旧数据，先按第 8 节恢复到这些目录，再启动。
+部署脚本必须从解包目录运行，不能直接用源码目录deploy/deploy.sh部署dev镜像。它先核对内部文件白名单和SHA256SUMS，再load双镜像，比较VERSION、Git SHA、镜像ID、OCI标签、架构与固定Compose。验证器只挂载版本/清单/Compose/校验器四个只读文件，不挂载.env或data，使用无网络的只读临时容器。验证失败不启动服务，也不创建/覆盖用户配置和数据库。
 
-部署脚本会检查 daemon、初始化缺失 `.env`、修复数据目录所有权、导入两个镜像并启动。现有脚本本身没有完整等待两个服务健康，故保留最后的 `--wait` 与后续接口检查。脚本末尾打印端口来自 shell 环境，修改过 `.env` 端口时，以 `docker compose ps` 的端口映射为准。
+通过后保留已有.env，缺失时才复制模板；初始化data/sqlite与data/backups并要求容器UID10001可写，然后使用--no-build --pull never --wait启动。需要root/sudo设置目录权限；rootless/userns-remap环境请管理员核对映射，不直接套用UID。Compose固定服务名backend/frontend和项目名whisper-guide。
 
-建议保留的容器路径：
+## 5. 运行配置、网络和检查
 
-| 设置                                       | 值与含义                                       |
-| ------------------------------------------ | ---------------------------------------------- |
-| `WHISPER_GUIDE_HTTP_PORT`                  | 宿主机端口，默认 `8080`，按当前Compose对外监听 |
-| `WHISPER_GUIDE_APP_TITLE`                  | 页面/导航与API文档标题，默认 `whisper-guide`   |
-| `WHISPER_GUIDE_DATA_DIR`                   | `/data`，对应宿主 `./data/sqlite`              |
-| `WHISPER_GUIDE_BACKUP_DIR`                 | `/backups`，对应宿主 `./data/backups`          |
-| `WHISPER_GUIDE_SPEECH_MODEL_DIR`           | 保留模板中的容器内 `/models/...` 路径          |
-| `WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS` | 默认 `3000`，整数且不小于 `1000`               |
-| `WHISPER_GUIDE_STT_PROVIDER`               | 首次默认 `local`；不代表覆盖已有模型方案       |
-| `WHISPER_GUIDE_CLOUD_OPT_IN`               | 首次默认 `false`；使用云端音频需显式授权       |
+端口默认8080，通过WHISPER_GUIDE_HTTP_PORT配置；当前对外监听，公开访问前需防火墙、HTTPS与认证保护。麦克风需要localhost或HTTPS。系统没有用户认证与讲稿权限隔离，仅部署到可信访问范围。显示标题WHISPER_GUIDE_APP_TITLE默认whisper-guide。
 
-不要将宿主机路径填入容器的模型/数据库路径，也不要增加后端 worker 或后端副本。活跃会话仅由单个进程维护；重启会清空会话，讲稿和方案依靠挂载持久化。
-
-标题由后端运行时环境提供，前端不需要按标题重新构建。已部署支持该功能的镜像时，在.env设置WHISPER_GUIDE_APP_TITLE后重建后端容器并刷新页面：
+本地STT模型已内置，不代表完全离线：edge-tts合成需要服务器联网；云端STT/文本LLM也需访问各自HTTPS/WSS地址。语音API Key与文本模型密钥独立，不在日志/命令行中打印。配置含模型凭据，按私密信息保护。
 
 ```bash
-docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 backend
-```
-
-`restart`不会更新环境；原.env不会被新模板覆盖。升级旧版本需先导入含新接口/前端的镜像，再设置标题。
-
-## 5. 从自己的电脑打开前端
-
-### 推荐：SSH 隧道
-
-当前Compose将8080发布到宿主网络接口；浏览器采音仍需localhost或HTTPS。采用SSH隧道时，在你自己的电脑终端执行并保持窗口打开：
-
-```bash
-ssh -N -L 8080:127.0.0.1:8080 deploy@server.example.com
-```
-
-然后用自己电脑的浏览器打开：
-
-```text
-http://localhost:8080
-http://localhost:8080/studio
-http://localhost:8080/settings/models
-```
-
-SSH隧道让浏览器通过localhost采音；当前Compose对外发布端口，若只需隧道访问，可自行将发布地址限制为127.0.0.1并配置防火墙。若服务器实际发布端口不是 8080，修改隧道中右侧的 `127.0.0.1:端口`；若电脑本地 8080 已占用，可使用 `-L 18080:127.0.0.1:8080`，浏览器改为 `http://localhost:18080`。
-
-### 需要通过公网域名使用
-
-使用现有反向代理把 HTTPS 域名转发到服务器 `127.0.0.1:8080`，配置认证和访问控制，并转发 `/api/` 与 WebSocket Upgrade，保留较长的 WebSocket 读取超时。`WHISPER_GUIDE_CORS_ORIGINS` 按实际来源设置 JSON 数组，例如 `["https://guide.example.com"]`。
-
-本项目目前没有应用级用户认证和讲稿隔离；模型管理接口可修改后端密钥配置。不要仅把端口改为 `0.0.0.0` 就公开服务。普通远程 HTTP IP 页面也可能无法申请麦克风；使用 localhost 隧道或 HTTPS。
-
-## 6. 验证服务，再配置模型
-
-在服务器部署目录执行，`APP_PORT` 与 `.env` 中发布端口一致：
-
-```bash
-APP_PORT=8080
-curl -fsS "http://127.0.0.1:$APP_PORT/" >/dev/null
-curl -fsS "http://127.0.0.1:$APP_PORT/api/health"
-curl -fsS "http://127.0.0.1:$APP_PORT/api/speech/status"
 docker compose ps
 docker compose logs --tail=100 backend frontend
+curl -fsS http://localhost:8080/api/health
+cat VERSION
 ```
 
-服务器没有 curl 时，可用容器内检查健康接口（外部页面和代理仍应从浏览器检查）：
+健康检查只证明服务能力，不证明真实麦克风准确率或扬声器可听。设备验收见完整源码仓库docs/user-guide.md；随包部署手册之外的链接在完整源码仓库中阅读。日志每服务最多5个、每个10MB，SQLite和备份需自行监控余量。
 
-```bash
-docker compose exec -T backend /app/backend-core/.venv/bin/python -c \
-  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read().decode())"
-```
+## 6. 升级与回滚：始终保留当前数据路径
 
-预期健康接口含 `"status":"ok"`，语音接口中 `stt`、`vad`、`tts` 都为 `ready`。`ready` 是依赖/配置能力检查，不等于云端账号已完成真实识别、TTS 网络已成功或浏览器扬声器正常。
+升级前结束演讲会话（服务端内存进度不持久化），备份现有.env、data/sqlite、data/backups及当前版本的发布文件/镜像ID。讲稿与私有方案都在data/sqlite目录，不能仅复制数据库而漏掉隐藏模型配置。运行数据库请用SQLite备份工具或先停止服务再复制，不用在线裸拷贝。
 
-浏览器验收：
+下载新版本到独立临时目录并校验，解包检查后，**只把上述发布文件白名单复制到原部署目录**（包括scripts/backup.py），不要复制.env或覆盖data，也不要从空的新目录直接启动同名项目造成空库。原目录运行新deploy.sh完成版本校验和重建。备份中保存旧VERSION、Compose、release.json、SHA256SUMS、脚本和对应双镜像，以便回滚。
 
-1. 上传一份测试讲稿，确认列表及正文可读取。
-2. 开始演讲并授权麦克风，朗读讲稿，检查原始识别、已对齐文本与游标。
-3. 保持麦克风连接，静音等待到期应提示下一片段；主动“手动提示”确认真实合成和耳机播放。
-4. 验证暂停、继续、结束。结束测试会话后再激活其他模型方案。
+回滚同样在原部署目录：结束会话并备份当前数据，恢复上次发布文件并运行旧版本包的deploy.sh。版本校验不能证明数据库格式向后兼容；若新版本迁移了数据库，应结合对应版本备份和迁移说明处理，不能盲目用旧程序读新结构。不要删除Docker卷或使用docker system prune -a --volumes来升级。
 
-默认本地 STT 不需要云端 Key。需要双云配置时，在 `/settings/models` 新建方案：
+历史v0.1.0/v0.1.1包不含新manifest：继续使用其随包原脚本，或升级为完整的新版本包。新deploy.sh会拒绝缺失VERSION/manifest/校验和的旧包，不悄悄跳过校验。
 
-| 环节                   | 填写内容                                                                                                                                                                   |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 豆包流式语音 STT       | 云端 STT、协议 `volcengine-ws`、`wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`、已开通语音资源、**语音服务 API Key**、云端音频授权；`api-key` 鉴权不填 App ID |
-| 方舟或其他兼容文本 LLM | 单独设置语义模式、Base URL、实际模型 ID、**文本服务 API Key**；可先获取模型列表，再测试调用权限                                                                            |
+## 7. 备份与迁移
 
-这些端点是当前项目预设，部署时应核对服务商控制台实际开通情况。语音 Key 与方舟文本 Key 不会自动复用；旧 `app-token` 鉴权才使用 App ID 与 Access Token。先分别测试，再保存，结束所有未终止会话（包括暂停会话）后设为生效。
+根scripts/backup.py使用SQLite在线备份API；可用容器内Python运行，不需要宿主Python。完整操作见源码仓库docs/maintenance.md。备份应包含.env和私有模型方案文件（0600）并限制访问，不能上传公共Release。
 
-模型方案与生效快照保存在 `data/sqlite/.model-configs.json`，权限 `0600`；它优先于 `.env` 的首次默认值。改 `.env` 不会覆盖已激活方案，复制方案不会复制密钥。语音静音探测只证明协议可达，仍需真实朗读验收。
-
-定位诊断：pending表示等待有效文字或结算，mismatch表示确实失配，二者都不会凭超时强制可靠。继续读正文可全文自动重定位；远处候选需要两份独立连续片段，重复句等后文。临时虚线位置不授权提示，旧文字/评分是历史参考。手动提示不证明位置恢复，真实设备抗噪需单独验证。
-
-## 7. 日常停止、升级与回滚
-
-停止服务但保留目录：
-
-```bash
-docker compose down
-```
-
-升级前结束演讲并执行第 8 节备份。新交付先放进独立接收目录。完成下述回滚标签和 Compose 备份后，才替换镜像包、Compose、模板、脚本和文档；保留原部署目录的 `.env` 与 `data/`，不要用整目录覆盖或删除它们。
-
-当前使用固定版本标签 `0.1.0`。替换任何新文件或导入镜像前，先为实际运行的镜像加唯一回滚标签，并保留旧 Compose（标签不复制镜像数据）：
-
-```bash
-set -euo pipefail
-ROLLBACK_STAMP=$(date +%Y%m%d-%H%M%S)
-BACKEND_CONTAINER=$(docker compose ps -a -q backend)
-FRONTEND_CONTAINER=$(docker compose ps -a -q frontend)
-test -n "$BACKEND_CONTAINER"
-test -n "$FRONTEND_CONTAINER"
-BACKEND_IMAGE_ID=$(docker inspect --format '{{.Image}}' "$BACKEND_CONTAINER")
-FRONTEND_IMAGE_ID=$(docker inspect --format '{{.Image}}' "$FRONTEND_CONTAINER")
-docker tag "$BACKEND_IMAGE_ID" "whisper-guide-backend:rollback-$ROLLBACK_STAMP"
-docker tag "$FRONTEND_IMAGE_ID" "whisper-guide-frontend:rollback-$ROLLBACK_STAMP"
-cp -p docker-compose.yml "docker-compose.before-$ROLLBACK_STAMP.yml"
-printf '记录回滚标签时间戳：%s\n' "$ROLLBACK_STAMP"
-
-# 上述备份完成后，再替换新的公共部署文件与镜像包；保留 .env/data。
-set -o pipefail
-gzip -dc whisper-guide-image.tar.gz | docker load
-docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
-```
-
-若升级失败，选择先前记录的时间戳，并恢复匹配的 Compose 配置：
-
-```bash
-set -euo pipefail
-ROLLBACK_STAMP=20261024-120000  # 替换为实际保存的时间戳
-docker tag "whisper-guide-backend:rollback-$ROLLBACK_STAMP" whisper-guide-backend:0.1.0
-docker tag "whisper-guide-frontend:rollback-$ROLLBACK_STAMP" whisper-guide-frontend:0.1.0
-cp -p "docker-compose.before-$ROLLBACK_STAMP.yml" docker-compose.yml
-docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
-```
-
-镜像回滚不会自动回滚数据库或模型方案；有数据格式变化的版本需另核对备份兼容性。确认新版本稳定后，再按明确标签清理旧镜像及旧传输包。保留备份，不使用全局删除卷的清理命令。
-
-## 8. 备份与迁移已有数据
-
-### 只备份讲稿 SQLite（服务运行时可执行）
-
-在部署目录使用容器内 Python，无需宿主机安装 Python：
-
-```bash
-BACKUP_NAME="whisper-guide-$(date +%Y%m%d-%H%M%S).db"
-docker compose exec -T backend /app/backend-core/.venv/bin/python - \
-  /data/whisper-guide.db "/backups/$BACKUP_NAME" < scripts/backup.py
-```
-
-脚本使用 SQLite backup API，验证 `quick_check=ok`，拒绝覆盖同名备份。文件在宿主 `data/backups` 下，容器 UID `10001` 拥有；通过有权限的账户管理备份。SQLite 备份不包含模型配置、密钥或 `.env`。
-
-### 完整迁移讲稿和模型方案
-
-先结束会话，在旧服务器部署目录执行下列 Bash 子 shell；任何一步失败即中止：
-
-```bash
-(
-  set -euo pipefail
-  umask 077
-  PRIVATE_ARCHIVE="whisper-guide-private-$(date +%Y%m%d-%H%M%S).tar.gz"
-  test ! -e "$PRIVATE_ARCHIVE"
-  : > "$PRIVATE_ARCHIVE"  # 先以 0600 创建，tar 写入期间也不公开凭据。
-  docker compose stop
-  sudo tar -czf "$PRIVATE_ARCHIVE" .env data/sqlite
-  sudo chown "$(id -u):$(id -g)" "$PRIVATE_ARCHIVE"
-  chmod 600 "$PRIVATE_ARCHIVE"
-  docker compose start
-  printf '私有迁移包：%s\n' "$PRIVATE_ARCHIVE"
-)
-```
-
-若 tar 失败，保留原数据并排查后再恢复服务。整个 `data/sqlite` 会包含隐藏的 `.model-configs.json`、旧兼容文件及可能的 SQLite 附属文件；不要使用 `data/sqlite/*` 遗漏隐藏文件。需要历史备份时另行迁移 `data/backups`。
-
-将私有归档通过受控 SSH/SCP 传到目标部署目录，保持 `0600`；不要将其发布、提交到 Git 或贴出内容。目标目录必须与第 4 节使用的部署目录相同。
-
-在新服务器恢复前先停止服务、移开原目录，防止旧 WAL/SHM 混入。下面的 Bash 子 shell 在失败时中止并保持服务停止，使用明确的备份副本，不删除原数据：
-
-```bash
-(
-  set -euo pipefail
-  PRIVATE_ARCHIVE=whisper-guide-private-20261024-120000.tar.gz  # 替换为实际文件
-  RESTORE_STAMP=$(date +%Y%m%d-%H%M%S)
-  test ! -e ".env.before-$RESTORE_STAMP"
-  test ! -e "data/sqlite.before-$RESTORE_STAMP"
-  test -f "$PRIVATE_ARCHIVE"
-  sudo tar -tzf "$PRIVATE_ARCHIVE" >/dev/null
-  docker compose stop
-  [ ! -f .env ] || cp -p .env ".env.before-$RESTORE_STAMP"
-  [ ! -d data/sqlite ] || sudo mv data/sqlite "data/sqlite.before-$RESTORE_STAMP"
-  sudo tar -xzf "$PRIVATE_ARCHIVE" .env data/sqlite
-  sudo chown "$(id -u):$(id -g)" .env
-  chmod 600 .env
-  sudo mkdir -p data/sqlite data/backups
-  sudo chown -R 10001:10001 data/sqlite data/backups
-  sudo chmod -R u+rwX data/sqlite data/backups
-  docker compose config --quiet
-  docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
-)
-```
-
-恢复前应先确认私有归档来自可信旧服务器、可正常列出且含 `.env` 与 `data/sqlite`；如中途失败，保持服务停止并从 `before-时间戳` 目录恢复，不带着不完整数据启动。迁移后复查 `.env` 中端口、来源、容器路径以及新服务器的云端访问权限。
-
-检查原讲稿列表、当前生效方案及分别测试 STT/LLM；仅看到密钥掩码不代表新服务器已有调用权限。新环境的实时会话需要重新准备。
-
-## 9. 常见问题
-
-| 现象                                           | 操作                                                                                    |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `docker info` 失败                             | 检查 daemon 与当前账号权限；不要只看 CLI 版本                                           |
-| `docker compose` 不存在                        | 安装或启用与服务器 Docker 配套的 Compose 插件                                           |
-| `exec format error`                            | 核对 `linux/amd64` 与服务器 CPU 架构                                                    |
-| 找不到 `Dockerfile` / 尝试联网构建             | 先加载两份镜像，启动加 `--no-build --pull never`；部署机不需要源码                      |
-| 镜像 gzip 不存在                               | A 路线传整个交付目录；B 路线传根目录 tar 并在目标解包，不能传构建机已删 gzip 的 release |
-| SQLite 打不开、backend unhealthy、保存配置 503 | 检查 `data/sqlite`、`data/backups` 对 UID `10001` 的权限与磁盘余量                      |
-| 服务器 IP:8080 打不开                          | 核对发布端口、防火墙与入口；采音使用第5节localhost隧道或HTTPS                           |
-| 页面有了但无麦克风                             | localhost/HTTPS、浏览器授权、麦克风设备                                                 |
-| 已进入播报但没有声音                           | edge-tts 网络、浏览器播放权限、耳机输出、最近播放错误                                   |
-| STT unavailable                                | 检查容器模型路径；内置模型部署无需在服务器补装大型 SDK                                  |
-| 匹配提示反复变化或不播报                       | 核对第6节诊断，继续读正文自动重定位；旧分数为历史信息，持续噪声和设备效果需现场排查     |
-| 无法激活模型                                   | 结束 READY/LISTENING/PROMPTING/PAUSED 会话；包括断线恢复入口的未结束会话                |
-| 重启后讲稿或方案丢失                           | 确认一直从同一部署目录启动、原 `data` 挂载完整；仅实时会话应因重启丢失                  |
-
-默认部署为双容器、单后端worker。发布包只含公共配置与应用镜像；源代码变更需重新构建并导出交付物，切换后重新准备会话验收。
+跨服务器迁移时仅部署相同架构镜像，另行迁移data/sqlite、需要保留的data/backups与.env。新服务器启动前核对UID写权限、CORS、HTTPS入口与外部服务网络。保持一个Uvicorn worker，会话不跨进程共享。
