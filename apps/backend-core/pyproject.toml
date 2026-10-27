@@ -1,6 +1,6 @@
 [project]
 name = "backend-core"
-version = "0.1.2"
+version = "0.1.3"
 description = "Server-side speech tracking and prompting API for whisper-guide"
 readme = "README.md"
 requires-python = ">=3.12"
