@@ -128,3 +128,11 @@ docker buildx prune --filter until=24h
 缓存可能跨项目共享，下次构建可能重新联网。不要使用docker system prune -a --volumes作为本项目维护步骤。模型冗余用开发指南中的下载脚本清理，容器内没有该工具。
 
 浏览器截图与报告写入apps/frontend/test-results、apps/frontend/playwright-report等忽略目录，不写版本化文档。保留需要排查的trace后可清理测试产物。
+
+## 旧发布产物与本地生成文件
+
+当前打包只在`release/<版本>/linux-amd64/`生成版本化tar与对应.sha256，不在根目录生成`whisper-guide-release.tar`，也不更新`release/`根下的平铺部署文件。历史平铺的`docker-compose.yml`、`DEPLOY.md`、`.env.example`、`deploy.sh`和`scripts/backup.py`只在确认是旧打包副本后清理；同名仓库源码文件仍需保留。
+
+2026-10-27清理了本工作区旧根tar、上述平铺副本、空的`release/scripts/`，以及源码中的`__pycache__`、`.pytest_cache`、`.ruff_cache`、前端`test-results`和`dist`，共149个文件、约290.84MiB。保留`release/0.1.3/linux-amd64/`及校验文件，清理前后SHA256一致。旧产物和缓存均被Git忽略，删除只作用于本工作区，不会通过commit自动同步到其他机器。
+
+清理前确认目录用途：实际部署目录中的.env、data、backups、私有模型方案、当前版本包和回滚资产不能按“旧平铺文件”批量删除。保留.venv、node_modules、模型和IDE配置；dist仅为前端构建输出，删除后使用Vite preview前需重新`pnpm build`，已运行的Docker镜像不依赖该目录。测试缓存和报告会在下次运行时重新生成。
