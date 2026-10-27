@@ -24,7 +24,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-浏览器访问localhost:5173，后端OpenAPI在localhost:8000/docs。Vite将/api和WebSocket代理到8000；pnpm preview使用4173并保留代理。VITE_API_PROXY_TARGET覆盖开发代理目标；VITE_API_BASE_URL用于不同API地址，会进入前端构建，不能放密钥。
+浏览器访问localhost:5173，后端OpenAPI在localhost:8000/docs。Vite将/api和WebSocket代理到8000；pnpm preview使用4173并保留代理。VITE_API_PROXY_TARGET覆盖开发/预览代理目标，可在apps/frontend/.env或对应模式文件中设置，启动进程中的同名环境优先；修改后重启Vite。VITE_API_BASE_URL用于不同API地址，会进入前端构建，修改后需重新构建，不能放密钥。
 
 后端默认读取apps/backend-core/.env，需要覆盖时复制同目录.env.example；相对数据、备份和模型路径按apps/backend-core解析（不是按仓库根目录或当前工作目录解析）。监听地址与端口使用Uvicorn命令行参数。源码开发默认数据与备份分别为apps/backend-core/data和apps/backend-core/backups；已有自定义绝对路径继续使用原值；本地默认数据、模型和私有配置随应用目录保留，Docker宿主持久目录data不迁移。容器内/app/backend-core与/data、/backups、/models路径及Compose挂载不变。
 
@@ -87,43 +87,96 @@ Docker前端构建先检查类型；后端只安装锁定生产依赖。运行�
 
 发布工具只用Python 3.12标准库、Git、uv、Docker和gzip，不新增应用运行依赖。prepare只同步项目自身版本，保留第三方依赖解析结果，并用uv lock --locked --offline严格验证。prepare失败回滚前后端清单与uv.lock；pnpm锁不存根应用版本，无需随版本号改写。ci.yml支持workflow_call检查指定SHA；release.yml的package任务依赖checks成功，publish任务仅在打包后获contents:write并上传草稿附件后发布。当前流程不推镜像仓库，不远程部署；不要把个人密钥塞进公开工作流。
 
-## 环境变量
+## 环境变量与生效顺序
 
-路径与初始运行参数：
+2026-10-27按公开模板与代码逐项核对。变量为空不等于无效：例如云端地址、密钥可在部署环境或模型方案中填写；是否使用取决于对应能力是否启用。不要把生产.env、完整docker inspect或完整compose config粘贴到日志/工单，可能包含凭据。
 
-| 环境变量 | 默认或规则 |
+先确认编辑的是哪份文件：
+
+| 运行方式 | 配置入口 | 读取者与时机 |
+|---|---|---|
+| Docker源码构建/运行 | 仓库根.env | Compose读取已声明的插值变量；构建元数据在build时，容器环境在创建时传入 |
+| 离线发布包 | 解包部署目录.env | 随包deploy.sh显式选择同目录.env，使用已校验的包内镜像重建容器 |
+| WSL/Linux直接运行后端 | apps/backend-core/.env | 后端Settings启动时读取，进程环境优先于此文件 |
+| 前端开发/预览 | apps/frontend/.env、.env.local、.env.[mode]及启动进程环境 | VITE_API_BASE_URL进入构建；VITE_API_PROXY_TARGET由Vite加载，用于开发/预览代理，模式文件优先于通用文件、进程环境优先；后端WHISPER_GUIDE变量不由Vite直接读取 |
+
+Compose的导出Shell变量仍优先于.env；例如当前终端曾export同名旧值，编辑文件后该Shell值仍可能覆盖它。检查时只查看所需非敏感键，不输出全部环境。源码启动后端不会自动读取仓库根.env；根.env也不会自动把任意自定义键传入容器，必须在Compose的environment/env_file中显式传递。
+
+### 构建与编排变量
+
+| 变量 | 作用与边界 |
 |---|---|
-| `WHISPER_GUIDE_APP_TITLE` | 显示标题，默认whisper-guide；后端启动读取，前端运行时加载 |
-| `WHISPER_GUIDE_DATA_DIR` | 容器 `/data`，SQLite 与私有模型方案目录 |
-| `WHISPER_GUIDE_BACKUP_DIR` | 容器 `/backups` |
-| `WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS` | 默认 3000；整数且不小于 1000 |
-| `WHISPER_GUIDE_SPEECH_MODEL_DIR` | 容器内固定的 sherpa-onnx 模型目录 |
-| `WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES` | 默认 2097152，即 2 MiB |
-| `WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES` | 默认 10 |
-| `WHISPER_GUIDE_TTS_VOICE` | `zh-CN-XiaoxiaoNeural` |
-| `WHISPER_GUIDE_CORS_ORIGINS` | JSON 来源数组 |
-| `WHISPER_GUIDE_HTTP_PORT` | Compose宿主发布端口，默认8080；按当前配置对外监听 |
+| WHISPER_GUIDE_VERSION | 源码Compose镜像标签及Docker构建APP_VERSION，默认dev；不是运行时应用设置。正式包由Git标签生成并固定镜像版本，此变量不能切换包内版本 |
+| WHISPER_GUIDE_REVISION | 源码构建VCS_REF/OCI提交标签，默认unknown；正式包由已验证Git SHA生成，不控制业务 |
+| WHISPER_GUIDE_HTTP_PORT | 宿主发布端口，默认8080；不修改容器内部8080端口，也不改变后端Uvicorn监听8000 |
 
-模型环境值作为首次配置的默认值；已有私有仓储的生效版本优先：
+### 启动参数与页面默认值
 
-| 环境变量 | 默认或规则 |
+这些字段不属于持久模型方案。修改运行参数后重新创建容器或重启直接运行的后端；标题、静音默认和上传限制由页面刷新获取，其他字段由各自后端/编排消费者读取。已有会话参数和用户当前编辑值不会被迟到配置覆盖。
+
+| 变量 | 当前消费者与规则 |
 |---|---|
-| `WHISPER_GUIDE_STT_PROVIDER` | 默认 `local`；界面支持 `cloud` |
-| `WHISPER_GUIDE_CLOUD_OPT_IN` | 默认 `false`，云端音频需授权 |
-| `WHISPER_GUIDE_CLOUD_STT_PROTOCOL` | 默认 `http-json`；原生火山流式 ASR 选择 `volcengine-ws` |
-| `WHISPER_GUIDE_CLOUD_STT_ENDPOINT` | HTTP 网关 HTTPS；原生推荐 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` |
-| `WHISPER_GUIDE_CLOUD_STT_AUTH_MODE` | 默认 `api-key`，旧接口可选 `app-token` |
-| `WHISPER_GUIDE_CLOUD_STT_RESOURCE_ID` | 默认 `volc.seedasr.sauc.duration`（ASR 2.0 小时版），与已开通资源一致 |
-| `WHISPER_GUIDE_CLOUD_STT_TIMEOUT_MS` | 默认 5000，严格整数 `200–30000`，独立于 LLM 超时 |
-| `WHISPER_GUIDE_CLOUD_STT_ENABLE_NONSTREAM` | 默认 `true`；仅 `bigmodel_async` 启用二次识别 |
-| `WHISPER_GUIDE_CLOUD_STT_APP_ID` / `WHISPER_GUIDE_CLOUD_STT_ACCESS_TOKEN` | 新模式仅填语音 API Key 到 ACCESS_TOKEN；旧模式填 App ID 与语音 Access Token |
-| `WHISPER_GUIDE_LLM_ALIGN_MODE` | `off` / `fallback` / `hybrid` |
-| `WHISPER_GUIDE_LLM_PROVIDER_PRESET` | `custom` / `deepseek` / `qwen` / `doubao` / `openai` / `ollama` |
-| `WHISPER_GUIDE_LLM_BASE_URL` | OpenAI 兼容聊天接口基址 |
-| `WHISPER_GUIDE_LLM_MODEL` | 账号实际可用模型名或接入点 ID |
-| `WHISPER_GUIDE_LLM_API_KEY` | 后端密钥 |
-| `WHISPER_GUIDE_LLM_TIMEOUT_MS` | 默认 1500，正整数毫秒 |
+| WHISPER_GUIDE_APP_TITLE | 后端OpenAPI标题与公开页面标题，空白回退whisper-guide；前端运行时读取 |
+| WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS | 新会话初始静音等待，默认3000且>=1000整数；通过公开配置同步工作台，创建会话使用相同值；手动设置和恢复会话保留自身参数 |
+| WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES | 单份讲稿上传上限，正整数；默认2097152。后端强制校验，页面同步显示和预检查 |
+| WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES | 单次上传数量上限，1–1000整数；默认10，超过框架multipart上限会在启动时拒绝配置。后端强制校验，页面同步预检查 |
+| WHISPER_GUIDE_CORS_ORIGINS | 后端允许的HTTP来源JSON数组；不提供身份认证，不替代HTTPS或反向代理访问控制 |
+| WHISPER_GUIDE_DATA_DIR | SQLite与私有模型方案的容器内目录；源码相对路径按apps/backend-core解析，Docker应使用绝对容器路径 |
+| WHISPER_GUIDE_BACKUP_DIR | 本次修复后用于Docker备份挂载的容器内目标，默认/backups；源码后端仅保留兼容路径字段/解析值，没有备份消费者。不是定时/自动备份开关，backup.py仍由destination参数指定输出 |
+| WHISPER_GUIDE_SPEECH_MODEL_DIR | 后端查找本地STT权重的目录；容器内默认/models/...。改变量不会下载、复制或挂载模型，新路径必须实际存在并可读 |
+| WHISPER_GUIDE_SPEECH_SAMPLE_RATE | 当前协议约束，只允许16000；不是声卡采样率调节旋钮，其他值启动校验失败 |
+| WHISPER_GUIDE_TTS_VOICE | edge-tts提示合成声音，默认zh-CN-XiaoxiaoNeural；与STT/LLM方案独立，需要有效语音名称和后端联网 |
 
-环境兼容注册表 `WHISPER_GUIDE_STT_PROVIDER_CONFIGS` 继续可用，详见 [接口参考](speech-provider-interface.md)。云端语音与聊天模型 Base URL 不是同一协议；语音 API Key 不会自动复用方舟文本 API Key。容器中的 localhost 指向当前容器；Ollama 等外部服务应填写后端容器可访问的地址。预设只是可修改示例，不证明账号已开通。
+Docker的宿主数据位置仍是部署目录data/sqlite和data/backups。DATA_DIR/BACKUP_DIR改变的是容器内挂载目标，不会迁移宿主数据；切换运行方式、自定义模型挂载或相对跨目录路径时，需核对实际路径与UID10001权限。不得通过删除data刷新页面默认值。
 
-Compose参数以根.env.example与docker-compose.yml为准，后端本地默认值以apps/backend-core/app/config.py为准。已有私有仓储的生效快照优先于模型环境默认值，改环境不会隐式激活新方案。界面设置见[模型配置](model-configuration.md)，检查见[测试指南](testing.md)。
+静音值曾存在前端固定3000覆盖后端默认的缺陷，上传页面也曾固定10份/2MiB。本次修复从服务端公开配置加载这些值，配置响应不包含模型密钥；未手动调整的新会话省略客户端超时，由后端采用当前默认，即使公开配置请求失败也不覆盖后端。不能仅用环境值已进入容器来推断旧前端已正确使用。
+
+Nginx原固定22MiB请求体上限已移除，由后端执行文件大小与数量校验，避免提高上传变量后仍被代理提前拒绝。上传限制不替代访问控制；部署到可信访问范围。
+
+### 模型方案的初始默认值
+
+下列字段是模型配置的环境引导值。没有私有方案仓储时，初始“现有配置”取环境设置；已有.model-configs.json时，其独立生效快照优先。改变.env不会覆盖用户已保存/激活的方案，也不会让未激活草稿自动生效。请在模型配置页面保存并激活需要的修改，不删除方案文件或数据库强制刷新。
+
+| 变量 | 作用与启用条件 |
+|---|---|
+| WHISPER_GUIDE_STT_PROVIDER | 选择local、cloud、hybrid或已注册ID；云端还需CLOUD_OPT_IN=true与可用注册配置，未授权时保持本地 |
+| WHISPER_GUIDE_CLOUD_OPT_IN | 是否允许向云端发送音频；地址和密钥齐全也不能绕过该授权 |
+| WHISPER_GUIDE_CLOUD_STT_PROTOCOL | http-json或volcengine-ws，决定语音传输协议；不是文本模型协议 |
+| WHISPER_GUIDE_CLOUD_STT_ENDPOINT | 语音服务地址，公网使用HTTPS/WSS；仅地址有值不能保证服务配置完整 |
+| WHISPER_GUIDE_CLOUD_STT_AUTH_MODE | api-key或app-token；后者还需要App ID，前者不要求App ID |
+| WHISPER_GUIDE_CLOUD_STT_RESOURCE_ID | 原生WebSocket服务资源编号，需与账户开通项匹配；HTTP JSON网关不使用该字段 |
+| WHISPER_GUIDE_CLOUD_STT_TIMEOUT_MS | 云端识别连接/传输/结果等待超时，默认5000、整数200–30000；与静音等待、文本LLM超时独立 |
+| WHISPER_GUIDE_CLOUD_STT_ENABLE_NONSTREAM | 原生bigmodel_async二遍复核开关；其他端点不使用，不控制本地识别 |
+| WHISPER_GUIDE_CLOUD_STT_APP_ID | app-token鉴权的App ID；api-key鉴权可留空 |
+| WHISPER_GUIDE_CLOUD_STT_ACCESS_TOKEN | api-key模式的独立语音API Key，或app-token模式的Access Token；仅后端使用 |
+| WHISPER_GUIDE_LLM_ALIGN_MODE | off/fallback/hybrid；非off且BASE_URL与MODEL完整后才可调用语义校准 |
+| WHISPER_GUIDE_LLM_PROVIDER_PRESET | 方案/界面的服务商预设ID和填表辅助元数据；只设qwen/openai等不会自动填地址、模型或启用调用 |
+| WHISPER_GUIDE_LLM_BASE_URL | 文本Chat Completions兼容API根地址，实际地址由该字段决定，不由预设名称决定 |
+| WHISPER_GUIDE_LLM_MODEL | 文本模型ID或服务商接入点ID；需与该地址及密钥匹配 |
+| WHISPER_GUIDE_LLM_API_KEY | 文本模型独立凭据；不自动复用语音密钥 |
+| WHISPER_GUIDE_LLM_TIMEOUT_MS | 单次文本辅助请求超时，默认1500且为正整数，不修改静音等待 |
+
+### 后端兼容配置
+
+`WHISPER_GUIDE_ENVIRONMENT`已从两份模板和Compose中移除：后端仍兼容读取并校验development/test/production，但没有业务消费者，不切换日志、调试、安全或识别行为。旧安装保留该键不会改变行为，production也不会自动提供认证或HTTPS。
+
+| 变量 | 作用与优先级 |
+|---|---|
+| WHISPER_GUIDE_STT_PROVIDER_CONFIGS | 服务器注册的语音Provider JSON数组；仍有实际消费者，不是废弃字段。注册表不保存进模型方案，需重建/重启后端读取；每个条目受全局云端授权约束，原生/HTTP条目按自身协议参数处理 |
+| WHISPER_GUIDE_CLOUD_ENDPOINT | 旧单Provider地址别名；新部署优先用CLOUD_STT_ENDPOINT。规范字段有值时优先，旧字段用于兼容 |
+| WHISPER_GUIDE_CLOUD_APP_ID | 旧App ID别名；新部署使用CLOUD_STT_APP_ID |
+| WHISPER_GUIDE_CLOUD_ACCESS_TOKEN | 旧语音凭据别名；新部署使用CLOUD_STT_ACCESS_TOKEN |
+
+旧持久文件的cloud_*字段会规范化为cloud_stt_*；同一更新中规范字段显式提供（包括空字符串清除）优先，避免旧别名重新填回已清除的值。不要同时维护两套不同的地址/密钥。
+
+STT_PROVIDER_CONFIGS中access_token_env读取的是后端进程环境。Docker根.env只用于Compose插值，随意写MY_PROVIDER_TOKEN并不会自动注入容器；需在自定义Compose中显式转发该键，或按标准CLOUD_STT字段/模型页面配置凭据。不要为图省事把整个私有.env放进镜像或公开发布包。
+
+模型下载脚本另支持WHISPER_GUIDE_MODEL_URL、WHISPER_GUIDE_DECODER_URL，仅下载工具执行时使用，不是运行中识别源切换。VITE_API_BASE_URL与VITE_API_PROXY_TARGET也不是容器后端配置：前者修改后需重新构建前端，后者只控制Vite开发/预览服务器，修改后重启对应服务器，不改变Nginx容器。
+
+### 修改后如何确认
+
+1. 编辑正确运行目录的.env；仅变运行参数无需删除镜像或数据。已导出的同名Shell值优先，必要时在当前终端取消该项旧导出。
+2. 结束会话，在该部署目录重新创建容器：docker compose --env-file .env up -d --no-build --pull never --force-recreate --wait --wait-timeout 180。仅docker compose restart不会重新注入环境。
+3. 刷新浏览器，在工作台创建新会话确认默认值；恢复旧会话时以其快照参数为准。公开/api/app-config可核对标题、静音默认和上传限制，不含密钥。
+4. 如果修改了模型方案环境值，先分辨是否由已有生效方案覆盖；按模型配置页面的保存/激活流程更新。
+5. 如果部署的仍是旧发布包镜像，deploy.sh只load包内镜像并重建，不编译当前源码。需要重新构建/发布包含修复的新包，再部署并刷新页面。

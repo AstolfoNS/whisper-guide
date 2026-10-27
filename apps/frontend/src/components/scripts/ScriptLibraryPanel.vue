@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, useId } from 'vue'
+import { formatUploadLimit, runtimeDefaults } from '../../services/appConfig'
 import { NButton, NAlert, NInput, NPopconfirm } from 'naive-ui'
 import { useScriptsStore } from '../../stores/scripts'
 import { useSessionStore } from '../../stores/session'
@@ -40,7 +41,7 @@ async function upload(event: Event) {
 <template>
   <section class="library-panel" aria-labelledby="library-title">
     <div class="panel-title"><h2 id="library-title">讲稿库</h2><NButton size="tiny" :loading="scripts.loading" :disabled="Boolean(scripts.deletingId)" @click="scripts.refresh()">刷新</NButton></div>
-    <label :for="uploadId" class="upload-label">上传讲稿 <small>txt / text / md · 每份 ≤2 MiB</small></label>
+    <label :for="uploadId" class="upload-label">上传讲稿 <small>txt / text / md · 每份 ≤{{ formatUploadLimit(runtimeDefaults.scriptMaxFileBytes) }} · 每次 ≤{{ runtimeDefaults.scriptMaxUploadFiles }} 份</small></label>
     <input :id="uploadId" type="file" accept=".txt,.text,.md" multiple :disabled="uploading || Boolean(scripts.deletingId)" @change="upload" />
     <NAlert v-if="uploadError || scripts.error" type="error" :show-icon="false" role="alert">{{ uploadError || scripts.error }}</NAlert>
     <p v-if="deletionNotice" class="deletion-notice" role="status" aria-live="polite">{{ deletionNotice }}</p>

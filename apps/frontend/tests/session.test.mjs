@@ -51,3 +51,11 @@ test('events from old connection do not modify a replacement connection', async 
   assert.equal(events.length, 0)
   client.close()
 })
+
+test('session client omits an untouched timeout so the backend applies its environment default', async () => {
+  const client = new SessionClient(() => {}, () => {})
+  await client.connect()
+  client.prepare('script-id')
+  assert.deepEqual(JSON.parse(Socket.last.sent[0]), { type: 'prepare', script_id: 'script-id' })
+  client.close()
+})

@@ -32,7 +32,7 @@ const options = computed(() => session.snapshot?.units.map((unit, index) => ({ l
     </div>
     <div class="timeout-control">
       <label id="silence-timeout-label" for="silence-timeout">静音等待</label>
-      <NInputNumber v-model:value="session.silenceTimeout" :min="1000" :step="1" :precision="0" :show-button="true" :disabled="!['READY','PAUSED','TERMINATED'].includes(session.state)" aria-labelledby="silence-timeout-label" aria-describedby="silence-timeout-help" :input-props="{ id: 'silence-timeout', 'aria-labelledby': 'silence-timeout-label', 'aria-describedby': 'silence-timeout-help' }" />
+      <NInputNumber v-model:value="session.silenceTimeout" @update:value="session.markSilenceTimeoutEdited()" :min="1000" :step="1" :precision="0" :show-button="true" :disabled="!['READY','PAUSED','TERMINATED'].includes(session.state)" aria-labelledby="silence-timeout-label" aria-describedby="silence-timeout-help" :input-props="{ id: 'silence-timeout', 'aria-labelledby': 'silence-timeout-label', 'aria-describedby': 'silence-timeout-help' }" />
       <span id="silence-timeout-help">ms · 最短 1000</span>
       <NButton size="small" :disabled="!valid || !['READY','PAUSED'].includes(session.state)" @click="controller.configure()">应用</NButton>
     </div>

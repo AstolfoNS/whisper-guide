@@ -21,6 +21,26 @@ docker compose build && docker compose up -d --force-recreate --wait --wait-time
 
 离线交付目录没有源码，导入镜像后使用部署手册的--no-build流程。重启清空实时会话，讲稿和方案从挂载加载；不要删除data/sqlite或data/backups。
 
+## .env修改后未生效
+
+先区分文件读取、生效方案和页面默认：Docker读取部署目录.env，源码后端默认读取apps/backend-core/.env；环境中的同名Shell导出值可以覆盖文件。只重启容器不会重新注入.env，结束演讲后在原部署目录重新创建：
+
+```bash
+docker compose --env-file .env up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
+```
+
+刷新页面后查看公开配置（只包含标题、静音默认和上传限制，不含模型凭据）：
+
+```bash
+curl -fsS http://localhost:8080/api/app-config
+```
+
+新会话取新的静音默认，手动输入和恢复旧会话仍保留其参数。旧版前端曾固定3000ms/10份/2MiB，需部署包含本次修复的前后端镜像，不能靠删除数据库解决。deploy.sh只导入离线包内的镜像，不会重新编译本机源码；删镜像后加载同一个旧包，得到的仍是旧程序。
+
+WHISPER_GUIDE_ENVIRONMENT仅保留兼容校验，没有调试、日志、安全或识别分支，已从模板与Compose移除。WHISPER_GUIDE_BACKUP_DIR只指定Docker备份挂载的容器目标；不触发自动备份。
+
+如果只有STT/LLM配置不变，核对模型页面的生效方案。已有私有方案覆盖环境引导值，按保存并激活更新，不删data/sqlite、.model-configs.json或密钥文件强制刷新。完整逐项作用及无业务开关字段见[环境变量表](development.md#环境变量与生效顺序)。
+
 ## 备份与恢复
 
 在部署目录使用容器Python运行备份脚本：
@@ -32,6 +52,8 @@ docker compose exec -T backend /app/backend-core/.venv/bin/python - \
 ```
 
 脚本用SQLite backup API和quick_check，不覆盖同名文件，宿主输出为data/backups。数据库备份只包含讲稿。
+
+这组命令对应默认容器目标/data与/backups；如果修改了WHISPER_GUIDE_DATA_DIR或WHISPER_GUIDE_BACKUP_DIR，备份调用中的源/目标路径也应使用实际容器路径。backup.py接受明确路径参数，不会因BACKUP_DIR变量而自动创建或调度备份。
 
 data/sqlite/.model-configs.json包括全部方案、凭据和生效快照，旧.model-settings.json可能仍用于迁移。两者权限0600，只备份到受限目录，不进Git、镜像、发布包或日志。
 

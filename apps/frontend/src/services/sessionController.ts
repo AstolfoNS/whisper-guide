@@ -223,12 +223,15 @@ export class SessionController {
       try { await this.openMicrophone() }
       catch (error) { this.store.microphone = 'error'; throw error }
       this.ensure(operation)
+      await this.store.initializeDefaults()
+      this.ensure(operation)
+      this.validTimeout()
       if (!this.client.connected) await this.connect()
       this.ensure(operation)
       if (!this.store.snapshot || this.store.snapshot.state === 'TERMINATED') {
         this.minimumGeneration = -1; this.pendingState = undefined
         const ready = this.client.waitFor(s => s.state === 'READY')
-        this.client.prepare(this.store.selectedScript.id, this.store.silenceTimeout)
+        this.client.prepare(this.store.selectedScript.id, this.store.newSessionTimeout())
         await ready
       } else this.client.send({ type: 'configure', silence_timeout_ms: this.store.silenceTimeout })
       this.ensure(operation)

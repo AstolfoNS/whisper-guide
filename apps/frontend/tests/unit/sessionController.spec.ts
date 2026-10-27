@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { SessionController } from '../../src/services/sessionController'
 import { PlaybackCancelled } from '../../src/audio/player'
@@ -35,7 +35,8 @@ function harness(sttReady?: boolean) {
   return { store, microphone, player, client, controller, emit, receive, receiveEvent: (event: SessionServerEvent) => onEvent(event) }
 }
 
-beforeEach(() => { setActivePinia(createPinia()); sessionStorage.clear() })
+beforeEach(() => { setActivePinia(createPinia()); sessionStorage.clear(); vi.stubGlobal('fetch', vi.fn(async () => Response.json({}))) })
+afterEach(() => vi.unstubAllGlobals())
 describe('application session runtime', () => {
   it('pauses on navigation, keeps socket and positions, and only resumes by user action', async () => {
     const { store, microphone, client, controller } = harness()

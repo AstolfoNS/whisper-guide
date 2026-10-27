@@ -29,8 +29,8 @@ async function confirm(id: string) {
   popupButton('删除讲稿').click()
   await flushPromises()
 }
-beforeEach(() => setActivePinia(createPinia()))
-afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.restoreAllMocks(); globalThis.document.body.innerHTML = '' })
+beforeEach(() => { setActivePinia(createPinia()); vi.stubGlobal('fetch', vi.fn(async () => Response.json({}))) })
+afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); globalThis.document.body.innerHTML = '' })
 
 it('provides an accessible delete button outside the selection label and requires Chinese confirmation', async () => {
   const remove = vi.spyOn(api, 'deleteScript').mockResolvedValue(undefined)

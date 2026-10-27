@@ -108,6 +108,12 @@ chmod 600 .env
 
 端口默认8080，通过WHISPER_GUIDE_HTTP_PORT配置；当前对外监听，公开访问前需防火墙、HTTPS与认证保护。麦克风需要localhost或HTTPS。系统没有用户认证与讲稿权限隔离，仅部署到可信访问范围。显示标题WHISPER_GUIDE_APP_TITLE默认whisper-guide。
 
+修改运行参数后，结束演讲并重新创建容器；docker compose restart不会读取新的.env。新版deploy.sh显式读取解包目录.env并force-recreate；直接操作可用docker compose --env-file .env up -d --no-build --pull never --force-recreate --wait --wait-timeout 180。Shell导出的同名值仍优先，勿在排障时输出完整环境或Compose配置。刷新页面后，新会话才读取新的静音默认；手动值与恢复会话保留其参数。
+
+WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS曾被前端固定3000覆盖，上传页面也曾固定10份/2MiB；需部署包含修复的新镜像，删除data或重新导入相同旧包不能修复旧代码。公开/api/app-config可核对当前非敏感默认，模型方案环境值则只作首次引导，已有生效方案按模型页面更新，不删除凭据仓储。完整变量分类在源码仓库docs/development.md“环境变量与生效顺序”。
+
+上传文件大小和数量由后端环境参数控制并同步页面；Nginx不再固定限制22MiB请求体。WHISPER_GUIDE_ENVIRONMENT没有业务消费者，已移出模板；旧配置保留该键也不会切换安全、调试或识别行为。
+
 本地STT模型已内置，不代表完全离线：edge-tts合成需要服务器联网；云端STT/文本LLM也需访问各自HTTPS/WSS地址。语音API Key与文本模型密钥独立，不在日志/命令行中打印。配置含模型凭据，按私密信息保护。
 
 ```bash

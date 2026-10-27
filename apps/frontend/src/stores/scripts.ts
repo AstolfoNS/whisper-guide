@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { deleteScript, getScript, listScripts, uploadScripts, type ScriptDocument, type ScriptSummary } from '../api/scripts'
 import { useSessionStore } from './session'
+import { formatUploadLimit, loadAppConfig, runtimeDefaults } from '../services/appConfig'
 
 export const useScriptsStore = defineStore('scripts', {
   state: () => ({
@@ -84,8 +85,10 @@ export const useScriptsStore = defineStore('scripts', {
       }
     },
     async upload(files: File[]) {
-      if (!files.length || files.length > 10) throw new Error('每次选择 1–10 份讲稿。')
-      if (files.some(file => !/\.(txt|text|md)$/i.test(file.name) || file.size === 0 || file.size > 2097152)) throw new Error('仅支持非空 txt、text、md，每份最多 2 MiB。')
+      await loadAppConfig()
+      const { scriptMaxUploadFiles, scriptMaxFileBytes } = runtimeDefaults.value
+      if (!files.length || files.length > scriptMaxUploadFiles) throw new Error(`每次选择 1–${scriptMaxUploadFiles} 份讲稿。`)
+      if (files.some(file => !/\.(txt|text|md)$/i.test(file.name) || file.size === 0 || file.size > scriptMaxFileBytes)) throw new Error(`仅支持非空 txt、text、md，每份最多 ${formatUploadLimit(scriptMaxFileBytes)}。`)
       const created = await uploadScripts(files, AbortSignal.timeout(30000))
       await this.refresh()
       return created

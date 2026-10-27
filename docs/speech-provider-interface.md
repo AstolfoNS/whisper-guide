@@ -12,9 +12,22 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
                  LLMSemanticRefiner（可选 OpenAI 兼容接口）
 ```
 
-## 公开显示配置
+## 公开页面配置
 
-GET /api/app-config返回`{"app_title":"whisper-guide"}`，只包含显示标题，不包含模型或凭据。值由WHISPER_GUIDE_APP_TITLE在后端启动时读取，空白回默认。前端每次页面启动读取一次，配置失败保留默认，不依赖健康轮询。
+`GET /api/app-config`返回以下公开运行默认值，不包含模型、地址或凭据：
+
+```json
+{
+  "app_title": "whisper-guide",
+  "default_silence_timeout_ms": 3000,
+  "script_max_file_bytes": 2097152,
+  "script_max_upload_files": 10
+}
+```
+
+分别来自`WHISPER_GUIDE_APP_TITLE`、`WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS`、`WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES`、`WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES`。后端启动时读取；标题空白回默认。前端每次页面启动读取一次，配置失败保留兼容显示默认，不依赖健康轮询。
+
+`prepare.silence_timeout_ms`可省略：未手动调整的新会话由后端使用当前运行默认值，避免旧页面默认覆盖环境设置，即使公开配置请求失败也遵循后端。显式设置优先；恢复已有会话保留快照参数。上传界面同步服务端大小/数量限制，后端仍是最终校验方。
 
 ## 讲稿HTTP接口
 
@@ -30,7 +43,7 @@ GET /api/app-config返回`{"app_title":"whisper-guide"}`，只包含显示标题
 
 - 支持 `.txt`、`.text` 和 `.md` 纯文本。Markdown 作为普通讲稿文本处理，不执行或渲染 HTML。
 - 支持 UTF-8（含 BOM）、带 BOM 的 UTF-16 和 GB18030。空白文件、包含二进制控制字符的内容及不支持的文件类型会返回 422。
-- 默认单文件最多 2 MiB、每批最多 10 份，分别由 `WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES` 和 `WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES` 配置。文件超限返回 413。
+- 默认单文件最多 2 MiB、每批最多 10 份，分别由 `WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES` 和 `WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES` 配置，数量必须为1–1000整数（multipart解析上限）。文件超限返回 413。
 - 整批校验后一次写入；一份无效则整批不保存。同名文件创建独立 ID，不覆盖已有讲稿。
 - SQLite 保存解码后的完整文本和元数据，不额外保存原始上传文件。用户录音只用于实时处理，不持久化。
 - 本次演讲由前端准备流程选择讲稿，并通过 WebSocket `prepare` 将讲稿绑定到会话；会话开始前必须完成讲稿选择。

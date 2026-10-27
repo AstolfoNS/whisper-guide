@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     data_dir: Path = BACKEND_ROOT / "data"
     backup_dir: Path = BACKEND_ROOT / "backups"
     script_max_file_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
-    script_max_upload_files: int = Field(default=10, gt=0)
+    # FastAPI's multipart parser accepts at most 1000 files per request.
+    script_max_upload_files: int = Field(default=10, gt=0, le=1000)
     default_silence_timeout_ms: int = Field(default=3000, ge=1000)
     speech_model_dir: Path = (
         BACKEND_ROOT / "models" / "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
@@ -131,6 +132,14 @@ class Settings(BaseSettings):
 def clone_model_settings(settings: Settings, updates: dict[str, Any]) -> Settings:
     """Validate a new settings instance without mutating the active instance."""
 
+    # Older persisted files used cloud_* names. Normalize before applying the
+    # model-field allowlist; an explicitly supplied canonical value, including
+    # an empty string used to clear a field, always wins over its legacy alias.
+    updates = dict(updates)
+    for suffix in ("endpoint", "app_id", "access_token"):
+        canonical, legacy = f"cloud_stt_{suffix}", f"cloud_{suffix}"
+        if canonical not in updates and legacy in updates:
+            updates[canonical] = updates[legacy]
     values = settings.model_dump()
     values.update({key: value for key, value in updates.items() if key in MODEL_SETTINGS_FIELDS})
     for suffix in ("endpoint", "app_id", "access_token"):

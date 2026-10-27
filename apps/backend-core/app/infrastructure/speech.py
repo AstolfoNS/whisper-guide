@@ -718,11 +718,17 @@ class ProviderRegistry:
         if provider_id == "local":
             return self.local
         if provider_id == "cloud" and provider_id not in self.remote:
-            return next(iter(self.remote.values()), None)
+            return self.first_remote()
         return self.remote.get(provider_id)
 
     def first_remote(self) -> CloudSpeechProvider | None:
-        return next(iter(self.remote.values()), None)
+        # A registered but incomplete entry must not hide the next usable
+        # provider in hybrid mode. Preserve a deterministic entry for diagnostics
+        # when none is available, without weakening the global opt-in guard.
+        return next(
+            (provider for provider in self.remote.values() if provider.configured),
+            next(iter(self.remote.values()), None),
+        )
 
     def descriptors(self) -> list[dict[str, Any]]:
         items = [self.local.descriptor()]

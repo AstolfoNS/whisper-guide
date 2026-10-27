@@ -27,7 +27,7 @@ function shortcuts(event: KeyboardEvent) {
   const action = actions[event.key.toLowerCase()]
   if (action) { event.preventDefault(); action() }
 }
-onMounted(() => { void loadAppConfig(); preferences.initialize(); startHealthMonitor(); window.addEventListener('keydown', shortcuts) })
+onMounted(() => { void loadAppConfig(); void session.initializeDefaults(); preferences.initialize(); startHealthMonitor(); window.addEventListener('keydown', shortcuts) })
 onBeforeUnmount(() => { stopHealthMonitor(); disposeSessionController(); preferences.dispose(); window.removeEventListener('keydown', shortcuts) })
 </script>
 <template>

@@ -343,3 +343,21 @@ async def mock_asr(socket: WebSocket):
 async def silence_mode(payload: dict[str, bool]):
     app.state.speech_services.silent = payload.get("enabled") is True
     return {"enabled": app.state.speech_services.silent}
+
+
+@app.post("/mock/ui-defaults")
+async def mock_ui_defaults(payload: dict[str, int]):
+    """Test-only UI defaults; browser server owns temporary data and no real credentials."""
+    names = {
+        "default_silence_timeout_ms": 1000,
+        "script_max_file_bytes": 1,
+        "script_max_upload_files": 1,
+    }
+    if any(
+        name not in names or type(value) is not int or value < names[name]
+        for name, value in payload.items()
+    ):
+        return JSONResponse(status_code=422, content={"detail": "Invalid test defaults"})
+    for name, value in payload.items():
+        setattr(app.state.settings, name, value)
+    return {name: getattr(app.state.settings, name) for name in names}

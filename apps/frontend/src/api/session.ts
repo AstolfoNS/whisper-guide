@@ -80,7 +80,7 @@ export class SessionClient {
   }
   send(command: Record<string, unknown>) { if (!this.connected) throw new Error('实时连接已断开，请连接后继续。'); this.socket!.send(JSON.stringify(command)) }
   sendAudio(frame: ArrayBuffer) { if (!this.connected) return; if (this.socket!.bufferedAmount > 320000) { this.close(); this.onClose(); return }; this.socket!.send(frame) }
-  prepare(scriptId: string, timeout: number, sttProvider?: string) { this.send({ type: 'prepare', script_id: scriptId, silence_timeout_ms: timeout, ...(sttProvider ? { stt_provider: sttProvider } : {}) }) }
+  prepare(scriptId: string, timeout?: number, sttProvider?: string) { this.send({ type: 'prepare', script_id: scriptId, ...(timeout === undefined ? {} : { silence_timeout_ms: timeout }), ...(sttProvider ? { stt_provider: sttProvider } : {}) }) }
   attach(sessionId: string) { this.send({ type: 'attach', session_id: sessionId }) }
   close() { for (const waiter of this.waiters) { clearTimeout(waiter.timer); waiter.reject(new Error('连接已关闭。')) }; this.waiters.clear(); const socket = this.socket; this.socket = undefined; if (socket) { socket.onmessage = null; socket.onclose = null; socket.close() } }
 }

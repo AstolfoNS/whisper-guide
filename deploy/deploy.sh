@@ -36,8 +36,14 @@ gzip -dc whisper-guide-image.tar.gz | docker load
     --mount "type=bind,src=$SCRIPT_DIR/verify_release.py,dst=/release/verify_release.py,readonly" \
     --entrypoint /app/backend-core/.venv/bin/python "$BACKEND_IMAGE" \
     /release/verify_release.py --release-dir /release
-docker compose -f docker-compose.yml config --quiet
+# Resolve this bundle's runtime configuration explicitly, regardless of the caller's cwd.
+# Docker Compose still gives exported shell variables priority; never source .env.
+RUNTIME_ENV="$SCRIPT_DIR/.env"
+if [[ ! -f "$RUNTIME_ENV" ]]; then RUNTIME_ENV="$SCRIPT_DIR/.env.example"; fi
+COMPOSE=(docker compose --project-directory "$SCRIPT_DIR" --env-file "$RUNTIME_ENV" -f "$SCRIPT_DIR/docker-compose.yml")
+"${COMPOSE[@]}" config --quiet
 if [[ ! -f .env ]]; then cp .env.example .env; chmod 600 .env; fi
+COMPOSE=(docker compose --project-directory "$SCRIPT_DIR" --env-file "$SCRIPT_DIR/.env" -f "$SCRIPT_DIR/docker-compose.yml")
 mkdir -p data/sqlite data/backups
 if [[ "$(id -u)" -eq 0 ]]; then
   chown -R 10001:10001 data/sqlite data/backups
@@ -47,5 +53,7 @@ else
   echo "Grant UID 10001 write access to data/sqlite and data/backups, then retry." >&2
   exit 1
 fi
-docker compose -f docker-compose.yml up -d --no-build --pull never --wait --wait-timeout 180
-docker compose -f docker-compose.yml ps
+# Recreate from verified images so changed runtime environment reaches new containers.
+# Loading an offline bundle never recompiles application sources.
+"${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 180 --force-recreate
+"${COMPOSE[@]}" ps
