@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 
@@ -67,7 +68,7 @@ test('continuous microphone silence automatically prompts, finishes, and prompts
     console.log(`quiet prompt: first=${Math.round(final.prompts[0]!.elapsed)}ms second=${Math.round(final.prompts[1]!.elapsed)}ms; microphoneFrames=${first.frames}`)
   } finally {
     const end = page.getByRole('button', { name: '结束', exact: true })
-    if (await end.isVisible() && await end.isEnabled()) await end.click()
+    if (await end.isVisible() && await end.isEnabled()) { await end.click(); await confirmSessionEnd(page) }
     await page.request.post('http://127.0.0.1:8010/mock/silence', { data: { enabled: false } })
   }
 })

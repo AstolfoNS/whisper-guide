@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { test, expect, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { useSyntheticMicrophone } from './syntheticMicrophone'
@@ -18,7 +19,7 @@ async function activateScenario(page: Page, scenario: 'boundary' | 'complete') {
 }
 async function cleanup(page: Page, id: string) {
   const end = page.getByRole('button', { name: '结束', exact: true })
-  if (await end.isVisible() && await end.isEnabled()) await end.click()
+  if (await end.isVisible() && await end.isEnabled()) { await end.click(); await confirmSessionEnd(page) }
   expect((await page.request.post('/api/settings/model-configs/local-default/activate')).ok()).toBe(true)
   expect((await page.request.delete(`/api/settings/model-configs/${id}`)).ok()).toBe(true)
 }

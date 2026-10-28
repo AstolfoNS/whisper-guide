@@ -85,3 +85,114 @@ it('omits a UI default from a new session so the server remains authoritative ev
   session.markSilenceTimeoutEdited()
   expect(session.newSessionTimeout()).toBe(1700)
 })
+
+it('loads all progress defaults without sending unchanged UI choices over server defaults', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ default_prompt_mode: 'progress',
+    default_progress_timeout_ms: 6500, default_continuous_prompt: true })))
+  const { useSessionStore } = await import('../../src/stores/session')
+  const session = useSessionStore()
+  await session.initializeDefaults()
+  expect(session.promptMode).toBe('progress')
+  expect(session.progressTimeout).toBe(6500)
+  expect(session.continuousPrompt).toBe(true)
+  expect(session.newSessionOptions()).toEqual({})
+})
+
+it('preserves independent edits while late progress defaults update untouched options', async () => {
+  let respond!: (response: Response) => void
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { respond = resolve })))
+  const { useSessionStore } = await import('../../src/stores/session')
+  const session = useSessionStore()
+  const loading = session.initializeDefaults()
+  session.promptMode = 'silence'
+  session.markPromptOptionEdited('mode')
+  session.continuousPrompt = false
+  session.markPromptOptionEdited('continuous')
+  respond(Response.json({ default_prompt_mode: 'progress', default_progress_timeout_ms: 6000, default_continuous_prompt: true }))
+  await loading
+  expect(session.promptMode).toBe('silence')
+  expect(session.progressTimeout).toBe(6000)
+  expect(session.continuousPrompt).toBe(false)
+  expect(session.newSessionOptions()).toEqual({ prompt_mode: 'silence', continuous_prompt: false })
+})
+
+it('restores progress options and does not replace them with startup configuration', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ default_prompt_mode: 'silence', default_progress_timeout_ms: 4000 })))
+  const { useSessionStore } = await import('../../src/stores/session')
+  const session = useSessionStore()
+  const restored = { id: 'restore', state: 'PAUSED', silence_timeout_ms: 2400,
+    prompt_mode: 'progress', progress_timeout_ms: 8500, continuous_prompt: true } as SessionSnapshot
+  session.snapshot = restored
+  session.restoreOptions(restored)
+  await session.initializeDefaults()
+  expect(session.currentSessionOptions()).toEqual({ prompt_mode: 'progress', progress_timeout_ms: 8500, continuous_prompt: true })
+  expect(session.silenceTimeout).toBe(2400)
+})
+
+it.each([1999, 10001, 2.5, '4000', null])('rejects malformed progress default %s and non-boolean continuous flag', async value => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ default_prompt_mode: 'unknown',
+    default_progress_timeout_ms: value, default_continuous_prompt: 'true' })))
+  const { useSessionStore } = await import('../../src/stores/session')
+  const session = useSessionStore()
+  await session.initializeDefaults()
+  expect(session.currentSessionOptions()).toEqual({ prompt_mode: 'silence', progress_timeout_ms: 4000, continuous_prompt: false })
+  expect(session.newSessionOptions()).toEqual({})
+})
+
+it('preserves paused option drafts through a delayed pause acknowledgement and accepts their confirmation', async () => {
+  const { useSessionStore } = await import('../../src/stores/session')
+  const session = useSessionStore()
+  const previous = { id: 'paused-draft', state: 'LISTENING', silence_timeout_ms: 3000,
+    prompt_mode: 'silence', progress_timeout_ms: 4000, continuous_prompt: false } as SessionSnapshot
+  session.snapshot = previous
+  session.restoreOptions(previous)
+  session.localPaused = true
+  session.silenceTimeout = 1800; session.markSilenceTimeoutEdited()
+  session.promptMode = 'progress'; session.markPromptOptionEdited('mode')
+  session.progressTimeout = 6500; session.markPromptOptionEdited('timeout')
+  session.continuousPrompt = true; session.markPromptOptionEdited('continuous')
+  const delayed = { ...previous, state: 'PAUSED' } as SessionSnapshot
+  session.snapshot = delayed
+  session.restoreOptions(delayed)
+  expect(session.silenceTimeout).toBe(1800)
+  expect(session.currentSessionOptions()).toEqual({ prompt_mode: 'progress', progress_timeout_ms: 6500, continuous_prompt: true })
+  const acknowledged = { ...delayed, silence_timeout_ms: 1800,
+    prompt_mode: 'progress', progress_timeout_ms: 6500, continuous_prompt: true } as SessionSnapshot
+  session.restoreOptions(acknowledged)
+  // Once acknowledged, a later authoritative update must no longer be treated as stale.
+  session.restoreOptions({ ...acknowledged, silence_timeout_ms: 2100, progress_timeout_ms: 7000 })
+  expect(session.silenceTimeout).toBe(2100)
+  expect(session.progressTimeout).toBe(7000)
+})
+
+it('keeps only unacknowledged paused fields when a partial option acknowledgement arrives', async () => {
+  const { useSessionStore } = await import('../../src/stores/session')
+  const session = useSessionStore()
+  const paused = { id: 'partial-draft', state: 'PAUSED', silence_timeout_ms: 3000,
+    prompt_mode: 'silence', progress_timeout_ms: 4000, continuous_prompt: false } as SessionSnapshot
+  session.snapshot = paused
+  session.restoreOptions(paused)
+  session.promptMode = 'progress'; session.markPromptOptionEdited('mode')
+  session.progressTimeout = 6500; session.markPromptOptionEdited('timeout')
+  session.restoreOptions({ ...paused, prompt_mode: 'progress' })
+  session.restoreOptions({ ...paused, prompt_mode: 'silence' })
+  expect(session.promptMode).toBe('silence')
+  expect(session.progressTimeout).toBe(6500)
+})
+
+it('does not carry a paused draft into another session or override the started server options', async () => {
+  const { useSessionStore } = await import('../../src/stores/session')
+  const session = useSessionStore()
+  const paused = { id: 'old-session', state: 'PAUSED', silence_timeout_ms: 3000,
+    prompt_mode: 'silence', progress_timeout_ms: 4000, continuous_prompt: false } as SessionSnapshot
+  session.snapshot = paused
+  session.restoreOptions(paused)
+  session.promptMode = 'progress'; session.markPromptOptionEdited('mode')
+  session.restoreOptions({ ...paused, id: 'another-session', progress_timeout_ms: 8000 })
+  expect(session.currentSessionOptions()).toEqual({ prompt_mode: 'silence', progress_timeout_ms: 8000, continuous_prompt: false })
+  session.snapshot = paused
+  session.localPaused = true
+  session.promptMode = 'progress'; session.markPromptOptionEdited('mode')
+  session.restoreOptions({ ...paused, state: 'LISTENING', progress_timeout_ms: 5000 })
+  expect(session.currentSessionOptions()).toEqual({ prompt_mode: 'silence', progress_timeout_ms: 5000, continuous_prompt: false })
+})

@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { useSyntheticMicrophone } from './syntheticMicrophone'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
@@ -35,6 +36,7 @@ test('three views, profile CRUD, microphone pause on route leave, recovery and d
   await page.getByText('状态机与流转诊断', { exact: true }).click()
   await page.screenshot({ path: `${screenshots}/studio.png`, fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '结束', exact: true }).click()
+  await confirmSessionEnd(page)
   await expect(page.getByText('已结束', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: '模型配置', exact: true }).click()
   await page.getByRole('button', { name: '新建配置', exact: true }).click()
@@ -128,6 +130,7 @@ test('reload recovers a paused session without opening the microphone automatica
   expect(await page.evaluate(() => (window as unknown as { testLiveMicrophones: () => number }).testLiveMicrophones())).toBe(0)
   await page.getByRole('link', { name: '工作台', exact: true }).click()
   await page.getByRole('button', { name: '结束', exact: true }).click()
+  await confirmSessionEnd(page)
 })
 
 
@@ -146,4 +149,5 @@ test('long script keeps cursor actions responsive without rebuilding the whole t
   expect(elapsed).toBeLessThan(2000)
   await page.getByRole('link', { name: '工作台', exact: true }).click()
   await page.getByRole('button', { name: '结束', exact: true }).click()
+  await confirmSessionEnd(page)
 })

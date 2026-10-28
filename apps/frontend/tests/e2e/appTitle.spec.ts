@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test('uses the real public default title for navigation, accessible branding and routed browser titles', async ({ page }) => {
   const config = await page.request.get('/api/app-config')
   expect(config.ok()).toBe(true)
-  expect(await config.json()).toEqual({ app_title: 'whisper-guide', default_silence_timeout_ms: 3000, script_max_file_bytes: 2097152, script_max_upload_files: 10 })
+  expect(await config.json()).toEqual({ app_title: 'whisper-guide', default_silence_timeout_ms: 3000, default_prompt_mode: 'silence', default_progress_timeout_ms: 4000, default_continuous_prompt: false, script_max_file_bytes: 2097152, script_max_upload_files: 10 })
   await page.goto('/')
   await expect(page.locator('.app-brand')).toHaveText('whisper-guide')
   await expect(page.getByRole('link', { name: 'whisper-guide 概览', exact: true })).toBeVisible()

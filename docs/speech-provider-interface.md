@@ -20,12 +20,15 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
 {
   "app_title": "whisper-guide",
   "default_silence_timeout_ms": 3000,
+  "default_prompt_mode": "silence",
+  "default_progress_timeout_ms": 4000,
+  "default_continuous_prompt": false,
   "script_max_file_bytes": 2097152,
   "script_max_upload_files": 10
 }
 ```
 
-分别来自`WHISPER_GUIDE_APP_TITLE`、`WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS`、`WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES`、`WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES`。后端启动时读取；标题空白回默认。前端每次页面启动读取一次，配置失败保留兼容显示默认，不依赖健康轮询。
+分别来自`WHISPER_GUIDE_APP_TITLE`、会话默认`WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS`、`WHISPER_GUIDE_DEFAULT_PROMPT_MODE`、`WHISPER_GUIDE_DEFAULT_PROGRESS_TIMEOUT_MS`、`WHISPER_GUIDE_DEFAULT_CONTINUOUS_PROMPT`及上传限制`WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES`、`WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES`。后端启动时读取；标题空白回默认。前端每次页面启动读取一次，配置失败保留兼容显示默认，不依赖健康轮询。
 
 `prepare.silence_timeout_ms`可省略：未手动调整的新会话由后端使用当前运行默认值，避免旧页面默认覆盖环境设置，即使公开配置请求失败也遵循后端。显式设置优先；恢复已有会话保留快照参数。上传界面同步服务端大小/数量限制，后端仍是最终校验方。
 
@@ -49,6 +52,16 @@ PCM16 → VAD → LocalSherpaProvider / HttpStreamingProvider / WebSocketStreami
 - 本次演讲由前端准备流程选择讲稿，并通过 WebSocket `prepare` 将讲稿绑定到会话；会话开始前必须完成讲稿选择。
 
 
+## 会话提示选项与重新等待
+
+`prepare`可选传入`silence_timeout_ms`（>=1000整数）、`prompt_mode`（silence/progress）、`progress_timeout_ms`（2000–10000整数）、`continuous_prompt`（严格布尔）。省略项使用后端当前默认；已有会话从快照恢复。`configure`只允许READY/PAUSED，合并本次显式提供的字段，旧客户端只改静音不会清除新选项。
+
+`postpone_prompt`仅LISTENING可用，重新等待完整静音/进度周期，重启辅助资格但不更改reading_position、prompt_position或可靠性。手动提示仍为`manual_prompt`。暂停/结束/重新定位及generation规则继续生效。
+
+progress在静音路径之外依据有效讲稿进度到期接管，即使持续speaking/pending_voice也不无限等待；实际PCM未到、超过5秒断流、未就绪、排队/推理在途、故障和末尾保持保护。已有accepted partial先结算，确有推进则重计时。有未撤回可靠锚点时起点是其下一个完整内容单位，不可靠起点是已保存prompt_position，`prompt_start_reason`标明原因，播报不能伪造用户位置。
+
+默认progress每次停滞只自动提示一段；`continuous_prompt=false`时正常播完后等待真实新进度。开启后才每段完整等待再代读；silence保持既有静音续播行为。浏览器播报期间停止采音，没有自动开口打断。
+
 ## 识别就绪与回退诊断
 
 快照包含stt_ready:boolean。LISTENING且false表示仍在连接/初始化；客户端应等待true再启用PCM并发送audio_ready，服务端只从实际收音就绪后计算静音。旧客户端提前确认不会启动不就绪的传输，当前客户端不会丢弃首句。取消、暂停和新generation拒绝旧ready返回。
@@ -57,11 +70,11 @@ stt_fallback_reason为null或受控对象，字段error_code、stage、http_stat
 
 ## 静音策略与实时处理诊断
 
-快照silence_prompt_policy=saved_position表示：有效静音到期后，先结算已接受草稿；位置仍不可靠则从保存prompt_position播报（transition_trigger=recognition_wait_timeout），不伪造新朗读位置、恢复成功或可靠分数。音频未就绪、断流、排队未处理、当前人声和全文末尾不满足提示条件。
+快照silence_prompt_policy=saved_position表示：有效静音到期后，先结算已接受草稿；位置仍不可靠则从保存prompt_position播报（transition_trigger=recognition_wait_timeout），不伪造新朗读位置、恢复成功或可靠分数。音频未就绪、断流、排队未处理、当前人声和全文末尾不满足静音模式提示条件。progress模式到期规则见会话提示选项。
 
-服务端在识别中每秒最多发送一个小事件：type=audio_diagnostics、session_id、generation、diagnostics。diagnostics含prompt_wait_reason、silence_elapsed_ms/remaining_ms、last_audio_received_age_ms、audio_queued_ms、audio_inference_ms、audio_batch_frames、audio_ready、pending_voice、audio_inflight。首次快照也包含这些字段；无实际PCM或尚未开始静音时计时为null。前端只合并当前会话/代际的监听诊断，事件不含音频、全文、units或设备标识。
+服务端在识别中每秒最多发送一个小事件：type=audio_diagnostics、session_id、generation、diagnostics。diagnostics含prompt_wait_reason、silence_elapsed_ms/remaining_ms、progress_elapsed_ms/progress_remaining_ms、last_progress_source、progress_prompt_armed、last_audio_received_age_ms、audio_queued_ms、audio_inference_ms、audio_batch_frames、audio_ready、pending_voice、audio_inflight。快照另含prompt_mode、progress_timeout_ms、continuous_prompt、prompt_start_reason，首次快照也包含这些字段；无实际PCM或尚未开始静音时计时为null。前端只合并当前会话/代际的监听诊断，事件不含音频、全文、units或设备标识。
 
-prompt_wait_reason区分inactive、stt_connecting、audio_not_ready、audio_missing、audio_backlog、audio_processing、voice_active、voice_pending、at_end、silence_wait、recognition_settling、ready。云端result超时与静音等待是独立计时，result超时可回退本地，不能单凭raw文字不变断定当前是静音。
+prompt_wait_reason区分inactive、stt_connecting、audio_not_ready、audio_missing、audio_backlog、audio_processing、voice_active、voice_pending、at_end、silence_wait、recognition_settling、ready，以及progress_wait、awaiting_progress。云端result超时与静音等待是独立计时，result超时可回退本地，不能单凭raw文字不变断定当前是静音。
 
 ## 删除讲稿契约
 

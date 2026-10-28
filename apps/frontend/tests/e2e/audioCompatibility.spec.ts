@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { test, expect, type Page } from '@playwright/test'
 
 interface AudioCompatibilityTrace {
@@ -88,7 +89,7 @@ async function startFakeDeviceSession(page: Page, name: string) {
 
 async function endSession(page: Page) {
   const end = page.getByRole('button', { name: '结束', exact: true })
-  if (await end.isVisible() && await end.isEnabled()) await end.click()
+  if (await end.isVisible() && await end.isEnabled()) { await end.click(); await confirmSessionEnd(page) }
 }
 
 test('native fake-device capture matches its reported rate and restarts after its context is suspended', async ({ page }) => {

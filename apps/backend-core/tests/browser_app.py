@@ -27,12 +27,15 @@ class BrowserStream:
     available = True
     effective_provider = "local"
 
-    def __init__(self, *, silent=False):
+    def __init__(self, *, silent=False, progress_noise=False):
         self.frames = 0
         self.silent = silent
+        self.progress_noise = progress_noise
         self.acoustic_vad = False
 
     def is_speech(self, pcm):
+        if self.progress_noise:
+            return True
         if self.acoustic_vad:
             # Selected speech scenarios explicitly label their finite synthetic
             # tones as voice. Zero PCM still remains unvoiced after each burst.
@@ -44,6 +47,8 @@ class BrowserStream:
 
     def accept_pcm(self, pcm):
         self.frames += 1
+        if self.progress_noise:
+            return None
         if not self.silent and self.frames == 3:
             return RecognitionUpdate("大家好", is_final=True, segment_id=0)
         return None
@@ -54,6 +59,7 @@ class BrowserStream:
 
 class BrowserSpeech(ProviderSpeechServices):
     silent = False
+    progress_noise = False
 
     def _local_stt_ready(self):
         return True
@@ -64,7 +70,7 @@ class BrowserSpeech(ProviderSpeechServices):
         return result
 
     def create_stream(self, provider_name=None, turn_token=None):
-        local = BrowserStream(silent=self.silent)
+        local = BrowserStream(silent=self.silent, progress_noise=self.progress_noise)
         if (provider_name or self.provider_name) == "local":
             return local
         remote = self.registry.provider(provider_name or self.provider_name)
@@ -361,3 +367,10 @@ async def mock_ui_defaults(payload: dict[str, int]):
     for name, value in payload.items():
         setattr(app.state.settings, name, value)
     return {name: getattr(app.state.settings, name) for name in names}
+
+
+@app.post("/mock/progress-noise")
+async def progress_noise_mode(payload: dict[str, bool]):
+    """Test-only sustained detector-positive input without transcript updates."""
+    app.state.speech_services.progress_noise = payload.get("enabled") is True
+    return {"enabled": app.state.speech_services.progress_noise}

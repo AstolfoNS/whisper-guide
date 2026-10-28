@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # FastAPI's multipart parser accepts at most 1000 files per request.
     script_max_upload_files: int = Field(default=10, gt=0, le=1000)
     default_silence_timeout_ms: int = Field(default=3000, ge=1000)
+    default_prompt_mode: Literal["silence", "progress"] = "silence"
+    default_progress_timeout_ms: int = Field(default=4000, ge=2000, le=10000)
+    default_continuous_prompt: bool = False
     speech_model_dir: Path = (
         BACKEND_ROOT / "models" / "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
     )

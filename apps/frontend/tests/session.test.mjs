@@ -59,3 +59,12 @@ test('session client omits an untouched timeout so the backend applies its envir
   assert.deepEqual(JSON.parse(Socket.last.sent[0]), { type: 'prepare', script_id: 'script-id' })
   client.close()
 })
+
+test('session client sends explicit progress preferences without changing their types', async () => {
+  const client = new SessionClient(() => {}, () => {})
+  await client.connect()
+  client.prepare('script-id', undefined, undefined, { prompt_mode: 'progress', progress_timeout_ms: 4500, continuous_prompt: false })
+  assert.deepEqual(JSON.parse(Socket.last.sent[0]), { type: 'prepare', script_id: 'script-id',
+    prompt_mode: 'progress', progress_timeout_ms: 4500, continuous_prompt: false })
+  client.close()
+})

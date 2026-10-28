@@ -16,6 +16,9 @@ def public_defaults(title):
     return {
         "app_title": title,
         "default_silence_timeout_ms": 3000,
+        "default_prompt_mode": "silence",
+        "default_progress_timeout_ms": 4000,
+        "default_continuous_prompt": False,
         "script_max_file_bytes": 2097152,
         "script_max_upload_files": 10,
     }
@@ -105,6 +108,9 @@ def test_environment_ui_defaults_are_public_and_survive_model_profile_loading(
         assert response.json() == {
             "app_title": "whisper-guide",
             "default_silence_timeout_ms": 1500,
+            "default_prompt_mode": "silence",
+            "default_progress_timeout_ms": 4000,
+            "default_continuous_prompt": False,
             "script_max_file_bytes": 4194304,
             "script_max_upload_files": 15,
         }

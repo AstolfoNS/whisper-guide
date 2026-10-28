@@ -4,7 +4,10 @@ import { NAlert, NButton, NPopconfirm } from 'naive-ui'
 import { useSessionStore } from '../../stores/session'
 import { getSessionController } from '../../services/sessionController'
 import { refreshHealth } from '../../services/healthMonitor'
+import { useMediaQuery } from '../../composables/useMediaQuery'
 const session = useSessionStore()
+const mobile = useMediaQuery('(max-width: 700px)')
+const expanded = ref(false)
 const error = ref('')
 const busy = ref(false)
 async function finish(id: string) {
@@ -25,8 +28,9 @@ async function finish(id: string) {
 </script>
 <template>
   <section v-if="session.recoverableSessions.length" class="recovery-panel" aria-label="可恢复会话">
-    <NAlert title="有可恢复的会话" type="info" :show-icon="false">
-      <div class="recovery-list">
+    <NAlert  :title="mobile ? `有 ${session.recoverableSessions.length} 个可恢复会话` : '有可恢复的会话'" type="info" :show-icon="false">
+      <NButton v-if="mobile" class="recovery-toggle" :aria-expanded="expanded" @click="expanded = !expanded">{{ expanded ? '收起会话' : `查看 ${session.recoverableSessions.length} 个会话` }}</NButton>
+      <div v-if="!mobile || expanded" class="recovery-list">
         <div v-for="item in session.recoverableSessions" :key="item.session_id" class="recovery-row">
           <span class="recovery-summary">{{ item.script_name }} · {{ item.state === 'PAUSED' ? '已暂停' : '待开始' }}</span>
           <div class="recovery-actions">
@@ -47,7 +51,7 @@ async function finish(id: string) {
 .recovery-row:last-child{padding-bottom:0}
 .recovery-summary{min-width:0;overflow-wrap:anywhere;line-height:1.7}
 .recovery-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;max-width:100%}
-.recovery-error{margin:12px 0 0}
+.recovery-error{margin:12px 0 0}.recovery-toggle{margin-top:10px;min-height:44px}
 @media(max-width:700px){.recovery-panel{padding:20px 16px 0}}
 @media(max-width:600px){.recovery-row{grid-template-columns:minmax(0,1fr);gap:12px}.recovery-actions{justify-content:flex-start}}
 </style>

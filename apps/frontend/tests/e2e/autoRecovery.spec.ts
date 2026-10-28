@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import type { SessionSnapshot } from '../../src/api/session'
@@ -101,7 +102,7 @@ test('recovers across 600 script units after noise and resumes automatic prompti
     console.log(`noise mismatch → confirming → reliable at ${expectedPosition}; automatic prompt after ${prompted.receivedAt - lastVoiceAt}ms silence; no manual reposition or prompt; audio=${receivedAudio}`)
   } finally {
     const end = page.getByRole('button', { name: '结束', exact: true })
-    if (await end.isVisible() && await end.isEnabled()) await end.click()
+    if (await end.isVisible() && await end.isEnabled()) { await end.click(); await confirmSessionEnd(page) }
     await page.request.post('http://127.0.0.1:8010/mock/silence', { data: { enabled: false } })
     await page.request.post('/api/settings/model-configs/local-default/activate')
     await page.request.delete(`/api/settings/model-configs/${profile.id}`)

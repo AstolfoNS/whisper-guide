@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { useMediaQuery } from '../../composables/useMediaQuery'
 import { NButton, NSlider, NSwitch } from 'naive-ui'
 import type { SessionSnapshot } from '../../api/session'
 const props = defineProps<{ text: string; snapshot?: SessionSnapshot }>()
-const fontSize = ref(32)
+const mobile = useMediaQuery('(max-width: 700px)')
+const fontSize = ref(mobile.value ? 28 : 32)
 const follow = ref(true)
 const atEnd = computed(() => props.snapshot?.state === 'LISTENING' && props.snapshot.at_end && props.snapshot.reliable && !props.snapshot.speaking)
 const viewport = ref<HTMLElement>()
@@ -42,7 +44,7 @@ function returnToCursor() { follow.value = true; void scrollToCursor() }
 <template>
   <section class="teleprompter" aria-label="讲稿双游标视图">
     <div class="prompter-toolbar">
-      <span class="cursor-key"><span class="reading-swatch"></span>确认朗读 <span class="prompt-swatch"></span>提示起点 <template v-if="provisionalPosition != null"><span class="provisional-swatch"></span>临时定位（待确认）</template></span>
+      <span class="cursor-key" aria-label="游标图例"><span class="reading-swatch"></span>确认朗读 <span class="prompt-swatch"></span>提示起点 <template v-if="provisionalPosition != null"><span class="provisional-swatch"></span>临时定位（待确认）</template></span>
       <label class="font-control">字号 <NSlider v-model:value="fontSize" :min="24" :max="56" :step="2" aria-label="讲稿字号" /></label>
       <label class="follow-control">跟随 <NSwitch v-model:value="follow" aria-label="自动跟随游标" /></label>
     </div>
@@ -56,4 +58,16 @@ function returnToCursor() { follow.value = true; void scrollToCursor() }
 </template>
 <style scoped>
 .teleprompter{position:relative;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}.prompter-toolbar{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);flex-wrap:wrap}.cursor-key{display:flex;align-items:center;gap:7px}.reading-swatch,.prompt-swatch,.provisional-swatch{width:11px;height:11px;background:var(--cursor-reading);border:1px solid var(--accent);border-radius:2px}.prompt-swatch{background:var(--cursor-prompt);border-color:var(--warning)}.provisional-swatch{background:transparent;border:1px dashed var(--focus)}.provisional-cursor{border-bottom:3px dashed var(--focus);border-radius:2px}.font-control{display:flex;align-items:center;gap:8px;width:150px}.font-control .n-slider{flex:1}.follow-control{display:flex;align-items:center;gap:8px}.prompter-body{position:relative;height:min(54vh,560px);min-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:28px 32px 50px;line-height:1.9;letter-spacing:.02em;scrollbar-gutter:stable}.prompter-body p{margin:0 0 .6em}.reading-cursor{background:var(--cursor-reading);box-shadow:0 2px 0 var(--accent);border-radius:3px}.prompt-cursor{outline:2px solid var(--warning);outline-offset:1px;border-radius:3px}.end-note{margin:0;padding:10px 18px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}.empty-text{color:var(--muted);font-size:20px}.return-cursor{position:absolute;bottom:14px;right:18px}@media(max-width:700px){.prompter-body{padding:18px;min-height:300px}.font-control{width:120px}}
+
+@media(max-width:700px){
+  .teleprompter{display:flex;flex-direction:column;min-height:0}
+  .prompter-toolbar{gap:10px;padding:10px 12px;flex-shrink:0}
+  .cursor-key{flex-basis:100%;flex-wrap:wrap;gap:6px;line-height:1.7}
+  .font-control{width:min(180px,65%);min-height:36px}
+  .follow-control{min-height:36px;margin-left:auto}
+  .prompter-body{height:auto;min-height:0;flex:1;padding:16px 14px calc(112px + env(safe-area-inset-bottom, 0px));line-height:1.75;scrollbar-gutter:auto}
+  .return-cursor{bottom:12px;right:12px;min-height:44px}
+  .end-note{padding:8px 12px}
+}
+
 </style>

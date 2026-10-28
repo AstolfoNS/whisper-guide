@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { useSyntheticMicrophone } from './syntheticMicrophone'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
@@ -47,6 +48,7 @@ test('configures independent cloud ASR and text LLM, aligns WS final and release
   await page.getByRole('button', { name: '暂停演讲', exact: true }).click()
   await expect(page.getByRole('button', { name: '继续演讲', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '结束', exact: true }).click()
+  await confirmSessionEnd(page)
   await expect(page.getByText('已结束', { exact: true })).toBeVisible()
   expect((await page.request.post('/api/settings/model-configs/local-default/activate')).ok()).toBe(true)
   expect((await page.request.delete(`/api/settings/model-configs/${profile.id}`)).ok()).toBe(true)
@@ -71,6 +73,7 @@ test('an unavailable cloud credential falls back to local without pausing the se
   await expect(page.getByText('云端识别已回退本地', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: '结束', exact: true }).click()
+  await confirmSessionEnd(page)
   await expect(page.getByText('已结束', { exact: true })).toBeVisible()
   expect((await page.request.post('/api/settings/model-configs/local-default/activate')).ok()).toBe(true)
   expect((await page.request.delete(`/api/settings/model-configs/${profile.id}`)).ok()).toBe(true)

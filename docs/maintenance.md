@@ -29,7 +29,7 @@ docker compose build && docker compose up -d --force-recreate --wait --wait-time
 docker compose --env-file .env up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
 ```
 
-刷新页面后查看公开配置（只包含标题、静音默认和上传限制，不含模型凭据）：
+刷新页面后查看公开配置（包含标题、提示模式/等待/持续代读默认和上传限制，不含模型凭据）：
 
 ```bash
 curl -fsS http://localhost:8080/api/app-config

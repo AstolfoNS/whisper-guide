@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { test, expect } from '@playwright/test'
 import type { SessionSnapshot } from '../../src/api/session'
 
@@ -91,7 +92,7 @@ test('a cloud result timeout still prompts from the saved anchor after untranscr
     console.log(`cloud result timeout=1000ms → local; raw unchanged; unreliable reading=2; saved prompt=4; live silence=${prompted.at - input.lastVoiceAt}ms; automatic audio=${audio}`)
   } finally {
     const end = page.getByRole('button', { name: '结束', exact: true })
-    if (await end.isVisible() && await end.isEnabled()) await end.click()
+    if (await end.isVisible() && await end.isEnabled()) { await end.click(); await confirmSessionEnd(page) }
     await page.request.post('/api/settings/model-configs/local-default/activate')
     await page.request.delete(`/api/settings/model-configs/${profile.id}`)
   }

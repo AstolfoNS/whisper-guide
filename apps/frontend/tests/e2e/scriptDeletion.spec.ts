@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { test, expect } from '@playwright/test'
 import { useSyntheticMicrophone } from './syntheticMicrophone'
 
@@ -105,6 +106,7 @@ test('confirms script deletion and protects the bound document until its session
     expect((await paused.json()).detail.code).toBe('SCRIPT_IN_USE')
 
     await page.getByRole('button', { name: '结束', exact: true }).click()
+  await confirmSessionEnd(page)
     await expect(page.getByText('已结束', { exact: true })).toBeVisible()
     await expect(deleteButton(aName)).toBeEnabled()
     await confirmDelete(aName)

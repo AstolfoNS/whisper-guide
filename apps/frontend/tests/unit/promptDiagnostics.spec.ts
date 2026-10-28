@@ -5,7 +5,7 @@ import SessionControls from '../../src/components/studio/SessionControls.vue'
 import ServiceHealthBar from '../../src/components/health/ServiceHealthBar.vue'
 import TranscriptComparison from '../../src/components/studio/TranscriptComparison.vue'
 import { useSessionStore } from '../../src/stores/session'
-import { promptWaitLabel, silenceTimingLabel } from '../../src/services/promptDiagnostics'
+import { promptWaitLabel, silenceTimingLabel, progressTimingLabel } from '../../src/services/promptDiagnostics'
 import type { SessionSnapshot } from '../../src/api/session'
 vi.mock('../../src/services/sessionController', () => ({ getSessionController: () => ({}) }))
 const wrappers: VueWrapper[] = []
@@ -58,4 +58,23 @@ it('keeps missing clock values explicit and does not infer silence from a stale 
   expect(silenceTimingLabel()).toBe('尚未开始')
   expect(promptWaitLabel()).toBe('')
   expect(silenceTimingLabel(current({ silence_elapsed_ms: 4000 }))).toBe('已静音 3000 / 3000 ms')
+})
+
+it('uses only the server progress countdown and explains one-shot waiting', () => {
+  const snapshot = current({ prompt_mode: 'progress', progress_timeout_ms: 4000,
+    progress_elapsed_ms: 1800, progress_remaining_ms: 2200, progress_prompt_armed: true, prompt_wait_reason: 'voice_active' })
+  expect(promptWaitLabel(snapshot)).toBe('等待讲稿有效推进')
+  expect(progressTimingLabel(snapshot)).toBe('进度未推进 · 2.2 秒后提示')
+  expect(progressTimingLabel({ ...snapshot, progress_remaining_ms: -50 })).toContain('0.0 秒')
+  expect(promptWaitLabel({ ...snapshot, progress_prompt_armed: false })).toContain('等待继续朗读')
+  expect(progressTimingLabel({ ...snapshot, progress_prompt_armed: false })).toBe('本轮自动提示已完成')
+  expect(promptWaitLabel({ ...snapshot, prompt_wait_reason: 'audio_backlog' })).toContain('积压音频')
+})
+
+it('keeps uncertain progress mode feedback explicit instead of claiming a next recognized character', () => {
+  const wrapper = mount(TranscriptComparison, { props: { snapshot: current({ prompt_mode: 'progress',
+    progress_prompt_armed: true, reliable: false, alignment_status: 'mismatch' }) } })
+  wrappers.push(wrapper)
+  expect(wrapper.text()).toContain('从已保存的提示起点播报')
+  expect(wrapper.text()).toContain('不把系统播报视为用户已读')
 })

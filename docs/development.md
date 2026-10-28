@@ -116,12 +116,15 @@ Compose的导出Shell变量仍优先于.env；例如当前终端曾export同名�
 
 ### 启动参数与页面默认值
 
-这些字段不属于持久模型方案。修改运行参数后重新创建容器或重启直接运行的后端；标题、静音默认和上传限制由页面刷新获取，其他字段由各自后端/编排消费者读取。已有会话参数和用户当前编辑值不会被迟到配置覆盖。
+这些字段不属于持久模型方案。修改运行参数后重新创建容器或重启直接运行的后端；标题、会话提示默认和上传限制由页面刷新获取，其他字段由各自后端/编排消费者读取。已有会话参数和用户当前编辑值不会被迟到配置覆盖。
 
 | 变量 | 当前消费者与规则 |
 |---|---|
 | WHISPER_GUIDE_APP_TITLE | 后端OpenAPI标题与公开页面标题，空白回退whisper-guide；前端运行时读取 |
 | WHISPER_GUIDE_DEFAULT_SILENCE_TIMEOUT_MS | 新会话初始静音等待，默认3000且>=1000整数；通过公开配置同步工作台，创建会话使用相同值；手动设置和恢复会话保留自身参数 |
+| WHISPER_GUIDE_DEFAULT_PROMPT_MODE | 新会话提示模式，silence（默认）或progress；进度模式允许有声无进展时接管 |
+| WHISPER_GUIDE_DEFAULT_PROGRESS_TIMEOUT_MS | 新会话进度等待，默认4000，整数2000–10000；与静音和云端超时独立 |
+| WHISPER_GUIDE_DEFAULT_CONTINUOUS_PROMPT | 进度模式是否持续代读，默认false；静音模式保持原逐段静音续播 |
 | WHISPER_GUIDE_SCRIPT_MAX_FILE_BYTES | 单份讲稿上传上限，正整数；默认2097152。后端强制校验，页面同步显示和预检查 |
 | WHISPER_GUIDE_SCRIPT_MAX_UPLOAD_FILES | 单次上传数量上限，1–1000整数；默认10，超过框架multipart上限会在启动时拒绝配置。后端强制校验，页面同步预检查 |
 | WHISPER_GUIDE_CORS_ORIGINS | 后端允许的HTTP来源JSON数组；不提供身份认证，不替代HTTPS或反向代理访问控制 |

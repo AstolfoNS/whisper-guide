@@ -67,6 +67,7 @@ function triggerLabel(value: string) {
     user_speech_started: '检测到人声',
     silence_threshold_reached: '达到静音阈值',
     recognition_wait_timeout: '静音到期，按保存起点提示',
+    progress_timeout: '讲稿进度等待到期',
     prompt_audio_finished: '提示音播放完成',
     user_paused: '用户暂停',
     user_resumed: '用户继续',

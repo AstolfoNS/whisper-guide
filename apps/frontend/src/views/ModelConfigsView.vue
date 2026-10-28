@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { NAlert, NButton, NModal, NPopconfirm, NTag } from 'naive-ui'
 import ModelConfigList from '../components/models/ModelConfigList.vue'
@@ -12,7 +12,10 @@ import {
 } from '../api/modelConfigs.ts'
 import { useModelConfigsStore } from '../stores/modelConfigs'
 import { useSessionStore } from '../stores/session'
+import { useMediaQuery } from '../composables/useMediaQuery'
 
+const mobile = useMediaQuery('(max-width: 700px)')
+const mobileEditor = ref(false)
 const store = useModelConfigsStore()
 const session = useSessionStore()
 const selected = ref<ModelConfig>()
@@ -45,6 +48,8 @@ function apply(profile?: ModelConfig) {
   draft.value = modelConfigDraft(profile)
   baseline.value = JSON.stringify(draft.value)
   editorVisible.value = true
+  mobileEditor.value = true
+  if (mobile.value) void nextTick(() => document.getElementById('profile-editor-title')?.focus())
   testResult.value = undefined
 }
 
@@ -70,7 +75,9 @@ function settleDiscard(discard: boolean) {
 }
 
 async function selectProfile(id: string) {
-  if (locked.value || id === selected.value?.id || !await confirmDiscard()) return
+  if (locked.value) return
+  if (id === selected.value?.id) { mobileEditor.value = true; return }
+  if (!await confirmDiscard()) return
   busy.value = true
   error.value = ''
   notice.value = ''
@@ -228,7 +235,14 @@ onBeforeRouteLeave(async () => {
   if (discard) cancelDiscovery()
   return discard
 })
-onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void refresh() })
+function returnToList() {
+  mobileEditor.value = false
+  void nextTick(() => document.querySelector<HTMLButtonElement>('.profile-item--selected')?.focus())
+}
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnload)
+  void refresh().finally(() => { if (mobile.value) mobileEditor.value = false })
+})
 onBeforeUnmount(() => {
   cancelDiscovery()
   controller?.abort()
@@ -248,10 +262,11 @@ onBeforeUnmount(() => {
     <NAlert v-if="error || store.error" type="error" :show-icon="false" role="alert" class="model-page__notice">{{ error || store.error }}</NAlert>
     <NAlert v-if="notice" type="success" :show-icon="false" role="status" class="model-page__notice">{{ notice }}</NAlert>
     <div class="model-page__layout">
-      <ModelConfigList :profiles="store.profiles" :selected-id="selected?.id" :loading="store.loading" :busy="locked" :create-disabled="!store.storeAvailable" @select="selectProfile" @create="newProfile" />
-      <article v-if="editorVisible" class="profile-editor" :aria-busy="locked" aria-labelledby="profile-editor-title">
+      <ModelConfigList v-show="!mobile || !mobileEditor" :profiles="store.profiles" :selected-id="selected?.id" :loading="store.loading" :busy="locked" :create-disabled="!store.storeAvailable" @select="selectProfile" @create="newProfile" />
+      <article v-if="editorVisible" v-show="!mobile || mobileEditor" class="profile-editor" :aria-busy="locked" aria-labelledby="profile-editor-title">
+        <NButton v-if="mobile" class="profile-back" :disabled="locked" @click="returnToList">返回配置列表</NButton>
         <header class="profile-editor__heading">
-          <div><h2 id="profile-editor-title">{{ selected ? selected.name : '新建配置' }}</h2><p v-if="selected" class="profile-meta">版本 {{ selected.revision }}<span v-if="selected.is_active"> · 生效版本 {{ selected.active_revision }}</span></p></div>
+          <div><h2 id="profile-editor-title" tabindex="-1">{{ selected ? selected.name : '新建配置' }}</h2><p v-if="selected" class="profile-meta">版本 {{ selected.revision }}<span v-if="selected.is_active"> · 生效版本 {{ selected.active_revision }}</span></p></div>
           <div class="profile-editor__tags"><NTag v-if="dirty" size="small" :bordered="false" type="warning">未保存</NTag><NTag v-if="selected?.is_active" size="small" :bordered="false" type="success">当前生效</NTag></div>
         </header>
         <NAlert v-if="selected?.is_default" type="info" :show-icon="false" class="profile-session-notice">内置本地方案用于恢复离线识别。请复制后编辑自定义方案。</NAlert><NAlert v-if="!store.storeAvailable" type="error" :show-icon="false" class="profile-session-notice">配置存储当前不可写。原文件已保留，请检查服务端日志并恢复配置后刷新。</NAlert><NAlert v-if="session.active" type="info" :show-icon="false" class="profile-session-notice">当前会话尚未结束，可编辑和测试方案。结束会话后才能激活配置。</NAlert>
@@ -267,7 +282,7 @@ onBeforeUnmount(() => {
         </footer>
         <p v-if="dirty && selected" class="profile-meta">请先保存修改，再设为生效配置。</p>
       </article>
-      <div v-else class="profile-empty"><p>{{ store.loading ? '正在读取配置…' : '选择配置方案，或新建一套配置。' }}</p><NButton v-if="store.error" :disabled="locked" @click="refresh">重新读取</NButton></div>
+      <div v-else v-show="!mobile" class="profile-empty"><p>{{ store.loading ? '正在读取配置…' : '选择配置方案，或新建一套配置。' }}</p><NButton v-if="store.error" :disabled="locked" @click="refresh">重新读取</NButton></div>
     </div>
     <NModal v-model:show="showUnsaved" preset="dialog" title="存在未保存的修改" positive-text="放弃修改" negative-text="继续编辑" :mask-closable="false" :closable="false" @positive-click="settleDiscard(true)" @negative-click="settleDiscard(false)" @esc="settleDiscard(false)">切换后将丢弃当前表单，已保存的配置不受影响。</NModal>
   </section>
@@ -295,4 +310,22 @@ onBeforeUnmount(() => {
 .profile-empty { display:grid; place-content:center; min-height:320px; color:var(--muted); background:var(--surface); border:1px dashed var(--line); border-radius:12px; text-align:center; }
 @media (max-width:900px) { .model-page__layout { grid-template-columns:250px minmax(0,1fr); gap:16px; } .profile-editor { padding:20px; } }
 @media (max-width:700px) { .model-page{padding:20px 16px;} .model-page__layout { grid-template-columns:1fr; } .profile-editor { padding:18px; } .model-page__heading { align-items:flex-start; } }
+
+.profile-back{margin-bottom:18px}
+@media(max-width:700px){
+  .model-page{padding:18px 12px max(20px,env(safe-area-inset-bottom))}
+  .model-page__heading{gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  .model-page__heading>div{min-width:0}
+  .model-page__heading h1{font-size:24px}
+  .model-page__heading p{font-size:13px;overflow-wrap:anywhere}
+  .profile-editor{padding:16px;min-width:0}
+  .profile-editor__heading{flex-wrap:wrap;gap:10px}
+  .profile-editor__tags{flex-wrap:wrap}
+  .profile-actions{position:sticky;bottom:0;background:var(--surface);padding:14px 0 max(14px,env(safe-area-inset-bottom));z-index:2}
+  .profile-actions>div{width:100%}
+  .profile-actions>div:last-child{display:grid;grid-template-columns:1fr 1fr}
+  .profile-actions .n-button{min-height:44px;white-space:normal;min-width:0}
+  .profile-back{min-height:44px}
+}
+
 </style>

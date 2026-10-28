@@ -16,6 +16,12 @@ const alignmentStatus = computed(() => {
   const snapshot = props.snapshot
   if (!snapshot || snapshot.state !== 'LISTENING') return ''
   if (snapshot.stt_ready === false) return '正在连接语音识别，请稍候再朗读。'
+  if (snapshot.prompt_mode === 'progress') {
+    if (snapshot.progress_prompt_armed === false) return '本轮已提示一个短句；继续朗读可重新启用自动提示，也可点击“再等一下”开始新的等待。'
+    if (snapshot.alignment_status === 'mismatch' || snapshot.reading_position == null) return '进度等待到期后从已保存的提示起点播报；位置尚未确认，不把系统播报视为用户已读。'
+    if (!positionReliable.value) return '本轮声音尚未确认；进度等待到期后按最后可信锚点提示，不把系统播报视为用户已读。'
+    return '进度持续未推进时，从下一个完整内容单位提示；噪音或重复文字不会重置等待。'
+  }
   if (snapshot.silence_prompt_policy === 'saved_position' && !positionReliable.value) {
     if (snapshot.speaking) return '正在接收语音；位置尚未确认，停止讲话并达到静音等待后从已保存的提示起点播报。'
     return recovery.value || '本轮位置尚未确认；静音等待到期后从已保存的提示起点播报，不把该起点认定为新的朗读位置。'

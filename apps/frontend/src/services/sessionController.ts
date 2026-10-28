@@ -30,6 +30,7 @@ export class SessionController {
   private lastFeedback = -1
   private destroyed = false
   private inStudio = false
+  private backgroundSuspended = false
 
   constructor(private store: Store, dependencies: SessionDependencies = {}) {
     try { this.store.recoverySessionId = sessionStorage.getItem('whisper-guide:session-id') ?? '' } catch { /* Optional metadata only. */ }
@@ -40,7 +41,7 @@ export class SessionController {
   }
   enterStudio() { this.inStudio = true }
   private ensure(operation: number) {
-    if (operation !== this.operation || this.destroyed || !this.inStudio) throw new Error('操作已取消。')
+    if (operation !== this.operation || this.destroyed || !this.inStudio || this.backgroundSuspended) throw new Error('操作已取消。')
   }
   private stopCapture() {
     const microphoneFailed = this.store.microphone === 'error'
@@ -71,6 +72,7 @@ export class SessionController {
   }
   private validTimeout() {
     if (!Number.isInteger(this.store.silenceTimeout) || this.store.silenceTimeout < 1000) throw new Error('静音等待时间必须为不小于 1000 毫秒的整数。')
+    if (!Number.isInteger(this.store.progressTimeout) || this.store.progressTimeout < 2000 || this.store.progressTimeout > 10000) throw new Error('进度等待时间必须为 2000–10000 毫秒的整数。')
   }
   private disconnected = () => {
     this.stopCapture(); this.stopPrompt()
@@ -107,14 +109,14 @@ export class SessionController {
       } catch { /* Recording and transcripts are never stored. */ }
       if (this.pendingState && next.state === this.pendingState && next.generation >= this.minimumGeneration) this.pendingState = undefined
       this.store.localPaused = this.pendingState === 'PAUSED'
-      this.store.silenceTimeout = next.silence_timeout_ms
+      this.store.restoreOptions(next)
       if (next.feedback_id !== this.lastFeedback) {
         this.lastFeedback = next.feedback_id
         this.store.notice = next.transition_trigger === 'user_paused' ? '' : next.message ?? ''
       }
       if (next.state === 'LISTENING') {
         this.stopPrompt()
-        if (!this.inStudio) this.pause()
+        if (!this.inStudio || this.backgroundSuspended) this.pause(this.backgroundSuspended ? '页面已切到后台，已暂停；返回后点击继续演讲。' : '')
         else if (next.stt_ready === false) {
           this.captureAttempt++
           this.captureGeneration = -1
@@ -132,7 +134,7 @@ export class SessionController {
       }
       return
     }
-    if (event.type === 'audio' && this.inStudio && this.store.state === 'PROMPTING' && event.prompt_id === this.expectedPrompt) {
+    if (event.type === 'audio' && this.inStudio && !this.backgroundSuspended && this.store.state === 'PROMPTING' && event.prompt_id === this.expectedPrompt) {
       const id = event.prompt_id
       useHealthStore().playback = 'pending'
       useHealthStore().playbackDetail = ''
@@ -160,7 +162,7 @@ export class SessionController {
   }
   private sendFrame = (frame: ArrayBuffer) => {
     const snapshot = this.store.snapshot
-    if (!this.destroyed && this.inStudio && this.store.state === 'LISTENING'
+    if (!this.destroyed && this.inStudio && !this.backgroundSuspended && this.store.state === 'LISTENING'
       && this.store.microphone === 'active' && snapshot?.stt_ready !== false
       && snapshot?.id === this.captureSessionId && snapshot.generation === this.captureGeneration) {
       this.client.sendAudio(frame)
@@ -185,13 +187,13 @@ export class SessionController {
   }
   private async enableCapture(next: SessionSnapshot) {
     if (next.stt_ready === false || (this.captureGeneration === next.generation && this.captureSessionId === next.id)
-      || !this.inStudio || this.destroyed) return
+      || !this.inStudio || this.destroyed || this.backgroundSuspended) return
     this.microphone.setEnabled(false)
     this.store.microphone = 'idle'
     this.captureGeneration = next.generation
     this.captureSessionId = next.id
     const attempt = ++this.captureAttempt
-    const current = () => attempt === this.captureAttempt && !this.destroyed && this.inStudio
+    const current = () => attempt === this.captureAttempt && !this.destroyed && this.inStudio && !this.backgroundSuspended
       && this.store.state === 'LISTENING' && this.store.snapshot?.id === next.id
       && this.store.snapshot.generation === next.generation && this.store.snapshot.stt_ready !== false
     try {
@@ -213,6 +215,7 @@ export class SessionController {
   }
   async start() {
     if (this.store.busy || !this.store.selectedScript || !['READY', 'TERMINATED'].includes(this.store.state)) return
+    this.backgroundSuspended = false
     const operation = ++this.operation
     this.store.busy = true; this.store.error = ''
     try {
@@ -221,7 +224,7 @@ export class SessionController {
       void this.preparePlayback(operation)
       this.store.microphone = 'requesting'
       try { await this.openMicrophone() }
-      catch (error) { this.store.microphone = 'error'; throw error }
+      catch (error) { if (operation === this.operation) this.store.microphone = 'error'; throw error }
       this.ensure(operation)
       await this.store.initializeDefaults()
       this.ensure(operation)
@@ -231,9 +234,9 @@ export class SessionController {
       if (!this.store.snapshot || this.store.snapshot.state === 'TERMINATED') {
         this.minimumGeneration = -1; this.pendingState = undefined
         const ready = this.client.waitFor(s => s.state === 'READY')
-        this.client.prepare(this.store.selectedScript.id, this.store.newSessionTimeout())
+        this.client.prepare(this.store.selectedScript.id, this.store.newSessionTimeout(), undefined, this.store.newSessionOptions())
         await ready
-      } else this.client.send({ type: 'configure', silence_timeout_ms: this.store.silenceTimeout })
+      } else this.client.send({ type: 'configure', silence_timeout_ms: this.store.silenceTimeout, ...this.store.currentSessionOptions() })
       this.ensure(operation)
       const listening = this.client.waitFor(s => s.state === 'LISTENING')
       this.client.send({ type: 'start' })
@@ -244,6 +247,18 @@ export class SessionController {
       if (microphoneFailed) this.store.microphone = 'error'
       if (operation === this.operation && !this.destroyed) this.store.error = error instanceof Error ? error.message : '无法开始会话。'
     } finally { this.store.busy = false }
+  }
+  suspendForBackground(reason = '页面已切到后台，已暂停；返回后点击继续演讲。') {
+    this.backgroundSuspended = true
+    if (['LISTENING', 'PROMPTING'].includes(this.store.state)) {
+      this.pause(reason)
+      return
+    }
+    // Permission, connection and output-unlock promises may still be pending in
+    // READY/PAUSED. Invalidate them even when there is no active server turn.
+    this.operation++
+    this.stopCapture(); this.stopPrompt()
+    if (this.store.busy || this.store.active) this.store.error = reason
   }
   pause(reason = '') {
     if (!['LISTENING', 'PROMPTING'].includes(this.store.state)) return
@@ -259,7 +274,11 @@ export class SessionController {
   }
   async resume() {
     if (this.store.state !== 'PAUSED' || !this.store.snapshot || this.store.busy) return
+    this.backgroundSuspended = false
     const operation = ++this.operation
+    // Reattaching publishes the saved server snapshot; preserve the user's
+    // paused draft so that acknowledgement cannot silently replace their edit.
+    const requestedOptions = { silence_timeout_ms: this.store.silenceTimeout, ...this.store.currentSessionOptions() }
     this.store.busy = true; this.store.error = ''
     try {
       this.validTimeout()
@@ -267,7 +286,7 @@ export class SessionController {
       void this.preparePlayback(operation)
       this.store.microphone = 'requesting'
       try { await this.openMicrophone() }
-      catch (error) { this.store.microphone = 'error'; throw error }
+      catch (error) { if (operation === this.operation) this.store.microphone = 'error'; throw error }
       this.ensure(operation)
       if (!this.client.connected) {
         await this.connect(); this.ensure(operation)
@@ -276,7 +295,7 @@ export class SessionController {
         await attached
       }
       this.ensure(operation)
-      this.client.send({ type: 'configure', silence_timeout_ms: this.store.silenceTimeout })
+      this.client.send({ type: 'configure', ...requestedOptions })
       const listening = this.client.waitFor(s => s.state === 'LISTENING')
       this.client.send({ type: 'resume' })
       await listening
@@ -310,8 +329,13 @@ export class SessionController {
   configure() {
     try {
       this.validTimeout()
-      if (this.store.active && this.client.connected) this.client.send({ type: 'configure', silence_timeout_ms: this.store.silenceTimeout })
+      if (this.store.active && this.client.connected) this.client.send({ type: 'configure', silence_timeout_ms: this.store.silenceTimeout, ...this.store.currentSessionOptions() })
     } catch (error) { this.store.error = (error as Error).message }
+  }
+  postponePrompt() {
+    if (this.store.state !== 'LISTENING' || !this.client.connected) return
+    try { this.client.send({ type: 'postpone_prompt' }) }
+    catch (error) { this.store.error = error instanceof Error ? error.message : '无法延后提示，请重试。' }
   }
   manualPrompt() {
     if (this.store.state === 'LISTENING' && this.client.connected) this.client.send({ type: 'manual_prompt' })

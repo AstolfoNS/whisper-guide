@@ -1,3 +1,6 @@
+export type PromptMode = 'silence' | 'progress'
+export interface PromptOptions { prompt_mode: PromptMode; progress_timeout_ms: number; continuous_prompt: boolean }
+
 export type SessionState = 'READY' | 'LISTENING' | 'PROMPTING' | 'PAUSED' | 'TERMINATED'
 export interface TransitionRecord {
   from_state: SessionState | null
@@ -16,7 +19,10 @@ export interface SessionSnapshot {
   recognition_filtered?: boolean; recognition_filter_reason?: string; recognition_filtered_count?: number
   alignment_status?: 'reliable' | 'pending' | 'mismatch'; raw_transcript_is_current?: boolean
   silence_prompt_policy?: 'saved_position'
-  prompt_wait_reason?: 'inactive' | 'stt_connecting' | 'audio_not_ready' | 'audio_missing' | 'audio_backlog' | 'audio_processing' | 'voice_active' | 'voice_pending' | 'at_end' | 'silence_wait' | 'recognition_settling' | 'ready'
+  prompt_mode?: PromptMode; progress_timeout_ms?: number; continuous_prompt?: boolean
+  progress_elapsed_ms?: number | null; progress_remaining_ms?: number | null
+  last_progress_source?: string | null; prompt_start_reason?: string | null; progress_prompt_armed?: boolean
+  prompt_wait_reason?: 'inactive' | 'stt_connecting' | 'audio_not_ready' | 'audio_missing' | 'audio_backlog' | 'audio_processing' | 'voice_active' | 'voice_pending' | 'at_end' | 'silence_wait' | 'recognition_settling' | 'ready' | 'progress_wait' | 'progress_ready' | 'progress_disarmed' | 'awaiting_progress'
   silence_elapsed_ms?: number | null; silence_remaining_ms?: number | null
   last_audio_received_age_ms?: number | null; audio_queued_ms?: number
   audio_inference_ms?: number; audio_batch_frames?: number; audio_inflight?: boolean
@@ -33,7 +39,7 @@ export interface SessionSnapshot {
 }
 export type SessionServerEvent =
   | { type: 'snapshot'; session: SessionSnapshot }
-  | { type: 'audio_diagnostics'; session_id: string; generation: number; diagnostics: Pick<SessionSnapshot, 'prompt_wait_reason' | 'silence_elapsed_ms' | 'silence_remaining_ms' | 'last_audio_received_age_ms' | 'audio_queued_ms' | 'audio_inference_ms' | 'audio_batch_frames' | 'audio_ready' | 'pending_voice' | 'audio_inflight'> }
+  | { type: 'audio_diagnostics'; session_id: string; generation: number; diagnostics: Pick<SessionSnapshot, 'prompt_wait_reason' | 'silence_elapsed_ms' | 'silence_remaining_ms' | 'last_audio_received_age_ms' | 'audio_queued_ms' | 'audio_inference_ms' | 'audio_batch_frames' | 'audio_ready' | 'pending_voice' | 'audio_inflight' | 'progress_elapsed_ms' | 'progress_remaining_ms' | 'last_progress_source' | 'prompt_start_reason' | 'progress_prompt_armed'> }
   | { type: 'audio'; prompt_id: string; mime_type: string; data: string }
   | { type: 'error'; message: string }
 
@@ -80,7 +86,7 @@ export class SessionClient {
   }
   send(command: Record<string, unknown>) { if (!this.connected) throw new Error('实时连接已断开，请连接后继续。'); this.socket!.send(JSON.stringify(command)) }
   sendAudio(frame: ArrayBuffer) { if (!this.connected) return; if (this.socket!.bufferedAmount > 320000) { this.close(); this.onClose(); return }; this.socket!.send(frame) }
-  prepare(scriptId: string, timeout?: number, sttProvider?: string) { this.send({ type: 'prepare', script_id: scriptId, ...(timeout === undefined ? {} : { silence_timeout_ms: timeout }), ...(sttProvider ? { stt_provider: sttProvider } : {}) }) }
+  prepare(scriptId: string, timeout?: number, sttProvider?: string, options: Partial<PromptOptions> = {}) { this.send({ type: 'prepare', script_id: scriptId, ...(timeout === undefined ? {} : { silence_timeout_ms: timeout }), ...(sttProvider ? { stt_provider: sttProvider } : {}), ...options }) }
   attach(sessionId: string) { this.send({ type: 'attach', session_id: sessionId }) }
   close() { for (const waiter of this.waiters) { clearTimeout(waiter.timer); waiter.reject(new Error('连接已关闭。')) }; this.waiters.clear(); const socket = this.socket; this.socket = undefined; if (socket) { socket.onmessage = null; socket.onclose = null; socket.close() } }
 }

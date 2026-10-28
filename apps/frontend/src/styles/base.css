@@ -82,3 +82,21 @@ fieldset { min-width: 0; }
 @media (max-width: 900px) { .app-header__inner { flex-wrap: wrap; justify-content: space-between; gap: 0 24px; padding: 15px 20px 0; } .app-header__tools { margin-left: 0; } .app-navigation { order: 3; flex-basis: 100%; gap: 28px; min-height: 48px; } .dashboard-grid { grid-template-columns: minmax(0, 1.4fr) minmax(270px, 1fr); gap: 18px; } .page-container { padding: 30px 20px; } }
 @media (max-width: 680px) { h1 { font-size: 26px; } .app-brand { font-size: 15px; } .app-brand__mark { width: 30px; height: 30px; } .theme-switcher__label { display: none; } .app-header__inner { padding: 12px 16px 0; gap: 0 10px; } .app-header__tools { gap: 4px; } .app-navigation { gap: 26px; } .page-container { padding: 26px 16px; } .page-heading { align-items: flex-start; margin-bottom: 24px; } .page-description { font-size: 12px; line-height: 1.8; } .dashboard-grid { grid-template-columns: 1fr; gap: 20px; } .panel-heading { padding: 18px; } .recent-scripts { padding: 0 18px 4px; } .dashboard-profile { padding: 0 18px 18px; } .dashboard-profile .panel-heading { padding-top: 18px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+
+/* Small screens keep reading and session actions available without horizontal scrolling. */
+.app-brand__name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media (max-width:700px) {
+  .app-header__inner { flex-wrap:nowrap; min-height:60px; gap:10px; padding:8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left)); }
+  .app-brand { min-width:0; flex:1 1 0; gap:8px; }
+  .app-brand__name { display:block; }
+  .app-brand__mark { flex:0 0 30px; }
+  .app-main { min-width:0; }
+  button.n-button, .action-link, .theme-control select { min-height:44px; }
+  button.n-button { min-width:44px; }
+  input:not([type='checkbox']):not([type='radio']), select, textarea { font-size:16px; }
+  .n-drawer-body-content-wrapper { padding-bottom:max(20px, env(safe-area-inset-bottom)); }
+  .n-dialog { max-width:calc(100vw - 24px); }
+}
+@media (max-width:360px) {
+  .mobile-session-state { max-width:70px; overflow:hidden; text-overflow:ellipsis; }
+}

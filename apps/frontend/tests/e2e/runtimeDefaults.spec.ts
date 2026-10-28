@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { test, expect } from '@playwright/test'
 
 test('uses the actual server UI defaults and leaves untouched session options to the backend', async ({ page }) => {
@@ -25,7 +26,7 @@ test('uses the actual server UI defaults and leaves untouched session options to
     await expect(page.getByRole('textbox', { name: '静音等待', exact: true })).toHaveValue('1500')
   } finally {
     const end = page.getByRole('button', { name: '结束', exact: true })
-    if (await end.isVisible() && await end.isEnabled()) await end.click()
+    if (await end.isVisible() && await end.isEnabled()) { await end.click(); await confirmSessionEnd(page) }
     await page.request.post('http://127.0.0.1:8010/mock/ui-defaults', { data: {
       default_silence_timeout_ms: original.default_silence_timeout_ms,
       script_max_file_bytes: original.script_max_file_bytes, script_max_upload_files: original.script_max_upload_files,

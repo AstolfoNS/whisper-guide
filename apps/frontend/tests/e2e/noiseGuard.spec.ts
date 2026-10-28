@@ -1,3 +1,4 @@
+import { confirmSessionEnd } from './sessionActions'
 import { useSyntheticMicrophone } from './syntheticMicrophone'
 import { test, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
@@ -47,7 +48,7 @@ test('a silent hallucinated 点 cannot invalidate the matched phrase or stop the
     console.log('matched phrase preserved after silent final 点; no AC-14 warning; automatic prompt and in-memory audio received')
   } finally {
     const end = page.getByRole('button', { name: '结束', exact: true })
-    if (await end.isVisible() && await end.isEnabled()) await end.click()
+    if (await end.isVisible() && await end.isEnabled()) { await end.click(); await confirmSessionEnd(page) }
     await page.request.post('http://127.0.0.1:8010/mock/silence', { data: { enabled: false } })
     await page.request.post('/api/settings/model-configs/local-default/activate')
     await page.request.delete(`/api/settings/model-configs/${profile.id}`)

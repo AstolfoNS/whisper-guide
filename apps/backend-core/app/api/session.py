@@ -164,6 +164,19 @@ class SessionRuntime:
         ):
             elapsed = max(0, timestamp - self.session.silence_since_ms)
             remaining = max(0, self.session.options.silence_timeout_ms - elapsed)
+        progress_elapsed = progress_remaining = None
+        if (
+            self.session.options.prompt_mode == "progress"
+            and self.session.state == SessionState.LISTENING
+            and self.stt_ready
+            and self.audio_ready
+            and received_age is not None
+            and received_age <= 5000
+            and self.session.progress_prompt_armed
+            and self.session.progress_since_ms is not None
+        ):
+            progress_elapsed = max(0, timestamp - self.session.progress_since_ms)
+            progress_remaining = max(0, self.session.options.progress_timeout_ms - progress_elapsed)
         if self.session.state != SessionState.LISTENING:
             reason = "inactive"
         elif not self.stt_ready:
@@ -177,6 +190,19 @@ class SessionRuntime:
             reason = "audio_backlog"
         elif self.audio_inflight or self.audio_pending:
             reason = "audio_processing"
+        elif self.session.options.prompt_mode == "progress" and self.session.prompt_position >= len(
+            self.session.tracker.text
+        ):
+            reason = "at_end"
+        elif (
+            self.session.options.prompt_mode == "progress"
+            and not self.session.progress_prompt_armed
+        ):
+            reason = "awaiting_progress"
+        elif self.session.options.prompt_mode == "progress":
+            reason = (
+                "progress_wait" if progress_remaining is None or progress_remaining else "ready"
+            )
         elif self.session.speaking:
             reason = "voice_active"
         elif pending_voice:
@@ -195,6 +221,10 @@ class SessionRuntime:
             "prompt_wait_reason": reason,
             "silence_elapsed_ms": elapsed,
             "silence_remaining_ms": remaining,
+            "progress_elapsed_ms": progress_elapsed,
+            "progress_remaining_ms": progress_remaining,
+            "progress_prompt_armed": self.session.progress_prompt_armed,
+            "last_progress_source": self.session.last_progress_source,
             "last_audio_received_age_ms": received_age,
             "audio_queued_ms": queued_ms,
             "audio_inference_ms": max(0, int(self.audio_inference_ms)),
@@ -324,6 +354,7 @@ class SessionRuntime:
         self.audio_ready = True
         self.ready_generation = self.session.generation
         self.session.silence_since_ms = now_ms()
+        self.session.progress_since_ms = None
         self.last_frame_ms = now_ms()
 
     def _prepare_readiness(self) -> None:
@@ -451,6 +482,7 @@ class SessionRuntime:
             return False
         before = self.session.snapshot()
         self.session.preview_transcript(candidate[1])
+        self.session.note_preview_progress(timestamp)
         self.preview_applied = candidate
         after = self.session.snapshot()
         return any(
@@ -558,6 +590,7 @@ class SessionRuntime:
                 # Validate every intervening settled segment on a separate domain
                 # state before updating the live cursor. The aligner/index is read-only.
                 projection = copy.copy(self.session)
+                projection._progress_confirmed_ids = self.session._progress_confirmed_ids.copy()
                 events = [
                     (
                         result.matched_quote,
@@ -633,11 +666,23 @@ class SessionRuntime:
                     self.start_refinement(self.committed_history[-1], self.session.reading_position)
 
     async def tick(self, timestamp: int) -> None:
-        """Preview stable partials, but settle only at the actual silence deadline."""
+        """Settle supported drafts at bounded silence or progress deadlines."""
         retracted = self.retract_unsupported_evidence()
         if self.preview_partial(timestamp) or retracted:
             await self.publish()
-        if self.audio_evidence.pending_voice:
+        progress_mode = self.session.options.prompt_mode == "progress"
+        if progress_mode and (
+            not self.stt_ready
+            or not self.audio_ready
+            or self.audio_received_ms is None
+            or timestamp - self.audio_received_ms > 5000
+            or not self.audio_queue.empty()
+            or self.audio_inflight
+            or self.audio_pending
+        ):
+            return
+        progress_due = self.session.progress_due(timestamp)
+        if self.audio_evidence.pending_voice and not progress_due:
             return
         due = (
             not self.session.speaking
@@ -645,10 +690,13 @@ class SessionRuntime:
             and timestamp - self.session.silence_since_ms >= self.session.options.silence_timeout_ms
         )
         pending = self.pending_hypothesis
-        if due and pending and pending != self.settled_hypothesis:
-            # Settle accepted text, even if a later VAD onset cleared its display.
-            # Revisions can repair a mismatch; identical settled text cannot replay.
+        if (due or progress_due) and pending and pending != self.settled_hypothesis:
+            # Settle accepted text at either deadline. If it supplies genuinely
+            # new progress, give it its full new budget before taking over.
+            previous_progress = self.session.progress_since_ms
             self.commit_transcript(pending[1], timestamp)
+            if progress_due and self.session.progress_since_ms != previous_progress:
+                return
         before = self.session.state
         self.session.handle("tick", timestamp)
         if self.session.state != before:
@@ -764,11 +812,21 @@ class SessionRuntime:
                     self._prepare_readiness()
         elif event in {"configure", "update_options"}:
             await self.change(
-                "update_options", silence_timeout_ms=command.get("silence_timeout_ms")
+                "update_options",
+                **{
+                    key: command[key]
+                    for key in (
+                        "silence_timeout_ms",
+                        "prompt_mode",
+                        "progress_timeout_ms",
+                        "continuous_prompt",
+                    )
+                    if key in command
+                },
             )
         elif event in {"terminate", "end"}:
             await self.change("end")
-        elif event in {"pause", "interrupt", "manual_prompt"}:
+        elif event in {"pause", "interrupt", "manual_prompt", "postpone_prompt"}:
             await self.change(event)
         elif event == "reposition":
             position = command.get("position")
@@ -826,6 +884,9 @@ class SessionRuntime:
             stream = self.stream
             if self.audio_received_ms is None:
                 self.audio_received_ms = received
+            if self.audio_processed_ms is None:
+                self.session.progress_since_ms = None
+            self.session.begin_audio_clock(received)
         if len(frames) == 1 and not await self._observe_packet(
             frames[0], received, generation, stream
         ):
@@ -1089,7 +1150,10 @@ async def session_socket(socket: WebSocket) -> None:
                         await current.change("service_fault", reason="麦克风数据中断，已暂停。")
                 elif timestamp - received > 5000:
                     await current.change("service_fault", reason="麦克风数据中断，已暂停。")
-                elif not current.audio_evidence.pending_voice:
+                elif (
+                    current.session.options.prompt_mode == "progress"
+                    or not current.audio_evidence.pending_voice
+                ):
                     await current.tick(timestamp)
             # Never serialize a long script/units list for this heartbeat.
             await current.publish_prompt_diagnostics(timestamp)
@@ -1179,6 +1243,17 @@ async def session_socket(socket: WebSocket) -> None:
                                 command.get(
                                     "silence_timeout_ms",
                                     socket.app.state.settings.default_silence_timeout_ms,
+                                ),
+                                prompt_mode=command.get(
+                                    "prompt_mode", socket.app.state.settings.default_prompt_mode
+                                ),
+                                progress_timeout_ms=command.get(
+                                    "progress_timeout_ms",
+                                    socket.app.state.settings.default_progress_timeout_ms,
+                                ),
+                                continuous_prompt=command.get(
+                                    "continuous_prompt",
+                                    socket.app.state.settings.default_continuous_prompt,
                                 ),
                             )
                             profile = socket.app.state.model_configs.active_snapshot()

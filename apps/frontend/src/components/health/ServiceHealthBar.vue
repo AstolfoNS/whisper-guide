@@ -6,7 +6,7 @@ import { useSessionStore } from '../../stores/session'
 import { refreshHealth } from '../../services/healthMonitor'
 import { getSessionController } from '../../services/sessionController'
 import { speechFallbackMessage } from '../../services/speechDiagnostics'
-import { promptWaitLabel, silenceTimingLabel } from '../../services/promptDiagnostics'
+import { promptWaitLabel, silenceTimingLabel, progressTimingLabel } from '../../services/promptDiagnostics'
 const health = useHealthStore()
 const session = useSessionStore()
 const open = ref(false)
@@ -26,7 +26,7 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
   <NButton size="small" secondary aria-label="打开服务诊断" @click="open = true">
     {{ connecting ? '连接语音识别中' : session.snapshot?.stt_fallback ? '识别已回退本地' : '服务' }} <span class="health-summary">STT {{ connecting ? '连接中' : session.snapshot?.stt_fallback ? '本地降级' : labels[health.stt] }} · VAD {{ labels[health.vad] }} · TTS {{ health.tts === 'ready' ? '已安装' : labels[health.tts] }}</span><span v-if="fallbackReason" class="fallback-summary" :title="fallbackReason">{{ fallbackReason }}</span>
   </NButton>
-  <NDrawer v-model:show="open" :width="420" placement="right" :auto-focus="true">
+  <NDrawer v-model:show="open" width="min(420px, 100vw)" placement="right" :auto-focus="true">
     <NDrawerContent title="服务与连接诊断" closable>
       <dl class="health-details">
         <div><dt>后端 HTTP</dt><dd>{{ labels[health.backend] }}</dd></div>
@@ -40,6 +40,7 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
         <div v-if="fallbackReason"><dt>本次回退原因</dt><dd data-testid="fallback-reason">{{ fallbackReason }}</dd></div>
         <div v-if="session.snapshot?.prompt_wait_reason"><dt>自动提示等待原因</dt><dd>{{ promptWaitLabel(session.snapshot) }}</dd></div>
         <div v-if="session.snapshot?.prompt_wait_reason"><dt>静音计时</dt><dd>{{ silenceTimingLabel(session.snapshot) }}</dd></div>
+        <div v-if="session.snapshot?.prompt_mode === 'progress'"><dt>进度计时</dt><dd>{{ progressTimingLabel(session.snapshot) }}</dd></div>
         <div v-if="session.snapshot?.last_audio_received_age_ms != null"><dt>最近音频到达</dt><dd>{{ session.snapshot.last_audio_received_age_ms }} ms 前</dd></div>
         <div v-if="session.snapshot?.audio_queued_ms != null"><dt>音频处理</dt><dd>排队 {{ session.snapshot.audio_queued_ms }} ms · 最近推理 {{ session.snapshot.audio_inference_ms ?? 0 }} ms / {{ session.snapshot.audio_batch_frames ?? 0 }} 帧</dd></div>
         <div><dt>VAD</dt><dd>{{ labels[health.vad] }}</dd></div>
@@ -65,4 +66,7 @@ const labels: Record<string, string> = { ready: '就绪', unavailable: '不可�
 </template>
 <style scoped>
 .fallback-summary{margin-left:8px;max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--warning);font-size:12px}.health-summary{margin-left:8px;font-size:12px}.health-details{display:grid;gap:16px}.health-details>div{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.health-details dt{color:var(--muted)}.health-details dd{margin:0;text-align:right;overflow-wrap:anywhere}.health-actions{display:flex;gap:8px;margin:24px 0}.muted{color:var(--muted);font-size:12px}@media(max-width:700px){.health-summary,.fallback-summary{display:none}}
+
+@media(max-width:700px){.health-details>div{flex-wrap:wrap;gap:6px}.health-details dd{flex-basis:100%;text-align:left}.health-actions{flex-wrap:wrap}.health-actions .n-button{min-height:44px}}
+
 </style>

@@ -5,6 +5,9 @@ const title = ref(DEFAULT_APP_TITLE)
 export const appTitle = readonly(title)
 const defaults = ref({
   defaultSilenceTimeoutMs: 3000,
+  defaultPromptMode: 'silence' as 'silence' | 'progress',
+  defaultProgressTimeoutMs: 4000,
+  defaultContinuousPrompt: false,
   scriptMaxFileBytes: 2097152,
   scriptMaxUploadFiles: 10,
 })
@@ -28,6 +31,9 @@ export function loadAppConfig(): Promise<void> {
       if (typeof config.app_title === 'string') title.value = config.app_title.trim() || DEFAULT_APP_TITLE
       defaults.value = {
         defaultSilenceTimeoutMs: positiveInteger(config.default_silence_timeout_ms, 1000) ? config.default_silence_timeout_ms : defaults.value.defaultSilenceTimeoutMs,
+        defaultPromptMode: config.default_prompt_mode === 'silence' || config.default_prompt_mode === 'progress' ? config.default_prompt_mode : defaults.value.defaultPromptMode,
+        defaultProgressTimeoutMs: positiveInteger(config.default_progress_timeout_ms, 2000) && config.default_progress_timeout_ms <= 10000 ? config.default_progress_timeout_ms : defaults.value.defaultProgressTimeoutMs,
+        defaultContinuousPrompt: typeof config.default_continuous_prompt === 'boolean' ? config.default_continuous_prompt : defaults.value.defaultContinuousPrompt,
         scriptMaxFileBytes: positiveInteger(config.script_max_file_bytes) ? config.script_max_file_bytes : defaults.value.scriptMaxFileBytes,
         scriptMaxUploadFiles: positiveInteger(config.script_max_upload_files) ? config.script_max_upload_files : defaults.value.scriptMaxUploadFiles,
       }

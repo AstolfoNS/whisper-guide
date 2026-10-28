@@ -9,6 +9,9 @@ router = APIRouter(tags=["application"])
 class AppConfigResponse(BaseModel):
     app_title: str
     default_silence_timeout_ms: int
+    default_prompt_mode: str
+    default_progress_timeout_ms: int
+    default_continuous_prompt: bool
     script_max_file_bytes: int
     script_max_upload_files: int
 
@@ -19,6 +22,9 @@ async def app_config(request: Request) -> AppConfigResponse:
     return AppConfigResponse(
         app_title=settings.app_title,
         default_silence_timeout_ms=settings.default_silence_timeout_ms,
+        default_prompt_mode=settings.default_prompt_mode,
+        default_progress_timeout_ms=settings.default_progress_timeout_ms,
+        default_continuous_prompt=settings.default_continuous_prompt,
         script_max_file_bytes=settings.script_max_file_bytes,
         script_max_upload_files=settings.script_max_upload_files,
     )

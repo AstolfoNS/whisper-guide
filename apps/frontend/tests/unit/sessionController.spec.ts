@@ -414,3 +414,113 @@ it('accepts only current-session listening diagnostics and ignores stale heartbe
   expect(store.snapshot!.silence_elapsed_ms).toBe(600)
   controller.dispose()
 })
+
+it('sends explicit progress options on prepare and current options on configuration', async () => {
+  const { store, client, controller } = harness()
+  store.promptMode = 'progress'; store.markPromptOptionEdited('mode')
+  store.progressTimeout = 4500; store.markPromptOptionEdited('timeout')
+  store.continuousPrompt = true; store.markPromptOptionEdited('continuous')
+  await controller.start()
+  expect(client.prepare).toHaveBeenCalledWith('s', undefined, undefined,
+    { prompt_mode: 'progress', progress_timeout_ms: 4500, continuous_prompt: true })
+  controller.pause()
+  store.promptMode = 'progress'; store.progressTimeout = 5500; store.continuousPrompt = false
+  controller.configure()
+  expect(client.send).toHaveBeenCalledWith({ type: 'configure', silence_timeout_ms: store.silenceTimeout,
+    prompt_mode: 'progress', progress_timeout_ms: 5500, continuous_prompt: false })
+  controller.dispose()
+})
+
+it('postpones only a connected listening session without locally moving the cursor', async () => {
+  const { store, client, controller } = harness()
+  controller.postponePrompt()
+  expect(client.send).not.toHaveBeenCalled()
+  await controller.start()
+  const position = store.snapshot?.reading_position
+  const prompt = store.snapshot?.prompt_position
+  controller.postponePrompt()
+  expect(client.send).toHaveBeenCalledWith({ type: 'postpone_prompt' })
+  expect(store.snapshot?.reading_position).toBe(position)
+  expect(store.snapshot?.prompt_position).toBe(prompt)
+  controller.pause()
+  client.send.mockClear()
+  controller.postponePrompt()
+  expect(client.send).not.toHaveBeenCalled()
+  controller.dispose()
+})
+
+it('restores server progress options and keeps them across pause and resume', async () => {
+  const { store, client, controller, emit } = harness()
+  await controller.start()
+  emit({ ...store.snapshot!, prompt_mode: 'progress', progress_timeout_ms: 7500, continuous_prompt: true })
+  controller.pause()
+  expect(store.promptMode).toBe('progress')
+  expect(store.progressTimeout).toBe(7500)
+  await controller.resume()
+  expect(client.send).toHaveBeenCalledWith({ type: 'configure', silence_timeout_ms: 3000,
+    prompt_mode: 'progress', progress_timeout_ms: 7500, continuous_prompt: true })
+  controller.dispose()
+})
+it('backgrounding cancels startup even while microphone permission is unresolved', async () => {
+  const { controller, microphone, player, client, store } = harness()
+  let resolve!: () => void
+  microphone.open.mockImplementation(() => new Promise<void>(done => { resolve = () => { microphone.isOpen = true; done() } }))
+  const starting = controller.start()
+  await vi.waitFor(() => expect(microphone.open).toHaveBeenCalled())
+  controller.suspendForBackground()
+  expect(player.stop).toHaveBeenCalled()
+  resolve()
+  await starting
+  expect(client.prepare).not.toHaveBeenCalled()
+  expect(client.send).not.toHaveBeenCalledWith({ type: 'start' })
+  expect(microphone.isOpen).toBe(false)
+  expect(store.microphone).toBe('idle')
+  controller.dispose()
+})
+
+it('backgrounding cancels a pending resume and a new explicit resume still works', async () => {
+  const { controller, microphone, client, store } = harness()
+  await controller.start()
+  controller.pause()
+  let resolve!: () => void
+  microphone.open.mockImplementationOnce(() => new Promise<void>(done => { resolve = done }))
+  const resuming = controller.resume()
+  await vi.waitFor(() => expect(store.microphone).toBe('requesting'))
+  const resumedCommands = client.send.mock.calls.filter(([command]) => command.type === 'resume').length
+  controller.suspendForBackground()
+  resolve()
+  await resuming
+  expect(client.send.mock.calls.filter(([command]) => command.type === 'resume')).toHaveLength(resumedCommands)
+  expect(store.state).toBe('PAUSED')
+  await controller.resume()
+  expect(store.state).toBe('LISTENING')
+  controller.dispose()
+})
+
+it('a late listening acknowledgement after backgrounding is paused without reopening capture', async () => {
+  const { controller, microphone, client, emit, store } = harness()
+  await controller.start()
+  controller.pause()
+  const opens = microphone.open.mock.calls.length
+  controller.suspendForBackground()
+  emit({ ...store.snapshot!, state: 'LISTENING', generation: store.snapshot!.generation + 1 })
+  await Promise.resolve()
+  expect(microphone.open).toHaveBeenCalledTimes(opens)
+  expect(client.send).toHaveBeenLastCalledWith({ type: 'pause' })
+  expect(store.state).toBe('PAUSED')
+  controller.dispose()
+})
+
+it('keeps paused user option edits when resume reattaches an older server snapshot', async () => {
+  const { controller, client, store } = harness()
+  await controller.start()
+  controller.pause()
+  client.connected = false
+  store.silenceTimeout = 1800
+  store.promptMode = 'progress'; store.progressTimeout = 6500; store.continuousPrompt = true
+  await controller.resume()
+  expect(client.attach).toHaveBeenCalled()
+  expect(client.send).toHaveBeenCalledWith({ type: 'configure', silence_timeout_ms: 1800,
+    prompt_mode: 'progress', progress_timeout_ms: 6500, continuous_prompt: true })
+  controller.dispose()
+})
